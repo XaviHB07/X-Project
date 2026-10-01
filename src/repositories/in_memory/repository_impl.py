@@ -1,0 +1,266 @@
+"""Implementaciones in-memory de los repositorios + una "base de datos"
+en proceso (`InMemoryDatabase`) que las respalda a todas.
+
+El punto de diseño más importante de este archivo es `write_lock`: un
+`threading.Lock` que `get_candidates_for_update` adquiere y que solo se
+libera cuando la unidad de trabajo hace `commit()` o `rollback()`. Esto
+reproduce, de forma simplificada, la misma garantía que
+`SELECT ... FOR UPDATE` da en una base de datos real: mientras una
+"transacción" tiene el candado, ninguna otra puede leer-para-actualizar
+ni escribir el estado, así que no hay forma de que se pierda una
+actualización por una carrera entre threads. `tests/test_concurrency.py`
+lo demuestra lanzando varios threads a competir por los mismos
+estudiantes.
+"""
+
+from __future__ import annotations
+
+import threading
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Sequence
+
+from src.domain.entities import ClassSession, Course, DecisionRun, Student
+from src.domain.value_objects import (
+    Candidate,
+    GenericCountersUpdate,
+    PosteriorUpdate,
+    SelectionEventRecord,
+)
+from src.repositories.interfaces import (
+    ClassSessionRepository,
+    CourseRepository,
+    DecisionRunRepository,
+    EventRepository,
+    StudentRepository,
+    StudentStateRepository,
+)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+@dataclass
+class _MutableStudentState:
+    """Representación interna MUTABLE del estado bayesiano.
+
+    A diferencia de `domain.value_objects.Candidate` (inmutable, lo que
+    ven las estrategias), esta clase es un detalle interno de
+    almacenamiento -- el equivalente in-memory de una fila de la tabla
+    `student_state`. Nunca se expone fuera de este módulo.
+    """
+
+    student_id: int
+    alpha: float
+    beta: float
+    n_present: int = 0
+    n_selected: int = 0
+    updated_at: datetime = field(default_factory=_utcnow)
+
+    def to_candidate(self) -> Candidate:
+        return Candidate(
+            student_id=self.student_id,
+            alpha=self.alpha,
+            beta=self.beta,
+            n_present=self.n_present,
+            n_selected=self.n_selected,
+        )
+
+
+class InMemoryDatabase:
+    """"Base de datos" en memoria compartida por todos los repositorios
+    in-memory de una misma instancia. Pensada para vivir durante todo un
+    proceso (una simulación completa, o la vida de un test).
+    """
+
+    def __init__(self) -> None:
+        self.courses: Dict[int, Course] = {}
+        self.students: Dict[int, Student] = {}
+        self.student_states: Dict[int, _MutableStudentState] = {}
+        self.class_sessions: Dict[int, ClassSession] = {}
+        self.decision_runs: Dict[int, DecisionRun] = {}
+        self.events: List[SelectionEventRecord] = []
+
+        self._counters: Dict[str, int] = {}
+        self._meta_lock = threading.Lock()  # protege solo la asignación de ids
+        self.write_lock = threading.Lock()  # emula SELECT ... FOR UPDATE (ver docstring del módulo)
+
+    def next_id(self, table: str) -> int:
+        with self._meta_lock:
+            self._counters[table] = self._counters.get(table, 0) + 1
+            return self._counters[table]
+
+
+class InMemoryCourseRepository(CourseRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def create(self, name: str) -> Course:
+        course = Course(id=self._db.next_id("courses"), name=name, created_at=_utcnow())
+        self._db.courses[course.id] = course
+        return course
+
+    def get(self, course_id: int) -> Optional[Course]:
+        return self._db.courses.get(course_id)
+
+
+class InMemoryStudentRepository(StudentRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def get_or_create(
+        self,
+        course_id: int,
+        external_ref: str,
+        display_name: str,
+        alpha_init: float,
+        beta_init: float,
+    ) -> Student:
+        for s in self._db.students.values():
+            if s.course_id == course_id and s.external_ref == external_ref:
+                return s
+
+        student = Student(
+            id=self._db.next_id("students"),
+            course_id=course_id,
+            external_ref=external_ref,
+            display_name=display_name,
+            created_at=_utcnow(),
+        )
+        self._db.students[student.id] = student
+        self._db.student_states[student.id] = _MutableStudentState(
+            student_id=student.id, alpha=alpha_init, beta=beta_init
+        )
+        return student
+
+    def get(self, student_id: int) -> Optional[Student]:
+        return self._db.students.get(student_id)
+
+    def list_by_course(self, course_id: int) -> List[Student]:
+        return [s for s in self._db.students.values() if s.course_id == course_id]
+
+
+class InMemoryStudentStateRepository(StudentStateRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def get_candidates_for_update(self, student_ids: Sequence[int]) -> List[Candidate]:
+        # Adquiere el candado "de escritura" de toda la base in-memory y
+        # lo mantiene hasta que la Unit of Work llame a commit/rollback
+        # (ver `InMemoryUnitOfWork`). Es deliberadamente grueso (bloquea
+        # TODA la base, no solo las filas pedidas) -- igual que hace
+        # SQLite en disco -- porque el objetivo aquí es demostrar la
+        # ausencia de "lost updates", no maximizar el paralelismo de la
+        # simulación.
+        self._db.write_lock.acquire()
+        return [
+            self._db.student_states[i].to_candidate()
+            for i in student_ids
+            if i in self._db.student_states
+        ]
+
+    def get_candidates_readonly(self, student_ids: Sequence[int]) -> List[Candidate]:
+        return [
+            self._db.student_states[i].to_candidate()
+            for i in student_ids
+            if i in self._db.student_states
+        ]
+
+    def get_all_candidates_for_course(self, course_id: int) -> List[Candidate]:
+        ids = [s.id for s in self._db.students.values() if s.course_id == course_id]
+        return self.get_candidates_readonly(ids)
+
+    def apply_updates(
+        self,
+        generic_updates: List[GenericCountersUpdate],
+        posterior_updates: List[PosteriorUpdate],
+    ) -> None:
+        posterior_by_id: Dict[int, PosteriorUpdate] = {u.student_id: u for u in posterior_updates}
+        for g in generic_updates:
+            state = self._db.student_states[g.student_id]
+            p = posterior_by_id.get(g.student_id)
+            state.n_present += 1 if g.present else 0
+            state.n_selected += 1 if g.selected else 0
+            state.alpha += p.delta_alpha if p else 0.0
+            state.beta += p.delta_beta if p else 0.0
+            state.updated_at = _utcnow()
+
+
+class InMemoryClassSessionRepository(ClassSessionRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def create(self, course_id: int, label: Optional[str] = None) -> ClassSession:
+        session = ClassSession(
+            id=self._db.next_id("class_sessions"), course_id=course_id, created_at=_utcnow(), label=label
+        )
+        self._db.class_sessions[session.id] = session
+        return session
+
+    def get(self, class_session_id: int) -> Optional[ClassSession]:
+        return self._db.class_sessions.get(class_session_id)
+
+
+class InMemoryDecisionRunRepository(DecisionRunRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def create(
+        self,
+        class_session_id: int,
+        method_name: str,
+        k_requested: int,
+        k_selected: int,
+        request_id: Optional[str],
+    ) -> DecisionRun:
+        run = DecisionRun(
+            id=self._db.next_id("decision_runs"),
+            class_session_id=class_session_id,
+            method_name=method_name,
+            k_requested=k_requested,
+            k_selected=k_selected,
+            created_at=_utcnow(),
+            request_id=request_id,
+        )
+        self._db.decision_runs[run.id] = run
+        return run
+
+    def get(self, decision_run_id: int) -> Optional[DecisionRun]:
+        return self._db.decision_runs.get(decision_run_id)
+
+
+class InMemoryEventRepository(EventRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def log_decision(
+        self,
+        decision_run_id: int,
+        considered_before: Dict[int, Candidate],
+        selected_ids: List[int],
+        posterior_updates: Dict[int, PosteriorUpdate],
+    ) -> None:
+        selected_set = set(selected_ids)
+        for student_id, before in considered_before.items():
+            p = posterior_updates.get(student_id)
+            delta_alpha = p.delta_alpha if p else 0.0
+            delta_beta = p.delta_beta if p else 0.0
+            record = SelectionEventRecord(
+                id=self._db.next_id("selection_events"),
+                decision_run_id=decision_run_id,
+                student_id=student_id,
+                present=True,
+                selected=student_id in selected_set,
+                alpha_before=before.alpha,
+                beta_before=before.beta,
+                alpha_after=before.alpha + delta_alpha,
+                beta_after=before.beta + delta_beta,
+                created_at=_utcnow(),
+            )
+            self._db.events.append(record)
+
+    def history_for_student(self, student_id: int, limit: int = 100) -> List[SelectionEventRecord]:
+        matches = [e for e in self._db.events if e.student_id == student_id]
+        matches.sort(key=lambda e: e.created_at, reverse=True)
+        return matches[:limit]

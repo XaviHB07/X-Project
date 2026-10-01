@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#183c32" />
+    <title>Aula | Seleccion justa</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Cursos">
+        <a class="brand" href="/" aria-label="Aula, inicio">
+          <span class="brand-mark">A</span>
+          <span class="brand-name">aula<span>/</span>justa</span>
+        </a>
+
+        <div class="sidebar-section">
+          <div class="section-label">CURSO ACTIVO</div>
+          <label class="sr-only" for="recent-courses">Cursos recientes</label>
+          <select id="recent-courses" class="field recent-select">
+            <option value="">Selecciona un curso</option>
+          </select>
+          <form id="load-course-form" class="load-course-form">
+            <label for="course-id-input">Cargar por ID</label>
+            <div class="inline-field">
+              <input id="course-id-input" class="field" type="number" min="1" placeholder="ID del curso" required />
+              <button class="icon-button" type="submit" aria-label="Cargar curso" title="Cargar curso">↗</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="sidebar-rule"></div>
+
+        <form id="create-course-form" class="create-course-form">
+          <div class="section-label">NUEVO CURSO</div>
+          <label for="course-name">Nombre</label>
+          <input id="course-name" class="field" type="text" maxlength="255" placeholder="Ej. Ciencias 8A" required />
+          <button class="button button-light button-full" type="submit">
+            <span aria-hidden="true">＋</span> Crear curso
+          </button>
+        </form>
+
+        <div class="sidebar-bottom">
+          <span class="status-dot" id="api-dot"></span>
+          <span id="api-status">Conectando...</span>
+          <a href="/docs" target="_blank" rel="noreferrer">API <span aria-hidden="true">↗</span></a>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div class="breadcrumb"><span>GESTIÓN DOCENTE</span><span class="breadcrumb-slash">/</span><span id="breadcrumb-course">SIN CURSO</span></div>
+          <button class="button button-quiet" id="refresh-button" type="button" disabled>
+            <span aria-hidden="true">⟳</span> Actualizar
+          </button>
+        </header>
+
+        <section class="page-heading">
+          <div>
+            <p class="eyebrow">SELECCIÓN EQUITATIVA <span class="eyebrow-line"></span></p>
+            <h1 id="course-title">Panel de selección</h1>
+            <p class="heading-meta" id="course-meta">Crea un curso o carga uno existente para comenzar.</p>
+          </div>
+          <div class="heading-date" id="today-label"></div>
+        </section>
+
+        <section class="empty-state" id="empty-state">
+          <div class="empty-art" aria-hidden="true"><span>01</span><i></i><b></b></div>
+          <div>
+            <p class="eyebrow">AULA / SELECCIÓN</p>
+            <h2>Empieza con un curso</h2>
+            <p>Créalo desde el panel lateral o carga su ID para ver estudiantes y sesiones.</p>
+          </div>
+        </section>
+
+        <div id="workspace" class="workspace" hidden>
+          <section class="metrics-strip" aria-label="Resumen del curso">
+            <div class="metric metric-primary">
+              <span class="metric-label">MATRICULADOS</span>
+              <strong id="metric-students">0</strong>
+              <span class="metric-foot">estudiantes</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">PRESENTES</span>
+              <strong id="metric-present">0</strong>
+              <span class="metric-foot">en esta sesión</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">COBERTURA</span>
+              <strong id="metric-coverage">—</strong>
+              <span class="metric-foot">estudiantes seleccionados</span>
+            </div>
+            <div class="metric metric-run">
+              <span class="metric-label">ÚLTIMA DECISIÓN</span>
+              <strong id="metric-last-run">—</strong>
+              <span class="metric-foot">sesión registrada</span>
+            </div>
+          </section>
+
+          <div class="workspace-grid">
+            <section class="roster-panel" aria-labelledby="roster-title">
+              <div class="panel-heading roster-heading">
+                <div>
+                  <p class="eyebrow">ASISTENCIA</p>
+                  <h2 id="roster-title">Estudiantes <span id="roster-count" class="count-badge">0</span></h2>
+                </div>
+                <button class="text-button" id="toggle-all-button" type="button" disabled>Marcar todos</button>
+              </div>
+
+              <form id="enroll-form" class="enroll-form">
+                <div class="enroll-fields">
+                  <label class="sr-only" for="student-name">Nombre del estudiante</label>
+                  <input class="field" id="student-name" type="text" maxlength="255" placeholder="Nombre del estudiante" required />
+                  <label class="sr-only" for="student-ref">Identificador</label>
+                  <input class="field" id="student-ref" type="text" maxlength="255" placeholder="Código / matrícula" required />
+                  <button class="button button-add" type="submit" aria-label="Matricular estudiante">＋ <span>Matricular</span></button>
+                </div>
+              </form>
+
+              <div class="roster-toolbar">
+                <span>ESTUDIANTE</span>
+                <span>PRESENTE</span>
+              </div>
+              <div class="student-list" id="student-list" aria-live="polite"></div>
+              <div class="list-empty" id="list-empty" hidden>
+                <span class="list-empty-mark">＋</span>
+                <p>Aún no hay estudiantes matriculados.</p>
+              </div>
+            </section>
+
+            <aside class="decision-column">
+              <section class="decision-panel" aria-labelledby="decision-title">
+                <div class="panel-heading decision-heading">
+                  <div>
+                    <p class="eyebrow">NUEVA RONDA</p>
+                    <h2 id="decision-title">Tomar decisión</h2>
+                  </div>
+                  <span class="decision-index">01</span>
+                </div>
+
+                <form id="selection-form">
+                  <label class="form-label" for="method-select">Método</label>
+                  <select id="method-select" class="field" required>
+                    <option value="bayesian_fairness">Bayesian fairness</option>
+                  </select>
+
+                  <div id="tau-field" class="form-field" hidden>
+                    <label class="form-label" for="tau-input">Temperatura (tau)</label>
+                    <input id="tau-input" class="field" type="number" min="0.01" step="0.05" value="0.5" />
+                  </div>
+
+                  <div class="form-row">
+                    <div class="form-field">
+                      <label class="form-label" for="slots-input">Cupos</label>
+                      <input id="slots-input" class="field" type="number" min="1" value="1" required />
+                    </div>
+                    <div class="form-field form-field-wide">
+                      <label class="form-label" for="session-label">Nombre de sesión <span class="optional">OPCIONAL</span></label>
+                      <input id="session-label" class="field" type="text" maxlength="255" placeholder="Ej. Semana 4" />
+                    </div>
+                  </div>
+                  <button class="button button-run" id="run-button" type="submit" disabled>
+                    <span>Ejecutar selección</span><span aria-hidden="true">↗</span>
+                  </button>
+                </form>
+                <div class="form-note" id="selection-note">Marca la asistencia para habilitar la selección.</div>
+              </section>
+
+              <section class="result-panel" id="result-panel" hidden aria-live="polite">
+                <div class="result-topline"><span class="result-check">✓</span><span>DECISIÓN REGISTRADA</span></div>
+                <h3 id="result-title">Selección completada</h3>
+                <p class="result-meta" id="result-meta"></p>
+                <div class="selected-list" id="selected-list"></div>
+              </section>
+
+              <section class="fairness-panel">
+                <div class="fairness-title"><span class="fairness-symbol">◎</span><span>Equidad del curso</span></div>
+                <div class="fairness-bar"><span id="fairness-bar-fill"></span></div>
+                <p id="fairness-caption">Sin datos de cobertura.</p>
+              </section>
+            </aside>
+          </div>
+        </div>
+
+        <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      </main>
+    </div>
+
+    <dialog class="student-dialog" id="student-dialog">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">PERFIL DEL ESTUDIANTE</p>
+          <h2 id="dialog-student-name">Estudiante</h2>
+          <p class="dialog-subtitle" id="dialog-student-ref"></p>
+        </div>
+        <button class="icon-button dialog-close" id="dialog-close" type="button" aria-label="Cerrar">×</button>
+      </div>
+      <div id="dialog-state" class="dialog-state"></div>
+      <div class="dialog-history-heading"><h3>Historial de selección</h3><span id="dialog-history-count">0 eventos</span></div>
+      <div id="dialog-history" class="dialog-history"></div>
+    </dialog>
+  </body>
+</html>

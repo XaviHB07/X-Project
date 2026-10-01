@@ -1,0 +1,54 @@
+# Configuración del sistema de Selección Inteligente.
+#
+# Se mantiene la filosofía del proyecto original: ningún hiperparámetro
+# ni cadena de conexión vive incrustado en el código. Se agregó la
+# sección `production`, que no existía en la versión de simulación,
+# porque ahora hay un servicio real con una base de datos que configurar.
+
+# --- Sección nueva: configuración de producción ---------------------------
+production:
+  # Cadena de conexión SQLAlchemy. SQLite por defecto (cero configuración,
+  # ideal para desarrollo local y para correr los tests); en un despliegue
+  # real se recomienda PostgreSQL (ver README, sección "Concurrencia y
+  # elección de base de datos"). Se puede sobreescribir sin tocar este
+  # archivo con la variable de entorno DATABASE_URL, que es lo que se
+  # recomienda hacer en cualquier entorno desplegado (staging/producción).
+  database_url: "sqlite:///./seleccion_bayesiana.db"
+  log_level: "INFO"
+
+# --- Métodos de selección (Strategy) ---------------------------------------
+# Se reutiliza tal cual en producción (vía SelectorRegistry.create) y en
+# la simulación Monte Carlo. Los nombres son las claves de registro en
+# src/strategies/registry.py.
+methods:
+  roulette: {}
+
+  weighted_softmax:
+    tau: 0.5             # temperatura: tau bajo -> favorece fuertemente a quien menos participó
+
+  bayesian_fairness:
+    alpha_init: 1.0       # prior Beta(1,1) = incertidumbre uniforme para todos
+    beta_init: 1.0
+
+# --- Sección de simulación (Monte Carlo) -----------------------------------
+# Todo lo de aquí para abajo solo lo usa scripts/run_experiment.py (modo
+# investigación/benchmark). La API de producción (src/api) no la lee.
+experiment:
+  seed: 100              # semilla base; cada trial deriva su propia semilla de esta
+  n_students: 35         # tamaño del curso simulado
+  n_classes: 14          # número de clases simuladas por trial
+  k_per_class: 6         # estudiantes seleccionados por clase
+  n_trials: 100          # repeticiones Monte Carlo por método (para robustez estadística)
+  method_to_compare: ["roulette", "weighted_softmax", "bayesian_fairness"]
+
+attendance:
+  # cada estudiante tiene una probabilidad de asistencia individual,
+  # sorteada una vez por trial en el rango [min, max]. Esto simula que en
+  # un curso real no todos asisten con la misma frecuencia.
+  min_prob: 0.70
+  max_prob: 1.00
+
+output:
+  dir: "outputs"
+  save_csv: true
+  save_plots: true
