@@ -1,56 +1,8 @@
-# Selección Inteligente — Bayesian Fairness Bandit (versión producción)
-
-Este proyecto rediseña por completo tu entregable original de simulación
-para convertirlo en un **sistema de producción real**: uno donde el
-estado de cada estudiante persiste entre requests, sobrevive reinicios,
-soporta múltiples cursos y múltiples decisiones concurrentes, y queda
-completamente auditado.
-
-No incluye frontend ni UI. Es 100% lógica de negocio, persistencia y una
-API HTTP — el "backend" que un frontend, una app móvil o el sistema de
-asistencia de un colegio consumirían.
-
-\---
-
-## 0\. La pregunta que originó este rediseño (y su respuesta corta)
-
-Preguntaste, en esencia: *"en mi simulación el 'historial' de cada
-estudiante parece guardarse porque todo pasa en una sola corrida — pero
-en producción no hay una sola corrida, hay muchos requests a lo largo
-del tiempo. ¿Cómo persisto eso de verdad?"*
-
-La respuesta corta, ya implementada en este proyecto:
-
-1. **No se persiste "una corrida".** Se persiste el **estado bayesiano
-acumulado** de cada estudiante (`alpha`, `beta`, `n\_present`,
-`n\_selected`) en una tabla (`student\_state`), más un **log de
-eventos** (`selection\_events`) para auditoría/trazabilidad completa.
-2. Los **algoritmos de selección no cambian de forma matemática** —
-siguen siendo Strategy — pero dejaron de mutar arrays en memoria:
-ahora reciben un *snapshot* inmutable del estado (`Candidate`) y
-devuelven *qué cambios habría que aplicar* (`PosteriorUpdate`), sin
-aplicarlos ellos mismos.
-3. Quien aplica esos cambios es la capa de persistencia, con
-**actualizaciones atómicas** (`UPDATE ... SET alpha = alpha + delta`)
-dentro de una **transacción** que primero toma un bloqueo de lectura
-(`SELECT ... FOR UPDATE`) — así es como se evita que dos requests
-simultáneos sobre el mismo estudiante se "pisen" y se pierda una
-actualización.
-4. La simulación Monte Carlo **no desaparece**: se reconstruyó para
-correr sobre las mismas piezas (mismas estrategias, mismo servicio de
-aplicación) respaldadas por un almacenamiento en memoria en vez de una
-base de datos real. Es la prueba de que el diseño es correcto: la
-lógica de negocio no sabe (ni le importa) si el estado vive en un
-diccionario de Python o en PostgreSQL.
-
-El resto de este documento explica en detalle cómo se logró esto.
-
-\---
+# Project X - El Lobo Feroz
 
 ## 1\. Cómo leer este proyecto (orden recomendado)
 
-No leas las carpetas en orden alfabético. Este es el orden pensado para
-entender el proyecto de la forma más eficiente:
+\---
 
 1. **Este README**, completo — te da el mapa mental antes de tocar código.
 2. **`src/domain/value\_objects.py`** — el "idioma común" entre capas
@@ -146,126 +98,59 @@ considerado en cada `decision\_run`, con alpha/beta antes y después.
 
 \---
 
-## 3\. Patrones de diseño aplicados (y por qué)
+## 3\. Instalación y uso
 
-|Patrón|Dónde|Para qué|
-|-|-|-|
-|**Strategy**|`src/strategies/`|Ya existía en tu proyecto original; se conserva y se limpia: los algoritmos ahora son puros (reciben `Candidate`, devuelven decisiones + deltas, no mutan nada).|
-|**Factory / Registry**|`src/strategies/registry.py`|Reemplaza el `if/elif`/dict manual de `build\_selectors`. Cada estrategia se auto-registra con un decorador; agregar un método nuevo no toca ningún otro archivo.|
-|**Repository**|`src/repositories/interfaces.py` + 2 implementaciones|Desacopla la lógica de negocio de dónde vive el estado. Permite que `SelectionService` funcione igual sobre SQLite/PostgreSQL o sobre un diccionario en memoria.|
-|**Unit of Work**|`UnitOfWork` (interfaz) + `SqlAlchemyUnitOfWork` / `InMemoryUnitOfWork`|Garantiza que "leer con bloqueo + decidir + actualizar + registrar evento" se confirme o se descarte como una sola unidad atómica.|
-|**Dependency Injection**|`SelectionService.\_\_init\_\_(uow\_factory, ...)`, `Depends(...)` en FastAPI|Nada se instancia "a mano" dentro de la lógica de negocio; todo se inyecta desde `services/bootstrap.py` (composition root).|
-|**Value Object / DTO**|`src/domain/value\_objects.py`|`Candidate`, `PosteriorUpdate`, `DecisionResult` son el "idioma común" inmutable entre capas, evitando que se filtren detalles de un ORM o de un esquema HTTP hacia la lógica de negocio.|
-|**Observer (event bus ligero)**|`src/domain/events.py`|Punto de extensión opcional: hoy solo hay un `logging\_subscriber`, pero se puede enganchar notificaciones, invalidación de cache, etc. sin tocar `SelectionService`.|
-|**Adapter** (implícito)|`repository\_impl.py` (ambas variantes)|Traducen entre el modelo de almacenamiento concreto (filas ORM / diccionarios) y los value objects del dominio.|
-
-**Paradigma:** Programación Orientada a Objetos en toda la capa de
-dominio/estrategias/repositorios (clases, herencia de `ABC` para los
-contratos, encapsulamiento de estado), combinada con un estilo
-funcional/inmutable en los value objects (`@dataclass(frozen=True)`) para
-evitar mutaciones accidentales de estado compartido — deliberadamente
-importante en un sistema con concurrencia.
-
-\---
-
-## 4\. Bugs encontrados y corregidos
-
-Durante el análisis del proyecto original se encontraron tres problemas
-reales, no solo de forma sino de fondo. Se corrigieron y se documentan
-aquí (y en el docstring del código correspondiente) para que quede
-constancia de qué cambió y por qué:
-
-### 4.1. Selección duplicada dentro de una misma clase
-
-`src/simulation/classroom.py` (original) seleccionaba de a un estudiante
-por vez, en un bucle `for \_ in range(k\_per\_class)`, llamando a
-`selector.select(present\_students, 1, rng)` sin remover al estudiante ya
-elegido de `present\_students` para la siguiente vuelta. Esto hacía
-posible que **un mismo estudiante fuera seleccionado más de una vez en
-la misma clase** (particularmente visible en `roulette`, que no tiene
-ninguna razón interna para evitarlo).
-
-**Corrección:** `SelectionService.run\_selection` llama a
-`selector.select(candidates, k, rng)` **una sola vez, con el k completo**
-— exactamente como ya soportaba `BayesianFairnessBandit.select`
-internamente (`argsort` + top-k) y como el propio README original
-describe matemáticamente. Un top-k de una sola pasada nunca puede repetir
-a nadie. Ver `tests/test\_selection\_service.py::test\_no\_student\_selected\_twice\_within\_one\_session`.
-
-### 4.2. Sobre-conteo de `alpha` por "slot" en vez de por clase
-
-Como consecuencia del mismo bucle, `update(...)` se llamaba una vez por
-cada cupo de la clase, y cada vez incrementaba `alpha` en 1 para **todo**
-estudiante presente que no fuera el elegido *en esa vuelta* —
-incluyendo a quien ya había sido elegido en una vuelta anterior de la
-misma clase. Con `k\_per\_class = 6`, un estudiante presente pero nunca
-elegido podía acumular `alpha += 6` en una sola clase, en vez de `+= 1`.
-
-**Corrección:** al aplicar `compute\_posterior\_updates` una sola vez por
-clase (ver 4.1), cada estudiante considerado recibe **exactamente un**
-delta (`alpha += 1` o `beta += 1`), nunca más de uno. Ver
-`tests/test\_strategies.py::TestBayesianFairnessBandit::test\_posterior\_updates\_cover\_every\_considered\_candidate\_exactly\_once`.
-
-### 4.3. Dependencia accidental de PySpark
-
-`src/simulation/runner.py` (original) importaba y usaba
-`pyspark.sql.SparkSession` para consolidar resultados — una dependencia
-pesada (requiere JVM) que ni el `README.md` ni el `requirements.txt`
-originales mencionaban, y que no aporta nada con los volúmenes de datos
-del experimento (unos pocos miles de filas). Se interpreta como código
-de otro experimento pegado por error.
-
-**Corrección:** `src/simulation/experiment\_runner.py` usa `pandas` puro,
-consistente con el resto del proyecto y con las librerías que sí estaban
-declaradas originalmente.
-
-\---
-
-## 5\. Instalación y uso
-
-### 5.1. Instalar dependencias
+### 3.1. Instalar dependencias
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\\Scripts\\activate     # Bash: source .venv/Scripts/activate
+python3 -m venv .venv (o python -m venv .venv )
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+# macOS/Linux: source .venv/bin/activate
+# Git Bash: source .venv/Scripts/activate
 pip install -r requirements.txt
 ```
 
-### 5.2. Correr los tests (recomendado como primer paso)
+### 3.2. Correr los tests (recomendado como primer paso)
 
 ```bash
 pytest -v
 ```
 
-Deberías ver 44 tests en verde: estrategias, métricas, el servicio de
+Deberías ver 47 tests en verde: estrategias, métricas, el servicio de
 selección (con y sin concurrencia) y la API HTTP completa contra una
 base de datos SQLite real.
 
-### 5.3. Levantar la API de producción
+### 3.3. Levantar la API de producción
 
 ```bash
-python scripts/init\_db.py      # crea las tablas (SQLite local por defecto)
-python scripts/run\_api.py --reload
+python scripts/init_db.py      # crea las tablas (SQLite local por defecto)
+python scripts/run_api.py --reload
 ```
 
 Con el servidor corriendo, abrir `http://127.0.0.1:8000/docs` para la
-documentación interactiva (Swagger UI), o probar directamente:
+documentación interactiva (Swagger UI), o `http://127.0.0.1:8000/` para
+el panel web. Desde el panel puedes crear o cargar un curso, matricular
+estudiantes, marcar asistencia, ejecutar una selección y consultar el
+estado e historial individual. Los cursos recientes se recuerdan en el
+navegador; los datos del sistema quedan en la base SQLite configurada.
+
+También se pueden probar los endpoints directamente:
 
 ```bash
 # 1. Crear un curso
-curl -X POST http://127.0.0.1:8000/courses \\
-  -H "Content-Type: application/json" \\
+curl -X POST http://127.0.0.1:8000/courses \
+  -H "Content-Type: application/json" \
   -d '{"name": "Cálculo II - Sección 4"}'
 
-# 2. Matricular un estudiante (idempotente por external\_ref)
-curl -X POST http://127.0.0.1:8000/courses/1/students \\
-  -H "Content-Type: application/json" \\
-  -d '{"external\_ref": "2024-0001", "display\_name": "Ana Torres"}'
+# 2. Matricular un estudiante (idempotente por external_ref)
+curl -X POST http://127.0.0.1:8000/courses/1/students \
+  -H "Content-Type: application/json" \
+  -d '{"external_ref": "2024-0001", "display_name": "Ana Torres"}'
 
-# 3. Ejecutar una selección real (present\_student\_ids son ids devueltos en el paso 2)
-curl -X POST http://127.0.0.1:8000/courses/1/sessions/select \\
-  -H "Content-Type: application/json" \\
-  -d '{"present\_student\_ids": \[1,2,3,4,5], "k": 2, "method": "bayesian\_fairness"}'
+# 3. Ejecutar una selección real (present_student_ids son IDs devueltos en el paso 2)
+curl -X POST http://127.0.0.1:8000/courses/1/sessions/select \
+  -H "Content-Type: application/json" \
+  -d '{"present_student_ids": [1,2,3,4,5], "k": 2, "method": "bayesian_fairness"}'
 
 # 4. Ver el estado actual de un estudiante
 curl http://127.0.0.1:8000/students/1/state
@@ -292,20 +177,20 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |POST|`/courses/{id}/sessions/select`|**Ejecutar una selección real** (el caso de uso central)|
 |GET|`/courses/{id}/fairness-metrics`|Gini / CV / std / cobertura del curso|
 
-### 5.4. Correr el modo simulación (investigación / benchmark)
+### 3.4. Correr el modo simulación (investigación / benchmark)
 
 ```bash
-python scripts/run\_experiment.py
+python scripts/run_experiment.py
 # o con parámetros distintos a config/default.yaml:
-python scripts/run\_experiment.py --n-trials 500 --n-classes 30 --n-students 40
+python scripts/run_experiment.py --n-trials 500 --n-classes 30 --n-students 40
 ```
 
-Genera `outputs/resultados\_completos.csv`, `outputs/resumen\_metricas\_finales.csv`
-y gráficos comparativos (`outputs/evolucion\_\*.png`, `outputs/boxplot\_final\_\*.png`).
+Genera `outputs/resultados_completos.csv`, `outputs/resumen_metricas_finales.csv`
+y gráficos comparativos (`outputs/evolucion_*.png`, `outputs/boxplot_final_*.png`).
 
 \---
 
-## 6\. Concurrencia y elección de base de datos
+## 4\. Concurrencia y elección de base de datos
 
 El proyecto usa **SQLite por defecto** (cero configuración, un archivo
 `.db`), ideal para desarrollo local, demos y para correr los tests. Para
@@ -341,7 +226,7 @@ cuadra exactamente con lo esperado — ninguna actualización se perdió.
 
 \---
 
-## 7\. De aquí a producción real: qué falta
+## 5\. De aquí a producción real: qué falta
 
 Este proyecto es un backend funcionalmente completo y probado, pero
 antes de exponerlo a usuarios reales en internet, considera agregar:
@@ -375,7 +260,7 @@ contratos) descrita en este README: son extensiones sobre la misma base.
 
 \---
 
-## 8\. Estructura completa del proyecto
+## 6\. Estructura completa del proyecto
 
 ```
 seleccion\_bayesiana/
@@ -414,7 +299,11 @@ seleccion\_bayesiana/
 │   ├── api/                           Capa HTTP (FastAPI)
 │   │   ├── main.py                    Endpoints
 │   │   ├── schemas.py                 Modelos Pydantic de request/response
-│   │   └── dependencies.py            Inyección de dependencias de FastAPI
+│   │   ├── dependencies.py            Inyección de dependencias de FastAPI
+│   │   └── static/                    Panel web servido por FastAPI
+│   │       ├── index.html              Interfaz del sistema
+│   │       ├── styles.css              Estilos responsive
+│   │       └── app.js                  Integración con la API
 │   ├── simulation/                    Modo investigación (Monte Carlo), sobre las mismas piezas
 │   │   ├── engine.py                  Un trial completo, vía SelectionService + repos in-memory
 │   │   └── experiment\_runner.py       Orquesta múltiples trials -> DataFrame

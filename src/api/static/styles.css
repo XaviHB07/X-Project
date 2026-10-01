@@ -205,7 +205,11 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
   .sidebar-section .section-label { grid-column: 1 / -1; margin: 0; }
   .load-course-form { margin: 0; }
   .load-course-form label { margin-bottom: 5px; }
-  .sidebar-rule, .create-course-form { display: none; }
+  .sidebar-rule { display: none; }
+  .create-course-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 14px; }
+  .create-course-form .section-label, .create-course-form label { grid-column: 1 / -1; margin: 0; }
+  .create-course-form .field { margin: 0; }
+  .create-course-form .button-full { width: auto; white-space: nowrap; }
   .sidebar-bottom { position: absolute; top: 14px; right: 18px; margin: 0; padding: 0; }
   .sidebar-bottom #api-status, .sidebar-bottom a { display: none; }
   .main-content { padding: 0 18px 30px; }

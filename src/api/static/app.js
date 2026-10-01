@@ -64,12 +64,15 @@ function notify(message, isError = false) {
 function setBusy(button, busy, busyText = "Procesando...") {
   if (busy) {
     button.dataset.label = button.innerHTML;
+    button.dataset.wasDisabled = String(button.disabled);
     button.innerHTML = `<span>${busyText}</span>`;
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
   } else {
     button.innerHTML = button.dataset.label || button.innerHTML;
+    button.disabled = button.dataset.wasDisabled === "true";
     delete button.dataset.label;
+    delete button.dataset.wasDisabled;
     button.removeAttribute("aria-busy");
     updateSelectionControls();
   }
