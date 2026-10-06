@@ -7,7 +7,11 @@ const state = {
   methods: [],
   metrics: null,
   toastTimer: null,
+  visualTimer: null,
 };
+
+const selectionAnimationDuration = 5500;
+const visualPalette = ["#df795e", "#f3c86a", "#5ca28e", "#b9d996", "#60876f", "#e7a9a0"];
 
 const elements = {
   apiDot: $("#api-dot"),
@@ -28,6 +32,8 @@ const elements = {
   methodSelect: $("#method-select"),
   tauField: $("#tau-field"),
   resultPanel: $("#result-panel"),
+  selectionStage: $("#selection-stage"),
+  stageClose: $("#stage-close"),
   toast: $("#toast"),
   dialog: $("#student-dialog"),
 };
@@ -288,6 +294,169 @@ function renderSelectionResult(result) {
   elements.resultPanel.hidden = false;
 }
 
+function presentStudents() {
+  return state.students.filter((student) => state.present.has(Number(student.id)));
+}
+
+function prepareSelectionStage() {
+  const mode = document.querySelector('input[name="selection-visual"]:checked').value;
+  const candidates = presentStudents();
+  $("#stage-status").textContent = "SELECCIÓN EN CURSO";
+  $("#stage-heading").textContent = mode === "roulette" ? "La ruleta está en marcha" : "Las bolillas se están mezclando";
+  $("#stage-footnote").textContent = "El resultado se calcula con el método seleccionado.";
+  $("#stage-result").hidden = true;
+  elements.stageClose.hidden = true;
+  $("#stage-done").hidden = true;
+  $("#roulette-visual").hidden = mode !== "roulette";
+  $("#balls-visual").hidden = mode !== "balls";
+  elements.selectionStage.showModal();
+  $("#roulette-hub-label").textContent = "EN JUEGO";
+  $("#roulette-winner").textContent = "Ruleta";
+  const wheel = $("#roulette-wheel");
+  wheel.classList.remove("spinning");
+  wheel.style.transition = "none";
+  wheel.style.transform = "rotate(0deg)";
+  const wheelSegments = candidates.map((student, index) => {
+    const start = index * 100 / candidates.length;
+    const end = (index + 1) * 100 / candidates.length;
+    return `${visualPalette[index % visualPalette.length]} ${start}% ${end}%`;
+  });
+  wheel.style.background = `conic-gradient(from -90deg, ${wheelSegments.join(",")})`;
+  const rouletteBounds = $("#roulette-visual").getBoundingClientRect();
+  const manyCandidates = candidates.length > 8;
+  $("#roulette-visual").classList.toggle("many-candidates", manyCandidates);
+  const labelWidth = Math.min(128, rouletteBounds.width * (manyCandidates ? 0.22 : 0.34));
+  const outerRadius = Math.max(58, Math.min(184, Math.min(rouletteBounds.width, rouletteBounds.height) / 2 - labelWidth / 2 - 8));
+  $("#roulette-orbit").innerHTML = candidates.map((student, index) => {
+    let x;
+    let y;
+    let maxWidth;
+    if (manyCandidates) {
+      const perColumn = Math.ceil(candidates.length / 2);
+      const column = index >= perColumn ? 1 : 0;
+      const indexInColumn = index - column * perColumn;
+      const namesInColumn = Math.min(perColumn, candidates.length - column * perColumn);
+      x = (column === 0 ? -1 : 1) * (rouletteBounds.width / 2 - labelWidth / 2 - 5);
+      y = (indexInColumn - (namesInColumn - 1) / 2) * (rouletteBounds.height - 40) / Math.max(namesInColumn - 1, 1);
+      maxWidth = labelWidth;
+    } else {
+      const angle = (index / candidates.length) * Math.PI * 2 - Math.PI / 2;
+      const safeRadius = Math.min(outerRadius, rouletteBounds.width / 2 - labelWidth / 2 - 8);
+      x = Math.cos(angle) * safeRadius;
+      y = Math.sin(angle) * safeRadius;
+      maxWidth = Math.max(60, Math.min(labelWidth, 2 * safeRadius * Math.sin(Math.PI / candidates.length) * 0.72));
+    }
+    const cssOffset = (value) => `calc(50% ${value < 0 ? "-" : "+"} ${Math.abs(value)}px)`;
+    return `<span class="roulette-name" data-student-index="${index}" title="${escapeHtml(student.display_name)}" style="left:${cssOffset(x)};top:${cssOffset(y)};width:${maxWidth}px;max-width:${maxWidth}px">${escapeHtml(student.display_name)}</span>`;
+  }).join("");
+  $("#ball-machine").classList.remove("mixing");
+  $("#ball-tray").classList.remove("is-final");
+  $("#ball-tray").innerHTML = candidates.map((student, index) =>
+    `<span class="draw-ball" data-student-index="${index}" role="img" aria-label="Bolilla de ${escapeHtml(student.display_name)}" title="${escapeHtml(student.display_name)}" style="--ball-color:${visualPalette[index % visualPalette.length]};--ball-delay:${index * -35}ms"><span>${escapeHtml(student.display_name)}</span></span>`,
+  ).join("");
+  $("#ball-count").textContent = `${candidates.length} ${candidates.length === 1 ? "BOLILLA" : "BOLILLAS"}`;
+  $("#ball-machine-footer").textContent = "Mezclando participantes";
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const startedAt = performance.now();
+  let index = 0;
+  const advanceAnimation = () => {
+    const elapsed = performance.now() - startedAt;
+    const progress = Math.min(1, elapsed / selectionAnimationDuration);
+    const easedProgress = progress ** 2.5;
+    const activeIndex = index % candidates.length;
+    if (!reduceMotion) {
+      if (mode === "roulette") {
+        wheel.classList.add("spinning");
+        wheel.style.setProperty("--spin-duration", `${0.3 + easedProgress * 1.5}s`);
+        $("#roulette-orbit").querySelectorAll(".roulette-name").forEach((name, nameIndex) => {
+          name.classList.toggle("active", nameIndex === activeIndex);
+        });
+      } else {
+        const machine = $("#ball-machine");
+        machine.classList.add("mixing");
+        machine.style.setProperty("--ball-duration", `${0.28 + easedProgress * 1.1}s`);
+        $("#ball-tray").querySelectorAll(".draw-ball").forEach((ball, ballIndex) => {
+          ball.classList.toggle("active", ballIndex === activeIndex);
+        });
+      }
+    }
+    index += 1;
+    if (elapsed >= selectionAnimationDuration) {
+      wheel.classList.remove("spinning");
+      $("#ball-machine").classList.remove("mixing");
+      $("#stage-status").textContent = "CONFIRMANDO RESULTADO";
+      $("#stage-footnote").textContent = "La selección está terminando.";
+      state.visualTimer = null;
+      return;
+    }
+    const nextDelay = 55 + easedProgress * 850;
+    state.visualTimer = setTimeout(advanceAnimation, Math.min(nextDelay, selectionAnimationDuration - elapsed));
+  };
+  advanceAnimation();
+  return { mode, candidates, startedAt };
+}
+
+function finishSelectionStage(result, stage, error = null) {
+  clearTimeout(state.visualTimer);
+  state.visualTimer = null;
+  const wheel = $("#roulette-wheel");
+  wheel.classList.remove("spinning");
+  wheel.style.transition = "transform 850ms cubic-bezier(.16,.75,.24,1)";
+  $("#ball-machine").classList.remove("mixing");
+  $("#stage-result").hidden = false;
+  $("#stage-done").hidden = false;
+  elements.stageClose.hidden = false;
+  if (error) {
+    $("#roulette-visual").hidden = true;
+    $("#balls-visual").hidden = true;
+    $("#stage-status").textContent = "NO SE PUDO COMPLETAR";
+    $("#stage-heading").textContent = "No hubo resultado";
+    $("#stage-winners").innerHTML = `<p class="stage-error">${escapeHtml(error.message)}</p>`;
+    $("#stage-result-meta").textContent = "La selección no quedó registrada.";
+    $("#stage-footnote").textContent = "Cierra esta ventana e inténtalo de nuevo.";
+    return;
+  }
+  const names = new Map(state.students.map((student) => [Number(student.id), student.display_name]));
+  const winners = result.selected_student_ids.map((id) => ({ id, name: names.get(Number(id)) || `Estudiante ${id}` }));
+  $("#roulette-visual").hidden = stage.mode !== "roulette";
+  $("#balls-visual").hidden = stage.mode !== "balls";
+  if (stage.mode === "roulette") {
+    const winnerIndex = stage.candidates.findIndex((student) => Number(student.id) === Number(winners[0]?.id));
+    const targetAngle = winnerIndex < 0 ? 0 : 360 - (360 * (winnerIndex + 0.5)) / stage.candidates.length;
+    wheel.style.transform = `rotate(${targetAngle + 1440}deg)`;
+    $("#roulette-hub-label").textContent = winners.length ? "RESULTADO" : "FINALIZADO";
+    $("#roulette-winner").textContent = winners.length === 1 ? winners[0].name : winners.length ? `${winners.length} ganadores` : "Sin selección";
+    $("#roulette-orbit").querySelectorAll(".roulette-name").forEach((name) => {
+      const candidate = stage.candidates[Number(name.dataset.studentIndex)];
+      const selected = winners.some((winner) => Number(winner.id) === Number(candidate.id));
+      name.classList.toggle("active", selected);
+      name.classList.toggle("not-selected", !selected);
+    });
+  } else {
+    const selectedIds = new Set(winners.map((winner) => Number(winner.id)));
+    $("#ball-tray").classList.add("is-final");
+    $("#ball-tray").querySelectorAll(".draw-ball").forEach((ball) => {
+      const candidate = stage.candidates[Number(ball.dataset.studentIndex)];
+      const selected = selectedIds.has(Number(candidate.id));
+      ball.classList.toggle("winner", selected);
+      ball.classList.toggle("eliminated", !selected);
+    });
+    $("#ball-count").textContent = `${winners.length} ${winners.length === 1 ? "SELECCIONADA" : "SELECCIONADAS"}`;
+    $("#ball-machine-footer").textContent = winners.length ? "Bolilla seleccionada" : "No hubo bolillas seleccionadas";
+  }
+  $("#stage-status").textContent = "DECISIÓN REGISTRADA";
+  $("#stage-heading").textContent = winners.length ? "¡Ya tenemos resultado!" : "Ronda completada";
+  $("#stage-winners").innerHTML = winners.length
+    ? winners.map((student, index) => `<div class="stage-winner" style="animation-delay:${index * 90}ms"><span>${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(student.name)}</strong><small>ID ${student.id}</small></div>`).join("")
+    : '<p class="stage-empty-result">No hubo estudiantes seleccionados.</p>';
+  $("#stage-result-meta").textContent = `Sesión #${result.class_session_id} · Decisión #${result.decision_run_id}`;
+  $("#stage-footnote").textContent = "Esta decisión ya quedó guardada en el curso.";
+}
+
+function closeSelectionStage() {
+  if (elements.selectionStage.open) elements.selectionStage.close();
+}
+
 $("#create-course-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -383,20 +552,32 @@ $("#selection-form").addEventListener("submit", async (event) => {
   if (payload.method === "weighted_softmax") payload.method_params = { tau: Number($("#tau-input").value) };
   const sessionLabel = $("#session-label").value.trim();
   if (sessionLabel) payload.session_label = sessionLabel;
+  const stageStartedAt = prepareSelectionStage();
   setBusy(elements.runButton, true, "Seleccionando...");
   try {
     const result = await api(`/courses/${state.course.id}/sessions/select`, {
       method: "POST", body: JSON.stringify(payload),
     });
     renderSelectionResult(result);
-    await refreshCourse();
-    notify("Decisión guardada correctamente.");
+    const remainingAnimation = Math.max(0, selectionAnimationDuration - (performance.now() - stageStartedAt.startedAt));
+    if (remainingAnimation) await new Promise((resolve) => setTimeout(resolve, remainingAnimation));
+    finishSelectionStage(result, stageStartedAt);
+    try {
+      await refreshCourse();
+      notify("Decisión guardada correctamente.");
+    } catch (error) {
+      notify(`Decisión guardada, pero no se pudo actualizar el curso: ${error.message}`, true);
+    }
   } catch (error) {
+    finishSelectionStage(null, stageStartedAt, error);
     notify(error.message, true);
   } finally {
     setBusy(elements.runButton, false);
   }
 });
+
+elements.stageClose.addEventListener("click", closeSelectionStage);
+$("#stage-done").addEventListener("click", closeSelectionStage);
 
 $("#refresh-button").addEventListener("click", async () => {
   try {

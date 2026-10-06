@@ -146,6 +146,20 @@
                     <option value="bayesian_fairness">Bayesian fairness</option>
                   </select>
 
+                  <fieldset class="visual-choice">
+                    <legend class="form-label">Visualización</legend>
+                    <label class="visual-option">
+                      <input type="radio" name="selection-visual" value="roulette" checked />
+                      <span class="visual-option-art visual-option-wheel" aria-hidden="true"><i></i></span>
+                      <span><strong>Ruleta</strong><small>Giro de selección</small></span>
+                    </label>
+                    <label class="visual-option">
+                      <input type="radio" name="selection-visual" value="balls" />
+                      <span class="visual-option-art visual-option-balls" aria-hidden="true"><i></i><b></b><em></em></span>
+                      <span><strong>Caja de bolillas</strong><small>Bolillas en movimiento</small></span>
+                    </label>
+                  </fieldset>
+
                   <div id="tau-field" class="form-field" hidden>
                     <label class="form-label" for="tau-input">Temperatura (tau)</label>
                     <input id="tau-input" class="field" type="number" min="0.01" step="0.01" value="0.5" />
@@ -200,6 +214,36 @@
       <div id="dialog-state" class="dialog-state"></div>
       <div class="dialog-history-heading"><h3>Historial de selección</h3><span id="dialog-history-count">0 eventos</span></div>
       <div id="dialog-history" class="dialog-history"></div>
+    </dialog>
+
+    <dialog class="selection-stage" id="selection-stage" aria-labelledby="stage-heading">
+      <div class="selection-stage-frame">
+        <div class="stage-topline">
+          <p class="eyebrow" id="stage-status">SELECCIÓN EN CURSO</p>
+          <button class="icon-button stage-close" id="stage-close" type="button" aria-label="Cerrar resultado" title="Cerrar resultado" hidden>×</button>
+        </div>
+        <h2 id="stage-heading">Buscando el resultado</h2>
+        <div class="stage-visual roulette-visual" id="roulette-visual">
+          <div class="roulette-pointer" aria-hidden="true"></div>
+          <div class="roulette-wheel" id="roulette-wheel" aria-hidden="true"></div>
+          <div class="roulette-orbit" id="roulette-orbit"></div>
+          <div class="roulette-hub" aria-hidden="true"><span id="roulette-hub-label">EN JUEGO</span><strong id="roulette-winner">Ruleta</strong></div>
+        </div>
+        <div class="stage-visual balls-visual" id="balls-visual" hidden>
+          <div class="ball-machine" id="ball-machine">
+            <div class="ball-machine-header"><span>BOLILLERO</span><strong id="ball-count">0 BOLILLAS</strong></div>
+            <div class="ball-tray" id="ball-tray"></div>
+            <div class="ball-machine-footer" id="ball-machine-footer">Mezclando participantes</div>
+          </div>
+        </div>
+        <section class="stage-result" id="stage-result" hidden aria-live="polite">
+          <p class="stage-result-label"><span aria-hidden="true">✓</span> RESULTADO FINAL</p>
+          <div class="stage-winners" id="stage-winners"></div>
+          <p class="stage-result-meta" id="stage-result-meta"></p>
+          <button class="button button-run stage-done" id="stage-done" type="button">Continuar <span aria-hidden="true">↗</span></button>
+        </section>
+        <p class="stage-footnote" id="stage-footnote">El resultado se calcula con el método seleccionado.</p>
+      </div>
     </dialog>
   </body>
 </html>
