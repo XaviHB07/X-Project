@@ -30,15 +30,41 @@ class TestInfraestructura:
         styles = client.get("/assets/styles.css")
 
         assert page.status_code == 200
+        assert page.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
         assert 'id="course-title"' in page.text
+        assert "cargar el Excel (.xlsx)" in page.text
         assert script.status_code == 200
+        assert script.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
         assert "/sessions/select" in script.text
+        assert 'api("/courses")' in script.text
         assert styles.status_code == 200
+        assert 'id="management-view"' in page.text
+        assert "Administrar estudiantes" in page.text
+        assert 'id="active-role"' in page.text
+        assert '<option value="profesor">Profesor</option>' in page.text
+        assert '<option value="administrador">Administrador</option>' in page.text
+        assert 'data-edit-id="${id}"' in script.text
 
     def test_health(self, client: TestClient):
         resp = client.get("/health")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
+
+    def test_student_management_is_available_without_role_credentials(self, client: TestClient):
+        course_id = new_course(client)
+        created = client.post(
+            f"/courses/{course_id}/students",
+            json={"external_ref": "A1", "display_name": "Ana"},
+        )
+        student_id = created.json()["id"]
+        updated = client.patch(
+            f"/students/{student_id}", json={"display_name": "Ana María"}
+        )
+        imported = upload(client, course_id, [["codigo", "nombre"], ["A2", "Luis"]])
+
+        assert created.status_code == 201
+        assert updated.status_code == 200
+        assert imported.status_code == 200
 
     def test_list_methods_includes_defaults(self, client: TestClient):
         resp = client.get("/methods")
@@ -193,6 +219,7 @@ XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 def make_xlsx(rows) -> bytes:
     wb = Workbook()
     ws = wb.active
+    ws.append(["MATRICULADOS - TE111-U"])
     for row in rows:
         ws.append(row)
     buffer = io.BytesIO()
@@ -231,7 +258,7 @@ class TestImportacionExcel:
         body = resp.json()
         assert resp.status_code == 200
         assert body["created"] == 1
-        assert sorted(e["row"] for e in body["errors"]) == [3, 4]
+        assert sorted(e["row"] for e in body["errors"]) == [4, 5]
 
     def test_reimport_updates_names_without_duplicating(self, client: TestClient):
         course_id = new_course(client)
@@ -241,6 +268,21 @@ class TestImportacionExcel:
         assert (body["created"], body["updated"]) == (0, 1)
         students = client.get(f"/courses/{course_id}/students").json()
         assert [s["display_name"] for s in students] == ["Ana María"]
+
+    def test_imports_contact_fields_and_preserves_them_when_columns_are_absent(self, client: TestClient):
+        course_id = new_course(client)
+        upload(
+            client,
+            course_id,
+            [["codigo", "nombre", "celular", "correo"], ["A1", "Ana", "987654321", "ana@example.com"]],
+        )
+
+        body = upload(client, course_id, [["codigo", "nombre"], ["A1", "Ana María"]]).json()
+        student = client.get(f"/courses/{course_id}/students").json()[0]
+
+        assert body["updated"] == 1
+        assert (student["phone_number"], student["email"]) == ("987654321", "ana@example.com")
+        assert student["display_name"] == "Ana María"
 
     def test_wrong_structure_returns_400_and_saves_nothing(self, client: TestClient):
         course_id = new_course(client)
@@ -277,6 +319,34 @@ class TestEdicionDeLista:
         resp = client.patch(f"/students/{students[0]['id']}", json={"display_name": "Ana María"})
         assert resp.status_code == 200
         assert resp.json()["display_name"] == "Ana María"
+
+    def test_enroll_and_edit_contact_information(self, client: TestClient):
+        course_id = new_course(client)
+        created = client.post(
+            f"/courses/{course_id}/students",
+            json={
+                "external_ref": "A1",
+                "display_name": "Ana",
+                "phone_number": "987654321",
+                "email": "ana@example.com",
+            },
+        )
+        assert created.status_code == 201
+        student_id = created.json()["id"]
+        assert (created.json()["phone_number"], created.json()["email"]) == (
+            "987654321",
+            "ana@example.com",
+        )
+
+        updated = client.patch(
+            f"/students/{student_id}",
+            json={"phone_number": "", "email": "ana.nueva@example.com"},
+        )
+        assert updated.status_code == 200
+        assert (updated.json()["phone_number"], updated.json()["email"]) == (
+            None,
+            "ana.nueva@example.com",
+        )
 
     def test_withdraw_hides_from_default_list_but_not_from_include_inactive(self, client: TestClient):
         course_id, students = self._course_with_students(client)

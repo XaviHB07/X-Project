@@ -57,6 +57,8 @@ class RosterService:
                     display_name=row.display_name,
                     alpha_init=DEFAULT_ALPHA_INIT,
                     beta_init=DEFAULT_BETA_INIT,
+                    phone_number=row.phone_number,
+                    email=row.email,
                 )
                 if status == "created":
                     result.created += 1
@@ -73,12 +75,19 @@ class RosterService:
         external_ref: Optional[str] = None,
         display_name: Optional[str] = None,
         active: Optional[bool] = None,
+        phone_number: Optional[str] = None,
+        email: Optional[str] = None,
     ) -> Student:
         """Edita nombre/código o retira (`active=False`) / reincorpora a un
         estudiante. Lanza `StudentNotFoundError` o `DuplicateStudentError`."""
         with self._uow_factory() as uow:
             student = uow.students.update(
-                student_id, external_ref=external_ref, display_name=display_name, active=active
+                student_id,
+                external_ref=external_ref,
+                display_name=display_name,
+                active=active,
+                phone_number=phone_number,
+                email=email,
             )
             if student is None:
                 raise StudentNotFoundError(f"Estudiante {student_id} no encontrado.")

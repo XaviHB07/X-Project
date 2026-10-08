@@ -16,6 +16,7 @@ from src.services.roster_service import RosterService
 def make_xlsx(rows) -> bytes:
     wb = Workbook()
     ws = wb.active
+    ws.append(["MATRICULADOS - TE111-U"])
     for row in rows:
         ws.append(row)
     buffer = io.BytesIO()
@@ -67,6 +68,21 @@ class TestImport:
         names = {s.external_ref: s.display_name for s in roster(uow_factory, course_id)}
         assert names == {"A1": "Ana", "A2": "Luis Pérez", "A3": "Eva"}
 
+    def test_reimport_updates_contacts_and_preserves_them_without_contact_columns(self):
+        uow_factory, service, course_id = setup()
+        service.import_roster(
+            course_id,
+            make_xlsx([["codigo", "nombre", "celular", "correo"], ["A1", "Ana", "987654321", "ana@example.com"]]),
+        )
+        result = service.import_roster(
+            course_id,
+            make_xlsx([["codigo", "nombre"], ["A1", "Ana María"]]),
+        )
+        student = roster(uow_factory, course_id)[0]
+        assert result.updated == 1
+        assert (student.phone_number, student.email) == ("987654321", "ana@example.com")
+        assert student.display_name == "Ana María"
+
     def test_students_missing_from_new_file_are_not_removed(self):
         uow_factory, service, course_id = setup()
         service.import_roster(course_id, make_xlsx([["codigo", "nombre"], ["A1", "Ana"], ["A2", "Luis"]]))
@@ -79,7 +95,7 @@ class TestImport:
             course_id, make_xlsx([["codigo", "nombre"], ["A1", "Ana"], ["A2", None]])
         )
         assert result.created == 1
-        assert [e.row_number for e in result.errors] == [3]
+        assert [e.row_number for e in result.errors] == [4]
         assert len(roster(uow_factory, course_id)) == 1
 
     def test_bad_structure_saves_nothing(self):
@@ -116,6 +132,13 @@ class TestEdicion:
         updated = service.update_student(students[0].id, display_name="Ana María")
         assert updated.display_name == "Ana María"
         assert updated.external_ref == "A1"
+
+    def test_edit_contact_information(self):
+        _, service, _, students = self._one_student()
+        updated = service.update_student(
+            students[0].id, phone_number="987654321", email="ana@example.com"
+        )
+        assert (updated.phone_number, updated.email) == ("987654321", "ana@example.com")
 
     def test_withdraw_hides_student_but_keeps_state_and_reimport_reactivates(self):
         uow_factory, service, course_id, students = self._one_student()

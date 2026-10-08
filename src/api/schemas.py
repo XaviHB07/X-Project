@@ -34,6 +34,8 @@ class StudentEnrollRequest(BaseModel):
         examples=["2024-0001"],
     )
     display_name: str = Field(..., min_length=1, max_length=255, examples=["Ana Torres"])
+    phone_number: Optional[str] = Field(None, max_length=32)
+    email: Optional[str] = Field(None, max_length=255)
     alpha_init: float = Field(1.0, gt=0, description="Prior alpha si el estudiante es nuevo.")
     beta_init: float = Field(1.0, gt=0, description="Prior beta si el estudiante es nuevo.")
 
@@ -43,6 +45,8 @@ class StudentResponse(BaseModel):
     course_id: int
     external_ref: str
     display_name: str
+    phone_number: Optional[str] = None
+    email: Optional[str] = None
     created_at: datetime
     active: bool = True
 
@@ -52,14 +56,20 @@ class StudentUpdateRequest(BaseModel):
 
     display_name: Optional[str] = Field(None, min_length=1, max_length=255)
     external_ref: Optional[str] = Field(None, min_length=1, max_length=255)
+    phone_number: Optional[str] = Field(None, max_length=32)
+    email: Optional[str] = Field(None, max_length=255)
     active: Optional[bool] = Field(
         None, description="false = retirar del curso (conserva su historial); true = reincorporar."
     )
 
     @model_validator(mode="after")
     def _at_least_one_field(self) -> "StudentUpdateRequest":
-        if self.display_name is None and self.external_ref is None and self.active is None:
-            raise ValueError("Envía al menos un campo: display_name, external_ref o active.")
+        if not self.model_fields_set.intersection(
+            {"display_name", "external_ref", "active", "phone_number", "email"}
+        ):
+            raise ValueError(
+                "Envía al menos un campo: display_name, external_ref, active, phone_number o email."
+            )
         return self
 
 

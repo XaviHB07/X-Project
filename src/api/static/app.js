@@ -2,9 +2,12 @@ const $ = (selector) => document.querySelector(selector);
 
 const state = {
   course: null,
+  availableCourses: [],
   session: null,
   proposal: null,
   students: [],
+  managementStudents: [],
+  role: "profesor",
   present: new Set(),
   methods: [],
   metrics: null,
@@ -45,6 +48,12 @@ const elements = {
   rosterFile: $("#roster-file"),
   importButton: $("#import-button"),
   importResult: $("#import-result"),
+  attendanceView: $("#attendance-view"),
+  managementView: $("#management-view"),
+  attendanceTab: $("#attendance-tab"),
+  managementTab: $("#management-tab"),
+  adminStudentList: $("#admin-student-list"),
+  activeRole: $("#active-role"),
 };
 
 function escapeHtml(value) {
@@ -107,12 +116,20 @@ function saveRecentCourse(course) {
   const courses = readRecentCourses().filter((item) => item.id !== course.id);
   courses.unshift({ id: course.id, name: course.name });
   localStorage.setItem("aula-recent-courses", JSON.stringify(courses.slice(0, 8)));
+  state.availableCourses = [
+    course,
+    ...state.availableCourses.filter((item) => item.id !== course.id),
+  ];
   renderRecentCourses();
 }
 
 function renderRecentCourses() {
   const currentValue = state.course ? String(state.course.id) : "";
-  const options = readRecentCourses().map((course) =>
+  const coursesById = new Map(state.availableCourses.map((course) => [course.id, course]));
+  readRecentCourses().forEach((course) => {
+    if (!coursesById.has(course.id)) coursesById.set(course.id, course);
+  });
+  const options = [...coursesById.values()].map((course) =>
     `<option value="${course.id}">${escapeHtml(course.name)} · #${course.id}</option>`,
   ).join("");
   elements.recentCourses.innerHTML = `<option value="">Selecciona un curso</option>${options}`;
@@ -155,8 +172,6 @@ function renderStudents() {
         </div>
       </div>
       <div class="student-actions">
-        <button class="history-link" type="button" data-history-id="${id}">Estado e historial</button>
-        <button class="history-link" type="button" data-edit-id="${id}">Editar</button>
         <label class="attendance-control">
           <input type="checkbox" data-attendance-id="${id}" ${present ? "checked" : ""} aria-label="Marcar presente a ${escapeHtml(student.display_name)}" />
           <span>${present ? "Presente" : "Ausente"}</span>
@@ -167,6 +182,29 @@ function renderStudents() {
   elements.listEmpty.hidden = students.length > 0;
   elements.toggleAll.disabled = students.length === 0;
   updateSelectionControls();
+}
+
+function renderManagementStudents() {
+  const students = state.managementStudents;
+  $("#management-count").textContent = students.length;
+  elements.adminStudentList.innerHTML = students.map((student) => {
+    const id = Number(student.id);
+    const contact = [student.phone_number, student.email].filter(Boolean).map(escapeHtml).join(" · ");
+    return `<article class="student-row admin-student-row">
+      <div class="student-identity">
+        <span class="student-avatar" aria-hidden="true">${escapeHtml((student.display_name || "?").trim().charAt(0).toUpperCase() || "?")}</span>
+        <div class="student-name-block">
+          <div class="student-name">${escapeHtml(student.display_name)}${student.active ? "" : ' <span class="inactive-badge">Retirado</span>'}</div>
+          <div class="student-meta">${escapeHtml(student.external_ref)} · ${contact || "Sin datos de contacto"}</div>
+        </div>
+      </div>
+      <div class="student-actions">
+        <button class="history-link" type="button" data-history-id="${id}">Historial</button>
+        <button class="history-link" type="button" data-edit-id="${id}">Editar</button>
+      </div>
+    </article>`;
+  }).join("");
+  $("#admin-list-empty").hidden = students.length > 0;
 }
 
 function updateSelectionControls() {
@@ -206,9 +244,21 @@ function renderCourse() {
   elements.breadcrumbCourse.textContent = course ? `CURSO #${course.id}` : "SIN CURSO";
   renderRecentCourses();
   if (!isLoaded) return;
+  setCourseView("attendance");
   renderSessionBox();
   renderStudents();
+  renderManagementStudents();
   if (state.metrics) renderMetrics(state.metrics);
+}
+
+function setCourseView(view) {
+  const management = view === "management";
+  elements.attendanceView.hidden = management;
+  elements.managementView.hidden = !management;
+  elements.attendanceTab.classList.toggle("active", !management);
+  elements.managementTab.classList.toggle("active", management);
+  elements.attendanceTab.setAttribute("aria-selected", String(!management));
+  elements.managementTab.setAttribute("aria-selected", String(management));
 }
 
 function renderSessionBox() {
@@ -249,12 +299,14 @@ async function loadCourse(courseId, { remember = true } = {}) {
   const id = Number(courseId);
   if (!Number.isInteger(id) || id <= 0) throw new Error("Escribe un ID de curso válido.");
   const course = await api(`/courses/${id}`);
-  const [students, metrics] = await Promise.all([
+  const [students, managementStudents, metrics] = await Promise.all([
     api(`/courses/${id}/students`),
+    api(`/courses/${id}/students?include_inactive=true`),
     api(`/courses/${id}/fairness-metrics`).catch(() => null),
   ]);
   state.course = course;
   state.students = students;
+  state.managementStudents = managementStudents;
   state.present = new Set();
   state.session = null;
   state.proposal = null;
@@ -271,11 +323,13 @@ async function loadCourse(courseId, { remember = true } = {}) {
 async function refreshCourse() {
   if (!state.course) return;
   const currentPresent = new Set(state.present);
-  const [students, metrics] = await Promise.all([
+  const [students, managementStudents, metrics] = await Promise.all([
     api(`/courses/${state.course.id}/students`),
+    api(`/courses/${state.course.id}/students?include_inactive=true`),
     api(`/courses/${state.course.id}/fairness-metrics`),
   ]);
   state.students = students;
+  state.managementStudents = managementStudents;
   if (state.session) {
     await syncSession();
   } else {
@@ -283,6 +337,7 @@ async function refreshCourse() {
   }
   renderSessionBox();
   renderStudents();
+  renderManagementStudents();
   renderMetrics(metrics);
 }
 
@@ -578,6 +633,8 @@ $("#enroll-form").addEventListener("submit", async (event) => {
   const payload = {
     external_ref: $("#student-ref").value.trim(),
     display_name: $("#student-name").value.trim(),
+    phone_number: $("#student-phone").value.trim() || null,
+    email: $("#student-email").value.trim() || null,
   };
   setBusy(button, true, "Guardando...");
   try {
@@ -611,11 +668,6 @@ elements.studentList.addEventListener("change", async (event) => {
   else state.present.delete(id);
   input.closest(".attendance-control").querySelector("span").textContent = input.checked ? "Presente" : "Ausente";
   updateSelectionControls();
-});
-
-elements.studentList.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-history-id]");
-  if (button) openStudentHistory(button.dataset.historyId);
 });
 
 elements.toggleAll.addEventListener("click", async () => {
@@ -752,14 +804,22 @@ elements.importButton.addEventListener("click", async () => {
 
 let editingStudentId = null;
 
-elements.studentList.addEventListener("click", (event) => {
+elements.adminStudentList.addEventListener("click", (event) => {
+  const historyButton = event.target.closest("[data-history-id]");
+  if (historyButton) {
+    openStudentHistory(historyButton.dataset.historyId);
+    return;
+  }
   const button = event.target.closest("[data-edit-id]");
   if (!button) return;
-  const student = state.students.find((item) => item.id === Number(button.dataset.editId));
+  const student = state.managementStudents.find((item) => item.id === Number(button.dataset.editId));
   if (!student) return;
   editingStudentId = student.id;
   $("#edit-name").value = student.display_name;
   $("#edit-ref").value = student.external_ref;
+  $("#edit-phone").value = student.phone_number || "";
+  $("#edit-email").value = student.email || "";
+  $("#edit-withdraw").textContent = student.active ? "Retirar del curso" : "Reincorporar al curso";
   elements.editDialog.showModal();
 });
 
@@ -779,15 +839,33 @@ async function patchStudent(changes, successMessage) {
 $("#edit-form").addEventListener("submit", (event) => {
   event.preventDefault();
   patchStudent(
-    { display_name: $("#edit-name").value.trim(), external_ref: $("#edit-ref").value.trim() },
+    {
+      display_name: $("#edit-name").value.trim(),
+      external_ref: $("#edit-ref").value.trim(),
+      phone_number: $("#edit-phone").value.trim(),
+      email: $("#edit-email").value.trim(),
+    },
     "Estudiante actualizado.",
   );
 });
 
 $("#edit-withdraw").addEventListener("click", () => {
-  const student = state.students.find((item) => item.id === editingStudentId);
-  if (!student || !window.confirm(`¿Retirar a ${student.display_name} del curso? Conserva su historial.`)) return;
-  patchStudent({ active: false }, `${student.display_name} fue retirado del curso.`);
+  const student = state.managementStudents.find((item) => item.id === editingStudentId);
+  if (!student) return;
+  const active = !student.active;
+  const action = active ? "reincorporar" : "retirar";
+  if (!window.confirm(`¿${action} a ${student.display_name} ${active ? "al" : "del"} curso? Conserva su historial.`)) return;
+  patchStudent({ active }, active
+    ? `${student.display_name} fue reincorporado al curso.`
+    : `${student.display_name} fue retirado del curso.`);
+});
+
+elements.attendanceTab.addEventListener("click", () => setCourseView("attendance"));
+elements.managementTab.addEventListener("click", () => setCourseView("management"));
+elements.activeRole.addEventListener("change", () => {
+  state.role = elements.activeRole.value;
+  localStorage.setItem("aula-active-role", state.role);
+  notify(`Rol seleccionado: ${state.role === "administrador" ? "Administrador" : "Profesor"}.`);
 });
 
 $("#refresh-button").addEventListener("click", async () => {
@@ -806,9 +884,16 @@ elements.dialog.addEventListener("click", (event) => {
 
 $("#today-label").textContent = new Intl.DateTimeFormat("es", { dateStyle: "long" }).format(new Date());
 renderRecentCourses();
+state.role = localStorage.getItem("aula-active-role") || "profesor";
+elements.activeRole.value = ["profesor", "administrador"].includes(state.role) ? state.role : "profesor";
+state.role = elements.activeRole.value;
 checkApi();
 setInterval(checkApi, 30000);
 api("/methods").then((response) => {
   state.methods = response.methods;
   renderMethodOptions();
 }).catch((error) => notify(error.message, true));
+api("/courses").then((courses) => {
+  state.availableCourses = courses;
+  renderRecentCourses();
+}).catch((error) => notify(`No se pudieron cargar los cursos: ${error.message}`, true));

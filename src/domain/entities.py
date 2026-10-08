@@ -47,6 +47,8 @@ class Student:
     external_ref: str
     display_name: str
     created_at: datetime
+    phone_number: Optional[str] = None
+    email: Optional[str] = None
     # HU-C1: un estudiante retirado del curso no se borra (conserva su
     # historial de selección); solo deja de aparecer en la lista activa
     # y de ser elegible. Re-importarlo desde el Excel lo reactiva.
