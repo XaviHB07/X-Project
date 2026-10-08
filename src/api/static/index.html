@@ -110,6 +110,7 @@
           <nav class="workspace-tabs" aria-label="Secciones del curso">
             <button class="workspace-tab active" id="attendance-tab" type="button" aria-selected="true">Asistencia</button>
             <button class="workspace-tab" id="management-tab" type="button" aria-selected="false">Administrar estudiantes</button>
+            <button class="workspace-tab" id="participations-tab" type="button" aria-selected="false">Historial de participación</button>
           </nav>
 
           <div class="workspace-grid" id="attendance-view">
@@ -119,7 +120,10 @@
                   <p class="eyebrow">ASISTENCIA</p>
                   <h2 id="roster-title">Estudiantes <span id="roster-count" class="count-badge">0</span></h2>
                 </div>
-                <button class="text-button" id="toggle-all-button" type="button" disabled>Marcar todos</button>
+                <div class="attendance-actions">
+                  <button class="text-button" id="toggle-all-button" type="button" disabled>Marcar todos</button>
+                  <button class="text-button" id="mark-session-present-button" type="button" disabled>Marcar presentes</button>
+                </div>
               </div>
 
               <section class="session-box" id="session-box" aria-labelledby="session-title">
@@ -211,16 +215,36 @@
                 <div class="result-topline"><span class="result-check">✓</span><span>DECISIÓN REGISTRADA</span></div>
                 <h3 id="result-title">Selección completada</h3>
                 <p class="result-meta" id="result-meta"></p>
-                <div class="selected-list" id="selected-list"></div>
+                <form id="participation-form">
+                  <div class="selected-list" id="selected-list"></div>
+                  <button class="button button-add participation-save" id="participation-save" type="submit">Guardar participaciones</button>
+                </form>
               </section>
 
-              <section class="fairness-panel">
+                  <section class="fairness-panel">
                 <div class="fairness-title"><span class="fairness-symbol">◎</span><span>Equidad del curso</span></div>
                 <div class="fairness-bar"><span id="fairness-bar-fill"></span></div>
                 <p id="fairness-caption">Sin datos de cobertura.</p>
               </section>
             </aside>
           </div>
+
+          <section class="participation-history-panel" id="participations-view" hidden aria-labelledby="participations-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">REGISTRO DEL CURSO</p>
+                <h2 id="participations-title">Historial de participación</h2>
+              </div>
+              <button class="button button-quiet" id="refresh-participations" type="button">Actualizar</button>
+            </div>
+            <div class="participation-table-wrap">
+              <table class="participation-table">
+                <thead><tr><th>ID estudiante</th><th>Estudiante</th><th>Nota</th><th>Fecha y hora</th><th>Asistencia</th></tr></thead>
+                <tbody id="participation-history-body"></tbody>
+              </table>
+            </div>
+            <p class="history-none" id="participation-history-empty">Todavía no hay participaciones registradas.</p>
+          </section>
 
           <section class="management-panel" id="management-view" hidden aria-labelledby="management-title">
             <div class="panel-heading">

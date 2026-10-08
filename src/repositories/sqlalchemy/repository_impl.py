@@ -23,6 +23,7 @@ from src.domain.entities import (
     Course,
     DecisionRun,
     Student,
+    StudentParticipation,
     SyllabusEntry,
 )
 from src.domain.value_objects import (
@@ -38,6 +39,9 @@ from src.repositories.interfaces import (
     DecisionRunRepository,
     DuplicateStudentError,
     EventRepository,
+    InvalidParticipationStudentError,
+    ParticipationDecisionNotFoundError,
+    ParticipationRepository,
     StudentRepository,
     StudentStateRepository,
     SyllabusRepository,
@@ -50,6 +54,7 @@ from src.repositories.sqlalchemy.models import (
     SessionAttendanceORM,
     StudentORM,
     StudentStateORM,
+    StudentParticipationORM,
     SyllabusEntryORM,
 )
 
@@ -534,3 +539,106 @@ class SqlAlchemyEventRepository(EventRepository):
             )
             for r in rows
         ]
+
+
+class SqlAlchemyParticipationRepository(ParticipationRepository):
+    def __init__(self, session: Session):
+        self._session = session
+
+    @staticmethod
+    def _to_participation(row: StudentParticipationORM, student: StudentORM) -> StudentParticipation:
+        return StudentParticipation(
+            id=row.id,
+            decision_run_id=row.decision_run_id,
+            student_id=row.student_id,
+            score=row.score,
+            present=row.present,
+            created_at=row.created_at,
+            external_ref=student.external_ref,
+            display_name=student.display_name,
+        )
+
+    def record_many(
+        self,
+        course_id: int,
+        decision_run_id: int,
+        score_and_presence_by_student: Dict[int, Tuple[float, bool]],
+    ) -> List[StudentParticipation]:
+        decision_exists = self._session.execute(
+            select(DecisionRunORM.id)
+            .join(ClassSessionORM, DecisionRunORM.class_session_id == ClassSessionORM.id)
+            .where(
+                DecisionRunORM.id == decision_run_id,
+                ClassSessionORM.course_id == course_id,
+            )
+        ).scalar_one_or_none()
+        if decision_exists is None:
+            raise ParticipationDecisionNotFoundError(
+                f"La decisión {decision_run_id} no existe en el curso {course_id}."
+            )
+
+        selected_ids = set(
+            self._session.execute(
+                select(SelectionEventORM.student_id).where(
+                    SelectionEventORM.decision_run_id == decision_run_id,
+                    SelectionEventORM.selected.is_(True),
+                )
+            ).scalars()
+        )
+        submitted_ids = set(score_and_presence_by_student)
+        if submitted_ids != selected_ids:
+            raise InvalidParticipationStudentError(
+                "Registra exactamente a todos los estudiantes seleccionados en esta decisión."
+            )
+
+        existing_rows = {
+            row.student_id: row
+            for row in self._session.execute(
+                select(StudentParticipationORM).where(
+                    StudentParticipationORM.decision_run_id == decision_run_id,
+                    StudentParticipationORM.student_id.in_(list(score_and_presence_by_student)),
+                )
+            ).scalars()
+        }
+        for student_id, (score, present) in score_and_presence_by_student.items():
+            row = existing_rows.get(student_id)
+            if row is None:
+                row = StudentParticipationORM(
+                    decision_run_id=decision_run_id,
+                    student_id=student_id,
+                    score=score,
+                    present=present,
+                )
+                self._session.add(row)
+            else:
+                row.score = score
+                row.present = present
+
+        self._session.flush()
+        return self._rows_for_decision(decision_run_id, list(score_and_presence_by_student))
+
+    def _rows_for_decision(
+        self, decision_run_id: int, student_ids: List[int]
+    ) -> List[StudentParticipation]:
+        rows = self._session.execute(
+            select(StudentParticipationORM, StudentORM)
+            .join(StudentORM, StudentORM.id == StudentParticipationORM.student_id)
+            .where(
+                StudentParticipationORM.decision_run_id == decision_run_id,
+                StudentParticipationORM.student_id.in_(student_ids),
+            )
+            .order_by(StudentParticipationORM.student_id)
+        ).all()
+        return [self._to_participation(participation, student) for participation, student in rows]
+
+    def list_by_course(self, course_id: int, limit: int = 200) -> List[StudentParticipation]:
+        rows = self._session.execute(
+            select(StudentParticipationORM, StudentORM)
+            .join(StudentORM, StudentORM.id == StudentParticipationORM.student_id)
+            .join(DecisionRunORM, DecisionRunORM.id == StudentParticipationORM.decision_run_id)
+            .join(ClassSessionORM, ClassSessionORM.id == DecisionRunORM.class_session_id)
+            .where(ClassSessionORM.course_id == course_id)
+            .order_by(StudentParticipationORM.created_at.desc(), StudentParticipationORM.id.desc())
+            .limit(limit)
+        ).all()
+        return [self._to_participation(participation, student) for participation, student in rows]

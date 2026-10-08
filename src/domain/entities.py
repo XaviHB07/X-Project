@@ -134,3 +134,17 @@ class AttendanceRecord:
     class_session_id: int
     student_id: int
     present: bool
+
+
+@dataclass(frozen=True)
+class StudentParticipation:
+    """Calificación y asistencia registradas para un estudiante seleccionado."""
+
+    id: int
+    decision_run_id: int
+    student_id: int
+    score: float
+    present: bool
+    created_at: datetime
+    external_ref: str
+    display_name: str

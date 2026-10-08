@@ -41,6 +41,7 @@ class TestInfraestructura:
         assert 'id="management-view"' in page.text
         assert "Administrar estudiantes" in page.text
         assert 'id="active-role"' in page.text
+        assert 'id="mark-session-present-button"' in page.text
         assert '<option value="profesor">Profesor</option>' in page.text
         assert '<option value="administrador">Administrador</option>' in page.text
         assert 'data-edit-id="${id}"' in script.text
@@ -513,3 +514,83 @@ class TestMigracionDeBaseAnterior:
             created = client.post("/courses/1/class-sessions", json={"topic": "Tema nuevo"})
             assert created.status_code == 201
             assert created.json()["topic"] == "Tema nuevo"
+
+
+class TestRegistroParticipaciones:
+    def _decision(self, client: TestClient):
+        course_id = new_course(client, "Curso con notas")
+        student_ids = [
+            client.post(
+                f"/courses/{course_id}/students",
+                json={"external_ref": f"P{i}", "display_name": f"Persona {i}"},
+            ).json()["id"]
+            for i in range(3)
+        ]
+        decision = client.post(
+            f"/courses/{course_id}/sessions/select",
+            json={"present_student_ids": student_ids, "k": 2, "method": "roulette"},
+        ).json()
+        return course_id, student_ids, decision
+
+    def test_records_grade_and_attendance_and_lists_course_history(self, client: TestClient):
+        course_id, student_ids, decision = self._decision(client)
+        selected = decision["selected_student_ids"]
+        payload = {
+            "participations": [
+                {"student_id": selected[0], "score": 4.5, "present": True},
+                {"student_id": selected[1], "score": 0, "present": False},
+            ]
+        }
+
+        saved = client.post(
+            f"/courses/{course_id}/decision-runs/{decision['decision_run_id']}/participations",
+            json=payload,
+        )
+        history = client.get(f"/courses/{course_id}/participations")
+
+        assert saved.status_code == 201
+        assert {item["student_id"] for item in saved.json()} == set(selected)
+        assert history.status_code == 200
+        assert len(history.json()) == 2
+        assert {item["score"] for item in history.json()} == {4.5, 0}
+        assert {item["present"] for item in history.json()} == {True, False}
+        assert {item["external_ref"] for item in history.json()} == {
+            f"P{student_ids.index(item['student_id'])}" for item in history.json()
+        }
+
+    def test_requires_all_and_only_selected_students_for_decision(self, client: TestClient):
+        course_id, student_ids, decision = self._decision(client)
+        selected = decision["selected_student_ids"]
+        endpoint = (
+            f"/courses/{course_id}/decision-runs/{decision['decision_run_id']}/participations"
+        )
+        partial = client.post(
+            endpoint,
+            json={"participations": [{"student_id": selected[0], "score": 3, "present": True}]},
+        )
+        unselected = next(student_id for student_id in student_ids if student_id not in selected)
+        invalid = client.post(
+            endpoint,
+            json={
+                "participations": [
+                    {"student_id": selected[0], "score": 3, "present": True},
+                    {"student_id": unselected, "score": 2, "present": True},
+                ]
+            },
+        )
+        assert partial.status_code == 400
+        assert invalid.status_code == 400
+
+    def test_grade_must_be_between_zero_and_five(self, client: TestClient):
+        course_id, _, decision = self._decision(client)
+        selected = decision["selected_student_ids"]
+        resp = client.post(
+            f"/courses/{course_id}/decision-runs/{decision['decision_run_id']}/participations",
+            json={
+                "participations": [
+                    {"student_id": student_id, "score": 5.1, "present": True}
+                    for student_id in selected
+                ]
+            },
+        )
+        assert resp.status_code == 422

@@ -81,6 +81,7 @@ un servidor HTTP o dentro de una simulación en memoria.
 ```
 courses (1) ──< students (1) ── (1) student\_state
 courses (1) ──< class\_sessions (1) ──< decision\_runs (1) ──< selection\_events >── students
+decision\_runs (1) ──< student\_participations >── students
 courses (1) ──< syllabus\_entries
 class\_sessions (1) ──< session\_attendance >── students
 ```
@@ -99,6 +100,8 @@ unidad transaccional.
 * **`session\_attendance`**: marca presente/ausente de cada estudiante en cada sesión (HU-S2).
 * **`selection\_events`**: log de auditoría, un registro por estudiante
 considerado en cada `decision\_run`, con alpha/beta antes y después.
+* **`student\_participations`**: calificación (0 a 5) y asistencia por
+estudiante seleccionado en una decisión, con su fecha/hora de registro.
 
 \---
 
@@ -152,8 +155,11 @@ documentación interactiva (Swagger UI), o `http://127.0.0.1:8000/` para
 el panel web. Desde el panel puedes crear o cargar un curso. En
 **Administrar estudiantes** se carga la lista una vez, se matriculan
 estudiantes y se editan sus datos de contacto; en **Asistencia** solo se
-muestran los estudiantes activos para la clase. También puedes ejecutar una
-selección y consultar el estado e historial individual. Los cursos recientes se recuerdan en el
+muestran los estudiantes activos para la clase. Después de ejecutar una
+selección, el docente captura la nota (el campo oculta visualmente el valor)
+y confirma la asistencia de cada seleccionado. La pestaña **Historial de
+participación** muestra ID, estudiante, nota, fecha/hora y asistencia. Los
+cursos recientes se recuerdan en el
 navegador; los datos del sistema quedan en la base PostgreSQL configurada.
 El selector de rol de la esquina inferior izquierda permite alternar entre
 Profesor y Administrador; ambos pueden administrar la matrícula en esta
@@ -210,6 +216,8 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |GET|`/class-sessions/{id}`|Detalle de la sesión con su asistencia|
 |PUT|`/class-sessions/{id}/attendance`|**HU-S2**: marcar/desmarcar asistencia|
 |POST|`/courses/{id}/sessions/select`|**Ejecutar una selección real**. Sin `present_student_ids`, usa la asistencia de `class_session_id`|
+|POST|`/courses/{id}/decision-runs/{run_id}/participations`|Guardar nota (0–5) y asistencia de los estudiantes seleccionados|
+|GET|`/courses/{id}/participations`|Consultar el historial de notas y asistencia del curso|
 |GET|`/courses/{id}/fairness-metrics`|Gini / CV / std / cobertura del curso|
 
 #### Sprint 1: lista por Excel, sesiones y asistencia

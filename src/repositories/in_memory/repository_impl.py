@@ -27,6 +27,7 @@ from src.domain.entities import (
     Course,
     DecisionRun,
     Student,
+    StudentParticipation,
     SyllabusEntry,
 )
 from src.domain.value_objects import (
@@ -42,6 +43,9 @@ from src.repositories.interfaces import (
     DecisionRunRepository,
     DuplicateStudentError,
     EventRepository,
+    InvalidParticipationStudentError,
+    ParticipationDecisionNotFoundError,
+    ParticipationRepository,
     StudentRepository,
     StudentStateRepository,
     SyllabusRepository,
@@ -94,6 +98,7 @@ class InMemoryDatabase:
         self.attendance: Dict[Tuple[int, int], AttendanceRecord] = {}
         self.decision_runs: Dict[int, DecisionRun] = {}
         self.events: List[SelectionEventRecord] = []
+        self.participations: Dict[Tuple[int, int], StudentParticipation] = {}
 
         self._counters: Dict[str, int] = {}
         self._meta_lock = threading.Lock()  # protege solo la asignación de ids
@@ -427,3 +432,63 @@ class InMemoryEventRepository(EventRepository):
         matches = [e for e in self._db.events if e.student_id == student_id]
         matches.sort(key=lambda e: e.created_at, reverse=True)
         return matches[:limit]
+
+
+class InMemoryParticipationRepository(ParticipationRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def record_many(
+        self,
+        course_id: int,
+        decision_run_id: int,
+        score_and_presence_by_student: Dict[int, Tuple[float, bool]],
+    ) -> List[StudentParticipation]:
+        run = self._db.decision_runs.get(decision_run_id)
+        session = self._db.class_sessions.get(run.class_session_id) if run else None
+        if session is None or session.course_id != course_id:
+            raise ParticipationDecisionNotFoundError(
+                f"La decisión {decision_run_id} no existe en el curso {course_id}."
+            )
+        selected_ids = {
+            event.student_id
+            for event in self._db.events
+            if event.decision_run_id == decision_run_id and event.selected
+        }
+        if set(score_and_presence_by_student) != selected_ids:
+            raise InvalidParticipationStudentError(
+                "Registra exactamente a todos los estudiantes seleccionados en esta decisión."
+            )
+
+        records = []
+        for student_id, (score, present) in score_and_presence_by_student.items():
+            student = self._db.students[student_id]
+            key = (decision_run_id, student_id)
+            record = self._db.participations.get(key)
+            if record is None:
+                record = StudentParticipation(
+                    id=self._db.next_id("student_participations"),
+                    decision_run_id=decision_run_id,
+                    student_id=student_id,
+                    score=score,
+                    present=present,
+                    created_at=_utcnow(),
+                    external_ref=student.external_ref,
+                    display_name=student.display_name,
+                )
+            else:
+                record = replace(record, score=score, present=present)
+            self._db.participations[key] = record
+            records.append(record)
+        return records
+
+    def list_by_course(self, course_id: int, limit: int = 200) -> List[StudentParticipation]:
+        records = [
+            record
+            for record in self._db.participations.values()
+            if self._db.class_sessions[
+                self._db.decision_runs[record.decision_run_id].class_session_id
+            ].course_id == course_id
+        ]
+        records.sort(key=lambda record: (record.created_at, record.id), reverse=True)
+        return records[:limit]

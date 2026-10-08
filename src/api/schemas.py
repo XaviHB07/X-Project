@@ -219,6 +219,27 @@ class DecisionResultResponse(BaseModel):
     request_id: Optional[str] = None
 
 
+class ParticipationEntryRequest(BaseModel):
+    student_id: int = Field(..., gt=0)
+    score: float = Field(..., ge=0, le=5)
+    present: bool
+
+
+class ParticipationBatchRequest(BaseModel):
+    participations: List[ParticipationEntryRequest] = Field(..., min_length=1)
+
+
+class ParticipationResponse(BaseModel):
+    id: int
+    decision_run_id: int
+    student_id: int
+    external_ref: str
+    display_name: str
+    score: float
+    present: bool
+    created_at: datetime
+
+
 class FairnessMetricsResponse(BaseModel):
     course_id: int
     n_students: int

@@ -10,6 +10,7 @@ Esquema (ver README para el diagrama y la justificación completa):
 
     courses (1) ---- (N) students (1) ---- (1) student_state
     courses (1) ---- (N) class_sessions (1) ---- (N) decision_runs (1) ---- (N) selection_events
+    decision_runs (1) ---- (N) student_participations (N) ---- (1) students
     courses (1) ---- (N) syllabus_entries
     class_sessions (1) ---- (N) session_attendance (N) ---- (1) students
     students (1) ---- (N) selection_events
@@ -22,6 +23,7 @@ from typing import List, Optional
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -201,3 +203,22 @@ class SelectionEventORM(Base):
 
     decision_run: Mapped["DecisionRunORM"] = relationship(back_populates="events")
     student: Mapped["StudentORM"] = relationship(back_populates="events")
+
+
+class StudentParticipationORM(Base):
+    """Calificación y asistencia capturadas tras una selección."""
+
+    __tablename__ = "student_participations"
+    __table_args__ = (
+        UniqueConstraint("decision_run_id", "student_id", name="uq_participation_run_student"),
+        CheckConstraint("score >= 0 AND score <= 5", name="ck_participation_score_range"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    decision_run_id: Mapped[int] = mapped_column(
+        ForeignKey("decision_runs.id"), nullable=False
+    )
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    present: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

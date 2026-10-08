@@ -26,6 +26,7 @@ from src.domain.entities import (
     Course,
     DecisionRun,
     Student,
+    StudentParticipation,
     SyllabusEntry,
 )
 from src.domain.value_objects import (
@@ -39,6 +40,14 @@ from src.domain.value_objects import (
 class DuplicateStudentError(ValueError):
     """Se intentó dejar a dos estudiantes del mismo curso con el mismo
     `external_ref`."""
+
+
+class ParticipationDecisionNotFoundError(ValueError):
+    """La decisión no existe o no pertenece al curso indicado."""
+
+
+class InvalidParticipationStudentError(ValueError):
+    """El estudiante no fue seleccionado en la decisión indicada."""
 
 
 class CourseRepository(ABC):
@@ -294,6 +303,25 @@ class EventRepository(ABC):
         ...
 
 
+class ParticipationRepository(ABC):
+    """Calificaciones y asistencia de estudiantes seleccionados."""
+
+    @abstractmethod
+    def record_many(
+        self,
+        course_id: int,
+        decision_run_id: int,
+        score_and_presence_by_student: Dict[int, Tuple[float, bool]],
+    ) -> List[StudentParticipation]:
+        """Guarda o actualiza la participación de estudiantes de una decisión."""
+        ...
+
+    @abstractmethod
+    def list_by_course(self, course_id: int, limit: int = 200) -> List[StudentParticipation]:
+        """Historial más reciente primero."""
+        ...
+
+
 class UnitOfWork(ABC):
     """Agrupa todos los repositorios de una transacción y garantiza que
     se confirman o se descartan juntos (patrón Unit of Work).
@@ -320,6 +348,7 @@ class UnitOfWork(ABC):
     attendance: AttendanceRepository
     decision_runs: DecisionRunRepository
     events: EventRepository
+    participations: ParticipationRepository
 
     @abstractmethod
     def __enter__(self) -> "UnitOfWork": ...

@@ -18,6 +18,7 @@ from src.repositories.in_memory.repository_impl import (
     InMemoryDatabase,
     InMemoryDecisionRunRepository,
     InMemoryEventRepository,
+    InMemoryParticipationRepository,
     InMemoryStudentRepository,
     InMemoryStudentStateRepository,
     InMemorySyllabusRepository,
@@ -41,6 +42,7 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.attendance = InMemoryAttendanceRepository(self._db)
         self.decision_runs = InMemoryDecisionRunRepository(self._db)
         self.events = InMemoryEventRepository(self._db)
+        self.participations = InMemoryParticipationRepository(self._db)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:

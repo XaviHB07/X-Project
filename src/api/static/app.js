@@ -5,12 +5,15 @@ const state = {
   availableCourses: [],
   session: null,
   proposal: null,
+  sessionAttendanceSnapshot: new Set(),
   students: [],
   managementStudents: [],
   role: "profesor",
   present: new Set(),
   methods: [],
   metrics: null,
+  participationPending: false,
+  participationDecisionRunId: null,
   toastTimer: null,
   visualTimer: null,
 };
@@ -32,6 +35,7 @@ const elements = {
   studentList: $("#student-list"),
   listEmpty: $("#list-empty"),
   toggleAll: $("#toggle-all-button"),
+  markSessionPresent: $("#mark-session-present-button"),
   runButton: $("#run-button"),
   selectionNote: $("#selection-note"),
   methodSelect: $("#method-select"),
@@ -52,7 +56,11 @@ const elements = {
   managementView: $("#management-view"),
   attendanceTab: $("#attendance-tab"),
   managementTab: $("#management-tab"),
+  participationsTab: $("#participations-tab"),
   adminStudentList: $("#admin-student-list"),
+  participationsView: $("#participations-view"),
+  participationHistoryBody: $("#participation-history-body"),
+  participationHistoryEmpty: $("#participation-history-empty"),
   activeRole: $("#active-role"),
 };
 
@@ -212,7 +220,8 @@ function updateSelectionControls() {
   $("#metric-present").textContent = presentCount;
   const fullyPresent = state.students.length > 0 && presentCount === state.students.length;
   elements.toggleAll.textContent = fullyPresent ? "Desmarcar todos" : "Marcar todos";
-  elements.runButton.disabled = !state.course || presentCount === 0 || state.students.length === 0;
+  elements.markSessionPresent.disabled = !state.session || state.students.length === 0;
+  elements.runButton.disabled = !state.course || presentCount === 0 || state.students.length === 0 || state.participationPending;
   const sessionNote = state.session ? " Se guarda en la sesión en curso." : " Inicia una sesión para guardar la asistencia.";
   elements.selectionNote.textContent = presentCount
     ? `${presentCount} estudiante${presentCount === 1 ? "" : "s"} presente${presentCount === 1 ? "" : "s"}.${sessionNote}`
@@ -253,12 +262,16 @@ function renderCourse() {
 
 function setCourseView(view) {
   const management = view === "management";
-  elements.attendanceView.hidden = management;
+  const participations = view === "participations";
+  elements.attendanceView.hidden = management || participations;
   elements.managementView.hidden = !management;
-  elements.attendanceTab.classList.toggle("active", !management);
+  elements.participationsView.hidden = !participations;
+  elements.attendanceTab.classList.toggle("active", !management && !participations);
   elements.managementTab.classList.toggle("active", management);
-  elements.attendanceTab.setAttribute("aria-selected", String(!management));
+  elements.participationsTab.classList.toggle("active", participations);
+  elements.attendanceTab.setAttribute("aria-selected", String(!management && !participations));
   elements.managementTab.setAttribute("aria-selected", String(management));
+  elements.participationsTab.setAttribute("aria-selected", String(participations));
 }
 
 function renderSessionBox() {
@@ -298,6 +311,9 @@ async function loadProposal() {
 async function loadCourse(courseId, { remember = true } = {}) {
   const id = Number(courseId);
   if (!Number.isInteger(id) || id <= 0) throw new Error("Escribe un ID de curso válido.");
+  if (state.participationPending) {
+    throw new Error("Guarda la participación pendiente antes de cargar otro curso.");
+  }
   const course = await api(`/courses/${id}`);
   const [students, managementStudents, metrics] = await Promise.all([
     api(`/courses/${id}/students`),
@@ -309,8 +325,11 @@ async function loadCourse(courseId, { remember = true } = {}) {
   state.managementStudents = managementStudents;
   state.present = new Set();
   state.session = null;
+  state.sessionAttendanceSnapshot = new Set();
   state.proposal = null;
   state.metrics = metrics;
+  state.participationPending = false;
+  state.participationDecisionRunId = null;
   $("#metric-last-run").textContent = "—";
   elements.resultPanel.hidden = true;
   elements.importResult.hidden = true;
@@ -377,6 +396,29 @@ function formatDate(value) {
   return new Intl.DateTimeFormat("es", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
+async function loadParticipationHistory() {
+  if (!state.course) return;
+  elements.participationHistoryEmpty.textContent = "Cargando historial…";
+  elements.participationHistoryEmpty.hidden = false;
+  try {
+    const records = await api(`/courses/${state.course.id}/participations`);
+    elements.participationHistoryBody.innerHTML = records.map((record) => `
+      <tr>
+        <td>${record.student_id}</td>
+        <td>${escapeHtml(record.display_name)} <small>${escapeHtml(record.external_ref)}</small></td>
+        <td>${Number(record.score).toLocaleString("es", { maximumFractionDigits: 2 })}</td>
+        <td>${escapeHtml(formatDate(record.created_at))}</td>
+        <td><span class="attendance-badge ${record.present ? "is-present" : "is-absent"}">${record.present ? "Presente" : "Ausente"}</span></td>
+      </tr>`).join("");
+    elements.participationHistoryEmpty.hidden = records.length > 0;
+    if (!records.length) elements.participationHistoryEmpty.textContent = "Todavía no hay participaciones registradas.";
+  } catch (error) {
+    elements.participationHistoryBody.innerHTML = "";
+    elements.participationHistoryEmpty.textContent = error.message;
+    elements.participationHistoryEmpty.hidden = false;
+  }
+}
+
 async function openStudentHistory(studentId) {
   const student = state.students.find((item) => item.id === Number(studentId));
   if (!student) return;
@@ -419,8 +461,29 @@ function renderSelectionResult(result) {
   $("#result-meta").textContent = `Sesión #${result.class_session_id} · Decisión #${result.decision_run_id}`;
   $("#selected-list").innerHTML = result.selected_student_ids.map((id) => {
     const name = names.get(id) || `Estudiante ${id}`;
-    return `<div class="selected-person"><span aria-hidden="true">✓</span>${escapeHtml(name)} <small>ID ${id}</small></div>`;
+    const wasPresent = state.present.has(Number(id));
+    return `<article class="participation-entry">
+      <div class="selected-person"><span aria-hidden="true">✓</span>${escapeHtml(name)} <small>ID ${id}</small></div>
+      <div class="participation-score-field">
+        <label class="participation-score-label" for="participation-score-${id}">Nota (0 al 5)</label>
+        <input class="field participation-score" id="participation-score-${id}" data-score-id="${id}" type="password"
+          inputmode="decimal" autocomplete="new-password" maxlength="6" pattern="[0-9]+([.,][0-9]+)?"
+          aria-label="Nota de ${escapeHtml(name)}, de 0 a 5" required />
+      </div>
+      <label class="participation-attendance" for="participation-present-${id}">
+        <input id="participation-present-${id}" data-presence-id="${id}" type="checkbox" ${wasPresent ? "checked" : ""} />
+        Presente
+      </label>
+    </article>`;
   }).join("");
+  const saveButton = $("#participation-save");
+  state.participationDecisionRunId = result.decision_run_id;
+  saveButton.hidden = result.selected_student_ids.length === 0;
+  saveButton.textContent = "Guardar participaciones";
+  saveButton.disabled = false;
+  $("#participation-form").hidden = result.selected_student_ids.length === 0;
+  state.participationPending = result.selected_student_ids.length > 0;
+  updateSelectionControls();
   elements.resultPanel.hidden = false;
 }
 
@@ -589,6 +652,10 @@ function closeSelectionStage() {
 
 $("#create-course-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (state.participationPending) {
+    notify("Guarda la participación pendiente antes de crear otro curso.", true);
+    return;
+  }
   const form = event.currentTarget;
   const button = form.querySelector("button[type=submit]");
   const name = $("#course-name").value.trim();
@@ -670,6 +737,19 @@ elements.studentList.addEventListener("change", async (event) => {
   updateSelectionControls();
 });
 
+document.addEventListener("input", (event) => {
+  const input = event.target.closest("[data-score-id]");
+  if (!input) return;
+  const normalized = input.value.replace(",", ".");
+  const validFormat = /^\d*(?:\.\d*)?$/.test(normalized);
+  const validRange = normalized === "" || Number(normalized) <= 5;
+  if (!validFormat || !validRange) {
+    input.value = input.dataset.lastValid || "";
+    return;
+  }
+  input.dataset.lastValid = input.value;
+});
+
 elements.toggleAll.addEventListener("click", async () => {
   const allPresent = state.students.length > 0 && state.present.size === state.students.length;
   if (state.session) {
@@ -731,6 +811,48 @@ $("#selection-form").addEventListener("submit", async (event) => {
 elements.stageClose.addEventListener("click", closeSelectionStage);
 $("#stage-done").addEventListener("click", closeSelectionStage);
 
+$("#participation-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.course) return;
+  const decisionRunId = state.participationDecisionRunId;
+  const scores = [...document.querySelectorAll("[data-score-id]")];
+  const participations = scores.map((input) => {
+    const rawScore = input.value.trim().replace(",", ".");
+    return {
+      student_id: Number(input.dataset.scoreId),
+      score: Number(rawScore),
+      present: document.querySelector(`[data-presence-id="${input.dataset.scoreId}"]`).checked,
+    };
+  });
+  if (participations.some((item) => !Number.isFinite(item.score) || item.score < 0 || item.score > 5)) {
+    notify("Cada nota debe ser un número entre 0 y 5.", true);
+    return;
+  }
+  const button = $("#participation-save");
+  setBusy(button, true, "Guardando...");
+  try {
+    await api(`/courses/${state.course.id}/decision-runs/${decisionRunId}/participations`, {
+      method: "POST",
+      body: JSON.stringify({ participations }),
+    });
+    state.participationPending = false;
+    scores.forEach((input) => { input.disabled = true; });
+    document.querySelectorAll("[data-presence-id]").forEach((input) => { input.disabled = true; });
+    button.textContent = "Participaciones guardadas";
+    updateSelectionControls();
+    await loadParticipationHistory();
+    notify("Notas y asistencia guardadas.");
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    setBusy(button, false);
+    if (!state.participationPending) {
+      button.textContent = "Participaciones guardadas";
+      button.disabled = true;
+    }
+  }
+});
+
 $("#session-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!state.course) return;
@@ -743,7 +865,10 @@ $("#session-form").addEventListener("submit", async (event) => {
   try {
     const detail = await api(`/courses/${state.course.id}/class-sessions`, { method: "POST", body: JSON.stringify(payload) });
     state.session = detail;
-    state.present = new Set(detail.attendance.filter((entry) => entry.present).map((entry) => entry.student_id));
+    state.sessionAttendanceSnapshot = new Set(
+      detail.attendance.filter((entry) => entry.present).map((entry) => entry.student_id),
+    );
+    state.present = new Set(state.sessionAttendanceSnapshot);
     renderSessionBox();
     renderStudents();
     notify(`Sesión #${detail.id} iniciada.`);
@@ -756,12 +881,32 @@ $("#session-form").addEventListener("submit", async (event) => {
 
 $("#session-end-button").addEventListener("click", async () => {
   state.session = null;
+  state.sessionAttendanceSnapshot = new Set();
   state.present = new Set();
   elements.resultPanel.hidden = true;
   renderSessionBox();
   renderStudents();
   await loadProposal();
   notify("Sesión terminada. Puedes iniciar otra.");
+});
+
+elements.markSessionPresent.addEventListener("click", async () => {
+  if (!state.session) return;
+  setBusy(elements.markSessionPresent, true, "Marcando...");
+  try {
+    await saveAttendance(
+      state.students.map((student) => [
+        student.id,
+        state.sessionAttendanceSnapshot.has(Number(student.id)),
+      ]),
+    );
+    renderStudents();
+    notify("Asistencia inicial de la sesión restaurada.");
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    setBusy(elements.markSessionPresent, false);
+  }
 });
 
 elements.rosterFile.addEventListener("change", () => {
@@ -862,6 +1007,11 @@ $("#edit-withdraw").addEventListener("click", () => {
 
 elements.attendanceTab.addEventListener("click", () => setCourseView("attendance"));
 elements.managementTab.addEventListener("click", () => setCourseView("management"));
+elements.participationsTab.addEventListener("click", () => {
+  setCourseView("participations");
+  loadParticipationHistory();
+});
+$("#refresh-participations").addEventListener("click", loadParticipationHistory);
 elements.activeRole.addEventListener("change", () => {
   state.role = elements.activeRole.value;
   localStorage.setItem("aula-active-role", state.role);

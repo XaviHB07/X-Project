@@ -43,6 +43,8 @@ from src.api.schemas import (
     CourseResponse,
     DecisionResultResponse,
     FairnessMetricsResponse,
+    ParticipationBatchRequest,
+    ParticipationResponse,
     RosterImportResponse,
     RosterRowErrorResponse,
     RunSelectionRequest,
@@ -58,7 +60,12 @@ from src.api.schemas import (
     SyllabusEntryRequest,
     SyllabusEntryResponse,
 )
-from src.repositories.interfaces import DuplicateStudentError, UnitOfWork
+from src.repositories.interfaces import (
+    DuplicateStudentError,
+    InvalidParticipationStudentError,
+    ParticipationDecisionNotFoundError,
+    UnitOfWork,
+)
 from src.services.bootstrap import build_app_context
 from src.services.errors import (
     CourseNotFoundError,
@@ -545,6 +552,63 @@ def run_selection(
         created_at=result.created_at,
         request_id=result.request_id,
     )
+
+
+@app.post(
+    "/courses/{course_id}/decision-runs/{decision_run_id}/participations",
+    response_model=List[ParticipationResponse],
+    status_code=status.HTTP_201_CREATED,
+    tags=["participación"],
+)
+def record_participations(
+    course_id: int,
+    decision_run_id: int,
+    payload: ParticipationBatchRequest,
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> List[ParticipationResponse]:
+    """Registra la nota y asistencia de los estudiantes seleccionados."""
+    student_ids = [item.student_id for item in payload.participations]
+    if len(student_ids) != len(set(student_ids)):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "No repitas un estudiante en el mismo registro de participación.",
+        )
+    try:
+        with uow:
+            records = uow.participations.record_many(
+                course_id,
+                decision_run_id,
+                {
+                    item.student_id: (item.score, item.present)
+                    for item in payload.participations
+                },
+            )
+            uow.commit()
+    except ParticipationDecisionNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except InvalidParticipationStudentError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return [ParticipationResponse(**record.__dict__) for record in records]
+
+
+@app.get(
+    "/courses/{course_id}/participations",
+    response_model=List[ParticipationResponse],
+    tags=["participación"],
+)
+def list_course_participations(
+    course_id: int,
+    limit: int = 200,
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> List[ParticipationResponse]:
+    """Historial de notas y asistencia del curso, más reciente primero."""
+    if not 1 <= limit <= 1000:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "El límite debe estar entre 1 y 1000."
+        )
+    with uow:
+        records = uow.participations.list_by_course(course_id, limit=limit)
+    return [ParticipationResponse(**record.__dict__) for record in records]
 
 
 # --------------------------------------------------------------------------
