@@ -13,9 +13,14 @@ SQLAlchemy>=2.0
 fastapi>=0.110
 uvicorn[standard]>=0.29
 pydantic>=2.5
+# Necesario para recibir el Excel de la lista de estudiantes (UploadFile).
+python-multipart>=0.0.9
 
 # --- Configuración ---------------------------------------------------------
 pyyaml>=6.0
+
+# --- Lectura del Excel de estudiantes (HU-C1) -------------------------------
+openpyxl>=3.1
 
 # --- Simulación / visualización (modo investigación) ------------------
 matplotlib>=3.7

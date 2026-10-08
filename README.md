@@ -81,6 +81,8 @@ un servidor HTTP o dentro de una simulación en memoria.
 ```
 courses (1) ──< students (1) ── (1) student\_state
 courses (1) ──< class\_sessions (1) ──< decision\_runs (1) ──< selection\_events >── students
+courses (1) ──< syllabus\_entries
+class\_sessions (1) ──< session\_attendance >── students
 ```
 
 * **`courses`**: contenedor de estudiantes (permite correr varios cursos
@@ -93,6 +95,8 @@ concurrentes; por eso está separada de `students`.
 selección" (antes era implícito, un `for` en la simulación).
 * **`decision\_runs`**: una invocación del servicio de selección — la
 unidad transaccional.
+* **`syllabus\_entries`**: tema previsto por (curso, fecha); alimenta la propuesta de HU-S1.
+* **`session\_attendance`**: marca presente/ausente de cada estudiante en cada sesión (HU-S2).
 * **`selection\_events`**: log de auditoría, un registro por estudiante
 considerado en cada `decision\_run`, con alpha/beta antes y después.
 
@@ -116,8 +120,9 @@ pip install -r requirements.txt
 pytest -v
 ```
 
-Deberías ver 47 tests en verde: estrategias, métricas, el servicio de
-selección (con y sin concurrencia) y la API HTTP completa contra una
+Deberías ver todos los tests en verde: estrategias, métricas, el servicio de
+selección (con y sin concurrencia), la importación del Excel de estudiantes,
+las sesiones con asistencia (Sprint 1) y la API HTTP completa contra una
 base de datos SQLite real.
 
 ### 3.3. Levantar la API de producción
@@ -169,13 +174,58 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |GET|`/health`|Chequeo de salud|
 |GET|`/methods`|Estrategias de selección disponibles|
 |POST|`/courses`|Crear un curso|
+|GET|`/courses`|Listar cursos (HU-S1)|
 |GET|`/courses/{id}`|Obtener un curso|
 |POST|`/courses/{id}/students`|Matricular estudiante (idempotente)|
-|GET|`/courses/{id}/students`|Listar estudiantes del curso|
+|POST|`/courses/{id}/students/import`|**HU-C1**: cargar/recargar la lista desde un Excel `.xlsx`|
+|GET|`/courses/{id}/students`|Listar estudiantes activos (`?include_inactive=true` incluye retirados)|
+|PATCH|`/students/{id}`|**HU-C1**: corregir nombre/código, retirar o reincorporar|
 |GET|`/students/{id}/state`|Estado bayesiano actual (alpha, beta, contadores)|
 |GET|`/students/{id}/history`|Historial de eventos de selección|
-|POST|`/courses/{id}/sessions/select`|**Ejecutar una selección real** (el caso de uso central)|
+|POST|`/courses/{id}/syllabus`|Registrar el tema previsto para una fecha (insumo de HU-S1)|
+|GET|`/courses/{id}/syllabus`|Listar el sílabo del curso|
+|GET|`/courses/{id}/class-sessions/proposal`|**HU-S1**: fecha y tema propuestos antes de iniciar|
+|POST|`/courses/{id}/class-sessions`|**HU-S1**: iniciar sesión (tema confirmado/corregido) con asistencia inicial|
+|GET|`/courses/{id}/class-sessions`|Listar sesiones del curso|
+|GET|`/class-sessions/{id}`|Detalle de la sesión con su asistencia|
+|PUT|`/class-sessions/{id}/attendance`|**HU-S2**: marcar/desmarcar asistencia|
+|POST|`/courses/{id}/sessions/select`|**Ejecutar una selección real**. Sin `present_student_ids`, usa la asistencia de `class_session_id`|
 |GET|`/courses/{id}/fairness-metrics`|Gini / CV / std / cobertura del curso|
+
+#### Sprint 1: lista por Excel, sesiones y asistencia
+
+```bash
+# HU-C1: cargar la lista (.xlsx con columnas "codigo" y "nombre")
+curl -X POST http://127.0.0.1:8000/courses/1/students/import \
+  -F "file=@lista.xlsx;type=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+# HU-S1: ver la propuesta de fecha/tema e iniciar la sesión
+curl "http://127.0.0.1:8000/courses/1/class-sessions/proposal"
+curl -X POST http://127.0.0.1:8000/courses/1/class-sessions \
+  -H "Content-Type: application/json" -d '{"topic": "Límites y continuidad"}'
+
+# HU-S2: marcar ausente a un estudiante y seleccionar solo entre los presentes
+curl -X PUT http://127.0.0.1:8000/class-sessions/1/attendance \
+  -H "Content-Type: application/json" \
+  -d '{"attendance": [{"student_id": 3, "present": false}]}'
+curl -X POST http://127.0.0.1:8000/courses/1/sessions/select \
+  -H "Content-Type: application/json" \
+  -d '{"class_session_id": 1, "k": 2, "method": "bayesian_fairness"}'
+```
+
+Reglas del Excel: la primera fila no vacía es el encabezado; se aceptan
+`codigo`/`matricula` y `nombre`/`apellidos y nombres` (sin importar
+mayúsculas ni tildes). Si falta una columna o el archivo no es `.xlsx`, se
+responde 400 y no se guarda nada. Si solo algunas filas son inválidas (sin
+nombre, código repetido…), las válidas se guardan y las inválidas se
+devuelven con su número de fila. Volver a cargar el archivo es seguro: actualiza
+nombres y no duplica.
+
+Decisiones del Sprint 1: al iniciar una sesión todos los estudiantes activos
+quedan presentes por defecto (el docente desmarca a los ausentes); retirar
+a un estudiante lo oculta pero conserva su historial; el sílabo se registra
+por fecha con `POST /courses/{id}/syllabus` (la carga masiva queda fuera de
+este sprint).
 
 ### 3.4. Correr el modo simulación (investigación / benchmark)
 
@@ -234,7 +284,10 @@ antes de exponerlo a usuarios reales en internet, considera agregar:
 * **Migraciones de esquema (Alembic):** hoy `scripts/init\_db.py` usa
 `Base.metadata.create\_all(...)`, que crea tablas que faltan pero no
 sabe migrar cambios sobre una base con datos reales (agregar una
-columna, por ejemplo). Alembic es la herramienta estándar de
+columna, por ejemplo). Como parche mínimo, `bootstrap.py` agrega
+al arrancar las columnas nuevas del Sprint 1 (`students.active`,
+`class_sessions.session_date`/`topic`) a bases anteriores; cualquier
+cambio futuro debería pasar a Alembic. Alembic es la herramienta estándar de
 SQLAlchemy para esto.
 * **Autenticación/autorización:** la API no tiene ningún control de
 acceso hoy — cualquiera que le llegue puede crear cursos, matricular
@@ -292,6 +345,10 @@ seleccion\_bayesiana/
 │   │       └── unit\_of\_work.py        "Transacción" in-memory
 │   ├── services/                      Casos de uso (orquestan strategies + repositories)
 │   │   ├── selection\_service.py       EL caso de uso central — leer esto con cuidado
+│   │   ├── roster\_import.py           Lee y valida el Excel de estudiantes (HU-C1, sin BD)
+│   │   ├── roster\_service.py          Importar lista, editar/retirar estudiantes (HU-C1)
+│   │   ├── session\_service.py         Iniciar sesión, tema propuesto, asistencia (HU-S1, HU-S2)
+│   │   ├── errors.py                  Errores de dominio de los servicios
 │   │   ├── fairness\_service.py        Métricas de equidad de solo lectura
 │   │   └── bootstrap.py               Composition root (arma todo el sistema)
 │   ├── metrics/
@@ -318,6 +375,9 @@ seleccion\_bayesiana/
     ├── test\_metrics.py                Métricas de equidad
     ├── test\_selection\_service.py      El caso de uso central, sobre repos in-memory
     ├── test\_concurrency.py            Prueba de concurrencia (no lost updates)
+    ├── test\_roster\_import.py          Parser del Excel (HU-C1)
+    ├── test\_roster\_service.py         Importar/editar lista sobre repos in-memory (HU-C1)
+    ├── test\_session\_service.py        Sesiones, asistencia y selección por asistencia (HU-S1/S2)
     └── test\_api.py                    Integración HTTP completa, contra SQLite real
 ```
 
