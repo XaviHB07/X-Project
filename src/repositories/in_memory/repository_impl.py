@@ -132,6 +132,8 @@ class InMemoryStudentRepository(StudentRepository):
         display_name: str,
         alpha_init: float,
         beta_init: float,
+        phone_number: Optional[str] = None,
+        email: Optional[str] = None,
     ) -> Student:
         for s in self._db.students.values():
             if s.course_id == course_id and s.external_ref == external_ref:
@@ -143,6 +145,8 @@ class InMemoryStudentRepository(StudentRepository):
             external_ref=external_ref,
             display_name=display_name,
             created_at=_utcnow(),
+            phone_number=phone_number,
+            email=email,
         )
         self._db.students[student.id] = student
         self._db.student_states[student.id] = _MutableStudentState(
@@ -157,15 +161,30 @@ class InMemoryStudentRepository(StudentRepository):
         display_name: str,
         alpha_init: float,
         beta_init: float,
+        phone_number: Optional[str] = None,
+        email: Optional[str] = None,
     ) -> Tuple[Student, str]:
         for s in self._db.students.values():
             if s.course_id == course_id and s.external_ref == external_ref:
-                if s.display_name == display_name and s.active:
+                if (
+                    s.display_name == display_name
+                    and s.active
+                    and (phone_number is None or s.phone_number == phone_number)
+                    and (email is None or s.email == email)
+                ):
                     return s, "unchanged"
-                updated = replace(s, display_name=display_name, active=True)
+                updated = replace(
+                    s,
+                    display_name=display_name,
+                    active=True,
+                    phone_number=phone_number if phone_number is not None else s.phone_number,
+                    email=email if email is not None else s.email,
+                )
                 self._db.students[s.id] = updated
                 return updated, "updated"
-        student = self.get_or_create(course_id, external_ref, display_name, alpha_init, beta_init)
+        student = self.get_or_create(
+            course_id, external_ref, display_name, alpha_init, beta_init, phone_number, email
+        )
         return student, "created"
 
     def update(
@@ -174,6 +193,8 @@ class InMemoryStudentRepository(StudentRepository):
         external_ref: Optional[str] = None,
         display_name: Optional[str] = None,
         active: Optional[bool] = None,
+        phone_number: Optional[str] = None,
+        email: Optional[str] = None,
     ) -> Optional[Student]:
         current = self._db.students.get(student_id)
         if current is None:
@@ -185,14 +206,18 @@ class InMemoryStudentRepository(StudentRepository):
                         f"Ya existe un estudiante con el código {external_ref!r} en este curso."
                     )
         changes = {
-            k: v
-            for k, v in (
+            key: value
+            for key, value in (
                 ("external_ref", external_ref),
                 ("display_name", display_name),
                 ("active", active),
             )
-            if v is not None
+            if value is not None
         }
+        if phone_number is not None:
+            changes["phone_number"] = phone_number or None
+        if email is not None:
+            changes["email"] = email or None
         updated = replace(current, **changes)
         self._db.students[student_id] = updated
         return updated

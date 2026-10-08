@@ -122,22 +122,42 @@ pytest -v
 
 Deberías ver todos los tests en verde: estrategias, métricas, el servicio de
 selección (con y sin concurrencia), la importación del Excel de estudiantes,
-las sesiones con asistencia (Sprint 1) y la API HTTP completa contra una
-base de datos SQLite real.
+las sesiones con asistencia (Sprint 1) y la API HTTP completa contra bases de
+datos SQLite temporales.
 
 ### 3.3. Levantar la API de producción
 
 ```bash
-python scripts/init_db.py      # crea las tablas (SQLite local por defecto)
+export DATABASE_URL='postgresql+psycopg://seleccion_app:CAMBIAR_PASSWORD@localhost:5432/seleccion_bayesiana'
+python scripts/init_db.py      # crea las tablas dentro de la base PostgreSQL
 python scripts/run_api.py --reload
 ```
 
+Para crear la base PostgreSQL local por primera vez, instala/inicia
+PostgreSQL y ejecuta como administrador (cambia la contraseña de ejemplo):
+
+```sql
+CREATE ROLE seleccion_app WITH LOGIN PASSWORD 'CAMBIAR_PASSWORD';
+CREATE DATABASE seleccion_bayesiana OWNER seleccion_app;
+```
+
+Guarda la URL con tus credenciales en tu entorno local o expórtala antes de
+iniciar la API. No subas contraseñas al repositorio. `.env.example` es una
+plantilla: el proyecto no carga `.env` automáticamente. Si ya tienes una base
+y un usuario de PostgreSQL, omite la creación y configura `DATABASE_URL` con
+los datos que te proporcionó el administrador.
+
 Con el servidor corriendo, abrir `http://127.0.0.1:8000/docs` para la
 documentación interactiva (Swagger UI), o `http://127.0.0.1:8000/` para
-el panel web. Desde el panel puedes crear o cargar un curso, matricular
-estudiantes, marcar asistencia, ejecutar una selección y consultar el
-estado e historial individual. Los cursos recientes se recuerdan en el
-navegador; los datos del sistema quedan en la base SQLite configurada.
+el panel web. Desde el panel puedes crear o cargar un curso. En
+**Administrar estudiantes** se carga la lista una vez, se matriculan
+estudiantes y se editan sus datos de contacto; en **Asistencia** solo se
+muestran los estudiantes activos para la clase. También puedes ejecutar una
+selección y consultar el estado e historial individual. Los cursos recientes se recuerdan en el
+navegador; los datos del sistema quedan en la base PostgreSQL configurada.
+El selector de rol de la esquina inferior izquierda permite alternar entre
+Profesor y Administrador; ambos pueden administrar la matrícula en esta
+versión del MVP.
 
 También se pueden probar los endpoints directamente:
 
@@ -176,10 +196,10 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |POST|`/courses`|Crear un curso|
 |GET|`/courses`|Listar cursos (HU-S1)|
 |GET|`/courses/{id}`|Obtener un curso|
-|POST|`/courses/{id}/students`|Matricular estudiante (idempotente)|
+|POST|`/courses/{id}/students`|Matricular estudiante (teléfono y correo opcionales)|
 |POST|`/courses/{id}/students/import`|**HU-C1**: cargar/recargar la lista desde un Excel `.xlsx`|
 |GET|`/courses/{id}/students`|Listar estudiantes activos (`?include_inactive=true` incluye retirados)|
-|PATCH|`/students/{id}`|**HU-C1**: corregir nombre/código, retirar o reincorporar|
+|PATCH|`/students/{id}`|**HU-C1**: editar datos, retirar o reincorporar|
 |GET|`/students/{id}/state`|Estado bayesiano actual (alpha, beta, contadores)|
 |GET|`/students/{id}/history`|Historial de eventos de selección|
 |POST|`/courses/{id}/syllabus`|Registrar el tema previsto para una fecha (insumo de HU-S1)|
@@ -213,13 +233,22 @@ curl -X POST http://127.0.0.1:8000/courses/1/sessions/select \
   -d '{"class_session_id": 1, "k": 2, "method": "bayesian_fairness"}'
 ```
 
-Reglas del Excel: la primera fila no vacía es el encabezado; se aceptan
-`codigo`/`matricula` y `nombre`/`apellidos y nombres` (sin importar
-mayúsculas ni tildes). Si falta una columna o el archivo no es `.xlsx`, se
-responde 400 y no se guarda nada. Si solo algunas filas son inválidas (sin
-nombre, código repetido…), las válidas se guardan y las inválidas se
-devuelven con su número de fila. Volver a cargar el archivo es seguro: actualiza
-nombres y no duplica.
+Reglas del Excel: el sistema busca el encabezado en las filas, sin asumir
+un número fijo, y reconoce `codigo`/`matricula` y `nombre`/`alumno`/
+`apellidos y nombres` (sin importar mayúsculas ni tildes). Las columnas
+`telefono`/`celular` y `correo`/`email` son opcionales; si una reimportación
+no trae esos campos, conserva el contacto que ya estaba registrado. Antes del
+encabezado debe aparecer el código o el nombre del curso, por ejemplo en el
+título del archivo; el código/nombre se valida como contexto y el `course_id`
+de la ruta HTTP determina a qué curso se asocian los estudiantes. Así se
+pueden importar listas de distintos cursos usando el mismo endpoint. Si falta
+una columna obligatoria, el contexto del curso o el archivo no es `.xlsx`, se responde
+400 y no se guarda nada. Si solo algunas filas son inválidas (sin nombre,
+código repetido…), las válidas se guardan y las inválidas se devuelven con
+su número de fila original. Volver a cargar el archivo es seguro: actualiza
+nombres y contactos presentes, reactiva retirados y no duplica. La edición
+manual permite corregir nombre, código, teléfono y correo; los campos de
+contacto pueden dejarse vacíos.
 
 Decisiones del Sprint 1: al iniciar una sesión todos los estudiantes activos
 quedan presentes por defecto (el docente desmarca a los ausentes); retirar
@@ -242,16 +271,19 @@ y gráficos comparativos (`outputs/evolucion_*.png`, `outputs/boxplot_final_*.pn
 
 ## 4\. Concurrencia y elección de base de datos
 
-El proyecto usa **SQLite por defecto** (cero configuración, un archivo
-`.db`), ideal para desarrollo local, demos y para correr los tests. Para
-un despliegue real se recomienda **PostgreSQL**: basta con cambiar
-`DATABASE\_URL` (ver `.env.example`) a algo como
+La API usa **PostgreSQL por defecto** para el trabajo compartido del MVP.
+Configura `DATABASE\_URL` (ver `.env.example`) con usuario, contraseña y
+host de tu instancia. Para tests y desarrollo aislado, SQLite sigue
+disponible configurando, por ejemplo, `DATABASE\_URL=sqlite:///./local.db`;
+las pruebas de API ya usan bases SQLite temporales.
 
 ```
 DATABASE\_URL=postgresql+psycopg://usuario:password@host:5432/basededatos
 ```
 
-sin tocar ni una línea de `src/repositories/sqlalchemy/`.
+La URL de conexión usa el esquema `postgresql+psycopg`, el host, el puerto
+(5432 por defecto) y el nombre de la base de datos. No es necesario modificar
+`src/repositories/sqlalchemy/` al cambiar de servidor.
 
 **¿Por qué PostgreSQL para producción real?** `get\_candidates\_for\_update`
 usa `SELECT ... FOR UPDATE` para tomar un bloqueo de escritura sobre las
@@ -289,11 +321,10 @@ al arrancar las columnas nuevas del Sprint 1 (`students.active`,
 `class_sessions.session_date`/`topic`) a bases anteriores; cualquier
 cambio futuro debería pasar a Alembic. Alembic es la herramienta estándar de
 SQLAlchemy para esto.
-* **Autenticación/autorización:** la API no tiene ningún control de
-acceso hoy — cualquiera que le llegue puede crear cursos, matricular
-estudiantes o disparar selecciones. Para un despliegue real hace falta
-algún esquema de autenticación (API keys, OAuth2, JWT, según el
-contexto) en `src/api/`.
+* **Autenticación/autorización:** la API no valida identidades ni roles.
+El selector Profesor/Administrador del panel solo cambia el rol visible
+localmente; no concede permisos de seguridad. No expongas la API a internet
+sin añadir autenticación real.
 * **Paginación:** `GET /courses/{id}/students` y `/students/{id}/history`
 devuelven todo de una vez; con cursos grandes o historiales largos
 convendría paginar.
@@ -378,6 +409,5 @@ seleccion\_bayesiana/
     ├── test\_roster\_import.py          Parser del Excel (HU-C1)
     ├── test\_roster\_service.py         Importar/editar lista sobre repos in-memory (HU-C1)
     ├── test\_session\_service.py        Sesiones, asistencia y selección por asistencia (HU-S1/S2)
-    └── test\_api.py                    Integración HTTP completa, contra SQLite real
+    └── test\_api.py                    Integración HTTP completa, contra SQLite temporal
 ```
-

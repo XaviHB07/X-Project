@@ -24,7 +24,7 @@ from datetime import date
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -107,6 +107,15 @@ def frontend() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.middleware("http")
+async def prevent_frontend_cache(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/assets/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
 @app.get("/health", tags=["infraestructura"])
 def health() -> dict:
     return {"status": "ok"}
@@ -124,6 +133,7 @@ def _student_response(s) -> StudentResponse:
     return StudentResponse(
         id=s.id, course_id=s.course_id, external_ref=s.external_ref,
         display_name=s.display_name, created_at=s.created_at, active=s.active,
+        phone_number=s.phone_number, email=s.email,
     )
 
 
@@ -192,7 +202,9 @@ def get_course(course_id: int, uow: UnitOfWork = Depends(new_unit_of_work)) -> C
     tags=["estudiantes"],
 )
 def enroll_student(
-    course_id: int, payload: StudentEnrollRequest, uow: UnitOfWork = Depends(new_unit_of_work)
+    course_id: int,
+    payload: StudentEnrollRequest,
+    uow: UnitOfWork = Depends(new_unit_of_work),
 ) -> StudentResponse:
     """Matricula un estudiante en el curso (idempotente por `external_ref`).
 
@@ -208,6 +220,8 @@ def enroll_student(
             display_name=payload.display_name,
             alpha_init=payload.alpha_init,
             beta_init=payload.beta_init,
+            phone_number=payload.phone_number,
+            email=payload.email,
         )
         uow.commit()
     return _student_response(student)
@@ -264,7 +278,9 @@ def list_students(
 
 @app.patch("/students/{student_id}", response_model=StudentResponse, tags=["estudiantes"])
 def update_student(
-    student_id: int, payload: StudentUpdateRequest, roster_service=Depends(get_roster_service)
+    student_id: int,
+    payload: StudentUpdateRequest,
+    roster_service=Depends(get_roster_service),
 ) -> StudentResponse:
     """HU-C1: corrige nombre/código, retira (`active=false`) o reincorpora a un estudiante."""
     try:
@@ -273,6 +289,8 @@ def update_student(
             external_ref=payload.external_ref,
             display_name=payload.display_name,
             active=payload.active,
+            phone_number=payload.phone_number,
+            email=payload.email,
         )
     except StudentNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc

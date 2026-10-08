@@ -18,7 +18,7 @@
 
         <div class="sidebar-section">
           <div class="section-label">CURSO ACTIVO</div>
-          <label class="sr-only" for="recent-courses">Cursos recientes</label>
+          <label class="sr-only" for="recent-courses">Cursos disponibles</label>
           <select id="recent-courses" class="field recent-select">
             <option value="">Selecciona un curso</option>
           </select>
@@ -41,6 +41,14 @@
             <span aria-hidden="true">＋</span> Crear curso
           </button>
         </form>
+
+        <div class="sidebar-role">
+          <label class="section-label" for="active-role">ROL ACTIVO</label>
+          <select class="field recent-select role-select" id="active-role">
+            <option value="profesor">Profesor</option>
+            <option value="administrador">Administrador</option>
+          </select>
+        </div>
 
         <div class="sidebar-bottom">
           <span class="status-dot" id="api-dot"></span>
@@ -71,7 +79,7 @@
           <div>
             <p class="eyebrow">AULA / SELECCIÓN</p>
             <h2>Empieza con un curso</h2>
-            <p>Créalo desde el panel lateral o carga su ID para ver estudiantes y sesiones.</p>
+            <p>Primero selecciona o crea un curso desde el panel lateral. Después aparecerán las pestañas <strong>Asistencia</strong> y <strong>Administrar estudiantes</strong>; ahí podrás cargar el Excel (.xlsx), matricular alumnos y editar sus datos. Profesor y Administrador pueden gestionar estudiantes en este MVP.</p>
           </div>
         </section>
 
@@ -99,7 +107,12 @@
             </div>
           </section>
 
-          <div class="workspace-grid">
+          <nav class="workspace-tabs" aria-label="Secciones del curso">
+            <button class="workspace-tab active" id="attendance-tab" type="button" aria-selected="true">Asistencia</button>
+            <button class="workspace-tab" id="management-tab" type="button" aria-selected="false">Administrar estudiantes</button>
+          </nav>
+
+          <div class="workspace-grid" id="attendance-view">
             <section class="roster-panel" aria-labelledby="roster-title">
               <div class="panel-heading roster-heading">
                 <div>
@@ -130,26 +143,6 @@
                   <button class="text-button" id="session-end-button" type="button">Terminar sesión</button>
                 </div>
               </section>
-
-              <div class="import-box">
-                <div class="import-row">
-                  <input id="roster-file" class="sr-only" type="file" accept=".xlsx" />
-                  <label for="roster-file" class="button button-quiet import-pick" id="roster-file-label">↑ Elegir Excel (.xlsx)</label>
-                  <button class="button button-add" id="import-button" type="button" disabled>Cargar lista</button>
-                </div>
-                <p class="form-note">Columnas: <strong>codigo</strong> y <strong>nombre</strong>. Volver a cargar el archivo actualiza nombres sin duplicar estudiantes.</p>
-                <div id="import-result" class="import-result" hidden aria-live="polite"></div>
-              </div>
-
-              <form id="enroll-form" class="enroll-form">
-                <div class="enroll-fields">
-                  <label class="sr-only" for="student-name">Nombre del estudiante</label>
-                  <input class="field" id="student-name" type="text" maxlength="255" placeholder="Nombre del estudiante" required />
-                  <label class="sr-only" for="student-ref">Identificador</label>
-                  <input class="field" id="student-ref" type="text" maxlength="255" placeholder="Código / matrícula" required />
-                  <button class="button button-add" type="submit" aria-label="Matricular estudiante">＋ <span>Matricular</span></button>
-                </div>
-              </form>
 
               <div class="roster-toolbar">
                 <span>ESTUDIANTE</span>
@@ -228,6 +221,54 @@
               </section>
             </aside>
           </div>
+
+          <section class="management-panel" id="management-view" hidden aria-labelledby="management-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">MATRÍCULA DEL CURSO</p>
+                <h2 id="management-title">Administrar estudiantes</h2>
+              </div>
+              <span id="management-count" class="count-badge">0</span>
+            </div>
+
+            <div class="management-grid">
+                <section class="management-card" aria-labelledby="import-title">
+                  <h3 id="import-title">Cargar desde Excel</h3>
+                  <div class="import-row">
+                    <input id="roster-file" class="sr-only" type="file" accept=".xlsx" />
+                    <label for="roster-file" class="button button-quiet import-pick" id="roster-file-label">↑ Elegir Excel (.xlsx)</label>
+                    <button class="button button-add" id="import-button" type="button" disabled>Cargar lista</button>
+                  </div>
+                  <p class="form-note">Columnas requeridas: <strong>codigo</strong> y <strong>nombre</strong>. Teléfono y correo son opcionales. La carga actualiza los registros existentes sin duplicarlos.</p>
+                  <div id="import-result" class="import-result" hidden aria-live="polite"></div>
+                </section>
+
+                <section class="management-card" aria-labelledby="enroll-title">
+                  <h3 id="enroll-title">Matricular estudiante</h3>
+                  <form id="enroll-form" class="management-form">
+                    <label class="form-label" for="student-name">Nombre</label>
+                    <input class="field" id="student-name" type="text" maxlength="255" required />
+                    <label class="form-label" for="student-ref">Código / matrícula</label>
+                    <input class="field" id="student-ref" type="text" maxlength="255" required />
+                    <label class="form-label" for="student-phone">Teléfono <span class="optional">OPCIONAL</span></label>
+                    <input class="field" id="student-phone" type="tel" maxlength="32" />
+                    <label class="form-label" for="student-email">Correo <span class="optional">OPCIONAL</span></label>
+                    <input class="field" id="student-email" type="email" maxlength="255" />
+                    <button class="button button-add" type="submit">＋ Matricular</button>
+                  </form>
+                </section>
+            </div>
+
+            <div class="admin-roster-toolbar">
+              <span>ESTUDIANTE · CONTACTO</span>
+              <span>ACCIONES</span>
+            </div>
+            <div id="admin-student-list" class="student-list" aria-live="polite"></div>
+            <div class="list-empty" id="admin-list-empty" hidden>
+              <span class="list-empty-mark">＋</span>
+              <p>Aún no hay estudiantes matriculados.</p>
+            </div>
+          </section>
         </div>
 
         <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -262,6 +303,10 @@
           <input id="edit-name" class="field" type="text" maxlength="255" required />
           <label class="form-label" for="edit-ref">Código / matrícula</label>
           <input id="edit-ref" class="field" type="text" maxlength="255" required />
+          <label class="form-label" for="edit-phone">Teléfono <span class="optional">OPCIONAL</span></label>
+          <input id="edit-phone" class="field" type="tel" maxlength="32" />
+          <label class="form-label" for="edit-email">Correo <span class="optional">OPCIONAL</span></label>
+          <input id="edit-email" class="field" type="email" maxlength="255" />
           <div class="edit-actions">
             <button class="button button-add" id="edit-save" type="submit">Guardar cambios</button>
             <button class="text-button danger-text" id="edit-withdraw" type="button">Retirar del curso</button>

@@ -71,6 +71,8 @@ def _to_student(row: StudentORM) -> Student:
         external_ref=row.external_ref,
         display_name=row.display_name,
         created_at=row.created_at,
+        phone_number=row.phone_number,
+        email=row.email,
         active=row.active,
     )
 
@@ -118,6 +120,8 @@ class SqlAlchemyStudentRepository(StudentRepository):
         display_name: str,
         alpha_init: float,
         beta_init: float,
+        phone_number: Optional[str] = None,
+        email: Optional[str] = None,
     ) -> Student:
         existing = self._session.execute(
             select(StudentORM).where(
@@ -128,7 +132,13 @@ class SqlAlchemyStudentRepository(StudentRepository):
         if existing is not None:
             return _to_student(existing)
 
-        row = StudentORM(course_id=course_id, external_ref=external_ref, display_name=display_name)
+        row = StudentORM(
+            course_id=course_id,
+            external_ref=external_ref,
+            display_name=display_name,
+            phone_number=phone_number,
+            email=email,
+        )
         self._session.add(row)
         self._session.flush()  # necesitamos row.id antes de crear el estado
 
@@ -145,6 +155,8 @@ class SqlAlchemyStudentRepository(StudentRepository):
         display_name: str,
         alpha_init: float,
         beta_init: float,
+        phone_number: Optional[str] = None,
+        email: Optional[str] = None,
     ) -> Tuple[Student, str]:
         existing = self._session.execute(
             select(StudentORM).where(
@@ -153,11 +165,22 @@ class SqlAlchemyStudentRepository(StudentRepository):
             )
         ).scalar_one_or_none()
         if existing is None:
-            return self.get_or_create(course_id, external_ref, display_name, alpha_init, beta_init), "created"
-        if existing.display_name == display_name and existing.active:
+            return self.get_or_create(
+                course_id, external_ref, display_name, alpha_init, beta_init, phone_number, email
+            ), "created"
+        if (
+            existing.display_name == display_name
+            and existing.active
+            and (phone_number is None or existing.phone_number == phone_number)
+            and (email is None or existing.email == email)
+        ):
             return _to_student(existing), "unchanged"
         existing.display_name = display_name
         existing.active = True
+        if phone_number is not None:
+            existing.phone_number = phone_number
+        if email is not None:
+            existing.email = email
         self._session.flush()
         return _to_student(existing), "updated"
 
@@ -167,6 +190,8 @@ class SqlAlchemyStudentRepository(StudentRepository):
         external_ref: Optional[str] = None,
         display_name: Optional[str] = None,
         active: Optional[bool] = None,
+        phone_number: Optional[str] = None,
+        email: Optional[str] = None,
     ) -> Optional[Student]:
         row = self._session.get(StudentORM, student_id)
         if row is None:
@@ -188,6 +213,10 @@ class SqlAlchemyStudentRepository(StudentRepository):
             row.display_name = display_name
         if active is not None:
             row.active = active
+        if phone_number is not None:
+            row.phone_number = phone_number or None
+        if email is not None:
+            row.email = email or None
         self._session.flush()
         return _to_student(row)
 

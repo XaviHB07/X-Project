@@ -4,10 +4,7 @@ pandas>=2.0
 
 # --- Persistencia (Repository + Unit of Work) ---------------------------
 SQLAlchemy>=2.0
-# Motor de PostgreSQL recomendado para producción real (opcional para
-# desarrollo local, que usa SQLite vía la librería estándar de Python).
-# Descomentar para desplegar contra PostgreSQL:
-# psycopg[binary]>=3.1
+psycopg[binary]>=3.1
 
 # --- API HTTP ------------------------------------------------------------
 fastapi>=0.110

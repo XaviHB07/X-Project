@@ -74,6 +74,8 @@ class StudentORM(Base):
     course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), nullable=False)
     external_ref: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    phone_number: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     # server_default: las filas que ya existían antes de esta columna
     # quedan activas (ver `_ensure_columns` en services/bootstrap.py).

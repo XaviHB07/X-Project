@@ -84,6 +84,8 @@ class AppContext:
 # PostgreSQL.
 _ADDED_COLUMNS = [
     ("students", "active", "BOOLEAN NOT NULL DEFAULT TRUE"),
+    ("students", "phone_number", "VARCHAR(32)"),
+    ("students", "email", "VARCHAR(255)"),
     ("class_sessions", "session_date", "DATE"),
     ("class_sessions", "topic", "VARCHAR(255)"),
 ]

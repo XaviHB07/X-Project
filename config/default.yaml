@@ -7,13 +7,10 @@
 
 # --- Sección nueva: configuración de producción ---------------------------
 production:
-  # Cadena de conexión SQLAlchemy. SQLite por defecto (cero configuración,
-  # ideal para desarrollo local y para correr los tests); en un despliegue
-  # real se recomienda PostgreSQL (ver README, sección "Concurrencia y
-  # elección de base de datos"). Se puede sobreescribir sin tocar este
-  # archivo con la variable de entorno DATABASE_URL, que es lo que se
-  # recomienda hacer en cualquier entorno desplegado (staging/producción).
-  database_url: "sqlite:///./seleccion_bayesiana.db"
+  # PostgreSQL local por defecto para el trabajo compartido del MVP.
+  # DATABASE_URL permite configurar usuario, contraseña y servidor sin
+  # guardar credenciales en este archivo (ver README).
+  database_url: "postgresql+psycopg://seleccion_app@localhost:5432/seleccion_bayesiana"
   log_level: "INFO"
 
 # --- Métodos de selección (Strategy) ---------------------------------------

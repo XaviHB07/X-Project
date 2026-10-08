@@ -72,6 +72,8 @@ class StudentRepository(ABC):
         display_name: str,
         alpha_init: float,
         beta_init: float,
+        phone_number: Optional[str] = None,
+        email: Optional[str] = None,
     ) -> Student:
         """Devuelve el estudiante si ya existe (por `external_ref` dentro
         del curso); si no, lo crea junto con su `StudentState` inicial
@@ -89,6 +91,8 @@ class StudentRepository(ABC):
         display_name: str,
         alpha_init: float,
         beta_init: float,
+        phone_number: Optional[str] = None,
+        email: Optional[str] = None,
     ) -> Tuple[Student, str]:
         """Crea o actualiza un estudiante a partir de una fila del Excel
         (HU-C1). A diferencia de `get_or_create`, si el estudiante ya
@@ -107,6 +111,8 @@ class StudentRepository(ABC):
         external_ref: Optional[str] = None,
         display_name: Optional[str] = None,
         active: Optional[bool] = None,
+        phone_number: Optional[str] = None,
+        email: Optional[str] = None,
     ) -> Optional[Student]:
         """Actualiza los campos no-`None`. Devuelve `None` si el
         estudiante no existe; lanza `DuplicateStudentError` si el nuevo
