@@ -25,6 +25,7 @@ from src.domain.entities import (
     ClassSession,
     Course,
     DecisionRun,
+    Participation,
     Student,
     SyllabusEntry,
 )
@@ -39,6 +40,11 @@ from src.domain.value_objects import (
 class DuplicateStudentError(ValueError):
     """Se intentó dejar a dos estudiantes del mismo curso con el mismo
     `external_ref`."""
+
+
+class ParticipationError(ValueError):
+    """Una participación no se pudo registrar: referencias inválidas o
+    estudiante que no pertenece a la sesión."""
 
 
 class CourseRepository(ABC):
@@ -294,6 +300,88 @@ class EventRepository(ABC):
         ...
 
 
+class ParticipationRepository(ABC):
+    """Persistencia de participaciones (HU-P4).
+
+    Es lo que cierra MVP 1. `EventRepository` guarda la traza del ALGORITMO
+    (que estudiantes se consideraron, con que alpha/beta, y quien quedo
+    elegido); esta guarda lo que PASO EN CLASE: que se pregunto, que
+    respondio y cuando.
+
+    Son cosas distintas. Sin esta, el sistema sortea estudiantes y no queda
+    constancia de nada de lo que se dijo, y el criterio de exito del Roadmap
+    ("queda un historial trazable") no se cumple.
+    """
+
+    @abstractmethod
+    def create(
+        self,
+        class_session_id: int,
+        student_id: int,
+        question: str,
+        answer: Optional[str],
+        asked_at,
+        decision_run_id: Optional[int] = None,
+        created_by: Optional[str] = None,
+        present: bool = True,
+    ) -> Participation:
+        """Registra una participacion y devuelve la entidad creada.
+
+        `present` se congela en el momento del registro (ver el docstring de
+        `domain.Participation`): si el docente corrige la asistencia despues,
+        el historial no debe cambiar bajo sus pies.
+
+        Lanza `ParticipationError` si la sesion o el estudiante no existen, o
+        si el estudiante no pertenece al curso de esa sesion.
+        """
+        ...
+
+    @abstractmethod
+    def get(self, participation_id: int) -> Optional[Participation]: ...
+
+    @abstractmethod
+    def list_for_session(
+        self,
+        class_session_id: int,
+        include_anuladas: bool = False,
+    ) -> List[Participation]:
+        """Participaciones de una sesion, en orden cronologico.
+
+        Por defecto excluye las anuladas: el historial que ve el docente es el
+        real. Para auditar, se pasa `include_anuladas=True`.
+        """
+        ...
+
+    @abstractmethod
+    def list_for_student(
+        self,
+        student_id: int,
+        include_anuladas: bool = False,
+    ) -> List[Participation]:
+        """Historial completo de un estudiante, mas reciente primero."""
+        ...
+
+    @abstractmethod
+    def count_for_session(self, class_session_id: int) -> int:
+        """Cuantas participaciones validas lleva la sesion. Alimenta el
+        contador que ve el docente durante la clase."""
+        ...
+
+    @abstractmethod
+    def anular(
+        self,
+        participation_id: int,
+        motivo: Optional[str] = None,
+    ) -> Optional[Participation]:
+        """Anulacion LOGICA: marca la participacion como anulada y devuelve la
+        entidad actualizada, o `None` si no existe.
+
+        Nunca borra. Una participacion mal registrada se corrige; el rastro de
+        que estuvo mal tambien forma parte del historial.
+        """
+        ...
+
+
 class UnitOfWork(ABC):
     """Agrupa todos los repositorios de una transacción y garantiza que
     se confirman o se descartan juntos (patrón Unit of Work).
@@ -320,6 +408,7 @@ class UnitOfWork(ABC):
     attendance: AttendanceRepository
     decision_runs: DecisionRunRepository
     events: EventRepository
+    participations: ParticipationRepository
 
     @abstractmethod
     def __enter__(self) -> "UnitOfWork": ...

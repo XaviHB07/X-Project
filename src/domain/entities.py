@@ -134,3 +134,49 @@ class AttendanceRecord:
     class_session_id: int
     student_id: int
     present: bool
+
+
+@dataclass(frozen=True)
+class Participation:
+    """Una participación efectiva de un estudiante en una sesión (HU-P4).
+
+    Es la entidad que cierra MVP 1. Sin ella, el sistema sortea estudiantes
+    pero no queda rastro de qué se preguntó ni de qué respondió: la selección
+    (`selection_events`) es un registro del ALGORITMO, no de lo que pasó en
+    clase. Son cosas distintas y las dos hacen falta.
+
+    Lo que guarda, y por qué cada campo:
+
+      `question` / `answer`  el contenido de la participación. Es el dato que
+                             el docente va a necesitar después para calificar
+                             (MVP 2) y para revisar qué Preguntas funcionaron.
+      `asked_at`             cuándo se preguntó. Con `id` da un orden
+                             inequívoco aunque dos participaciones caigan en
+                             el mismo segundo, cosa habitual en clase.
+      `decision_run_id`      de qué sorteo salió este estudiante. Es lo que
+                             permite auditar "lo elegí por Bayesian fairness
+                             en el sorteo #7", y reconstruir la sesión completa
+                             más adelante. Opcional porque HU-P4 no lo exige:
+                             el docente puede registrar a mano una
+                             participación que no venía de un sorteo.
+      `present`              si el estudiante estaba presente. Se copia en el
+                             momento del registro y NO se lee en vivo de la
+                             asistencia: si el docente corrige la asistencia
+                             despues, el historial no debe cambiar bajo sus
+                             pies. El registro es una foto de ese instante.
+      `anulada` / `motivo`   anulacion logica. Anular nunca borra: un
+                             registro mal hecho se corrige, y el rastro de que
+                             estuvo mal tambien importa.
+    """
+
+    id: int
+    class_session_id: int
+    student_id: int
+    question: str
+    asked_at: datetime
+    answer: Optional[str] = None
+    decision_run_id: Optional[int] = None
+    present: bool = True
+    created_by: Optional[str] = None
+    anulada: bool = False
+    motivo_anulacion: Optional[str] = None

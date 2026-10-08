@@ -29,6 +29,7 @@ from src.domain.events import EventBus, logging_subscriber, DecisionRunCompleted
 from src.repositories.sqlalchemy.models import Base
 from src.repositories.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork, build_session_factory
 from src.services.fairness_service import FairnessMetricsService
+from src.services.participation_service import ParticipationService
 from src.services.roster_service import RosterService
 from src.services.selection_service import SelectionService
 from src.services.session_service import SessionService
@@ -74,6 +75,7 @@ class AppContext:
     fairness_service: FairnessMetricsService
     roster_service: RosterService
     session_service: SessionService
+    participation_service: ParticipationService
 
 
 # Columnas agregadas a tablas que ya existían antes del Sprint 1. `create_all`
@@ -152,4 +154,5 @@ def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bo
         fairness_service=FairnessMetricsService(uow_factory),
         roster_service=RosterService(uow_factory),
         session_service=SessionService(uow_factory),
+        participation_service=ParticipationService(uow_factory),
     )

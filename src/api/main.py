@@ -20,7 +20,7 @@ de dominio a una respuesta HTTP. La lógica de negocio real vive en
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -30,12 +30,14 @@ from fastapi.staticfiles import StaticFiles
 
 from src.api.dependencies import (
     get_fairness_service,
+    get_participation_service,
     get_roster_service,
     get_selection_service,
     get_session_service,
     new_unit_of_work,
 )
 from src.api.schemas import (
+    AnularParticipationRequest,
     AttendanceEntryResponse,
     AttendanceUpdateRequest,
     AvailableMethodsResponse,
@@ -43,11 +45,14 @@ from src.api.schemas import (
     CourseResponse,
     DecisionResultResponse,
     FairnessMetricsResponse,
+    ParticipationCreateRequest,
+    ParticipationResponse,
     RosterImportResponse,
     RosterRowErrorResponse,
     RunSelectionRequest,
     SelectionEventResponse,
     SessionDetailResponse,
+    SessionParticipationSummaryResponse,
     SessionProposalResponse,
     SessionStartRequest,
     SessionSummaryResponse,
@@ -60,9 +65,11 @@ from src.api.schemas import (
 )
 from src.repositories.interfaces import DuplicateStudentError, UnitOfWork
 from src.services.bootstrap import build_app_context
+from src.repositories.interfaces import ParticipationError
 from src.services.errors import (
     CourseNotFoundError,
     InvalidAttendanceError,
+    ParticipationNotFoundError,
     SessionNotFoundError,
     StudentNotFoundError,
 )
@@ -121,6 +128,11 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+# Fecha de reserva para `created_at` en filas heredadas de una base anterior
+# al Sprint 1, donde la columna admitia NULL. Ver `_student_response`.
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
 @app.get("/methods", response_model=AvailableMethodsResponse, tags=["infraestructura"])
 def list_methods() -> AvailableMethodsResponse:
     """Estrategias de selección registradas y disponibles para usar en
@@ -132,7 +144,22 @@ def list_methods() -> AvailableMethodsResponse:
 def _student_response(s) -> StudentResponse:
     return StudentResponse(
         id=s.id, course_id=s.course_id, external_ref=s.external_ref,
-        display_name=s.display_name, created_at=s.created_at, active=s.active,
+display_name=s.display_name,
+        # `created_at` puede venir en None en una base creada antes del
+        # Sprint 1: la migracion de `bootstrap.py` aniade las columnas nuevas
+        # (students.active, class_sessions.session_date/topic), pero NO rellena
+        # created_at en las filas que ya existian, porque en el esquema
+        # anterior se permitia que fuera NULL.
+        #
+        # Sin este defecto, toda la API devolvio 500 al abrir un curso
+        # importado de una instalacion previa. Se resuelve con la epoca: es
+        # una fecha verosimil y, sobre todo, el campo es obligatorio en el
+        # esquema nuevo, asi que no puede quedar en null.
+        created_at=s.created_at or _EPOCH,
+        active=s.active,
+        # Telefono y email llegan de la carga de estudiantes (HU-C1). Son
+        # opcionales: un estudiante importado antes de que existieran esas
+        # columnas los tiene en None, y eso tiene que ser valido.
         phone_number=s.phone_number, email=s.email,
     )
 
@@ -489,6 +516,161 @@ def update_attendance(
     except InvalidAttendanceError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return _session_detail_response(detail)
+
+
+# --------------------------------------------------------------------------
+# Participaciones (HU-P4) — cierra MVP 1
+# --------------------------------------------------------------------------
+
+
+def _participation_response(item) -> ParticipationResponse:
+    """De `(Participation, Student)` a la respuesta de la API.
+
+    Se aplana a un solo objeto porque para el cliente tiene más sentido así:
+    `student_name` junto al resto, sin tener que desdoblar la tupla.
+    """
+    p = item.participation
+    return ParticipationResponse(
+        id=p.id,
+        class_session_id=p.class_session_id,
+        student_id=p.student_id,
+        student_name=item.student.display_name,
+        question=p.question,
+        answer=p.answer,
+        asked_at=p.asked_at,
+        decision_run_id=p.decision_run_id,
+        present=p.present,
+        created_by=p.created_by,
+        anulada=p.anulada,
+        motivo_anulacion=p.motivo_anulacion,
+    )
+
+
+@app.post(
+    "/class-sessions/{class_session_id}/participations",
+    response_model=ParticipationResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["participaciones"],
+)
+def register_participation(
+    class_session_id: int,
+    payload: ParticipationCreateRequest,
+    service=Depends(get_participation_service),
+) -> ParticipationResponse:
+    """HU-P4: registra la participación de un estudiante en la sesión.
+
+    Guarda la pregunta literal, la respuesta si el docente la escribe en el
+    momento, y la asistencia congelada en ese instante.
+
+    `decision_run_id` es opcional: permite registrar a mano una participación
+    que no salió de un sorteo.
+    """
+    try:
+        item = service.register(
+            class_session_id=class_session_id,
+            student_id=payload.student_id,
+            question=payload.question,
+            answer=payload.answer,
+            decision_run_id=payload.decision_run_id,
+            created_by=payload.created_by,
+        )
+    except SessionNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except StudentNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ParticipationError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _participation_response(item)
+
+
+@app.get(
+    "/class-sessions/{class_session_id}/participations",
+    response_model=List[ParticipationResponse],
+    tags=["participaciones"],
+)
+def list_session_participations(
+    class_session_id: int,
+    include_anuladas: bool = False,
+    service=Depends(get_participation_service),
+) -> List[ParticipationResponse]:
+    """Historial de la sesión, en orden cronológico.
+
+    Por defecto excluye las anuladas: lo que ve el docente es lo real. Para
+    auditar, `include_anuladas=true`.
+    """
+    try:
+        items = service.list_for_session(class_session_id, include_anuladas)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return [_participation_response(i) for i in items]
+
+
+@app.get(
+    "/students/{student_id}/participations",
+    response_model=List[ParticipationResponse],
+    tags=["participaciones"],
+)
+def list_student_participations(
+    student_id: int,
+    include_anuladas: bool = False,
+    service=Depends(get_participation_service),
+) -> List[ParticipationResponse]:
+    """Historial completo del estudiante, más reciente primero."""
+    try:
+        items = service.list_for_student(student_id, include_anuladas)
+    except StudentNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return [_participation_response(i) for i in items]
+
+
+@app.get(
+    "/class-sessions/{class_session_id}/participations/summary",
+    response_model=SessionParticipationSummaryResponse,
+    tags=["participaciones"],
+)
+def summarize_session_participations(
+    class_session_id: int,
+    service=Depends(get_participation_service),
+) -> SessionParticipationSummaryResponse:
+    """Resumen de la sesión: cuántas participaciones lleva y cuántos
+    estudiantes han hablado. Es lo que el docente mira durante la clase."""
+    try:
+        s = service.summary_for_session(class_session_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return SessionParticipationSummaryResponse(
+        class_session_id=s.class_session_id,
+        total=s.total,
+        estudiantes_participando=s.estudiantes_participando,
+        capacidad_presentes=s.capacidad_presentes,
+        participaciones_por_estudiante=s.participaciones_por_estudiante,
+    )
+
+
+@app.post(
+    "/participations/{participation_id}/anular",
+    response_model=ParticipationResponse,
+    tags=["participaciones"],
+)
+def anular_participation(
+    participation_id: int,
+    payload: AnularParticipationRequest,
+    service=Depends(get_participation_service),
+) -> ParticipationResponse:
+    """Anula una participación sin borrarla. El motivo queda registrado.
+
+    Anular nunca elimina: una participación mal registrada se corrige, y el
+    rastro de que estuvo mal también es parte del historial.
+    """
+    try:
+        p = service.anular(participation_id, payload.motivo)
+    except ParticipationNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    try:
+        unido = service.get_with_student(p.id)
+    except StudentNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return _participation_response(unido)
 
 
 # --------------------------------------------------------------------------

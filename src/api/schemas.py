@@ -230,3 +230,78 @@ class FairnessMetricsResponse(BaseModel):
 
 class AvailableMethodsResponse(BaseModel):
     methods: List[str]
+
+
+# --------------------------------------------------------------------------
+# Participaciones (HU-P4)
+# --------------------------------------------------------------------------
+
+
+class ParticipationCreateRequest(BaseModel):
+    """Alta de una participación.
+
+    `decision_run_id` es opcional: HU-P4 no lo exige y el docente a veces
+    pregunta por su cuenta, sin sorteo. Cuando viene, queda atado al sorteo
+    del que salió el estudiante, lo que permite reconstruir la sesión entera.
+    """
+
+    student_id: int = Field(
+        ..., description="Estudiante que participa", examples=[1]
+    )
+    question: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+        description="Texto literal de la pregunta realizada",
+        examples=["¿Qué es liderazgo y cómo se diferencia de la gestión?"],
+    )
+    answer: Optional[str] = Field(
+        None,
+        max_length=5000,
+        description="Respuesta del estudiante, si se escribe en el momento",
+    )
+    decision_run_id: Optional[int] = Field(
+        None, description="Sorteo del que salió el estudiante, si aplica"
+    )
+    created_by: Optional[str] = Field(
+        None, description="Docente que registró la participación"
+    )
+
+
+class ParticipationResponse(BaseModel):
+    id: int
+    class_session_id: int
+    student_id: int
+    student_name: str
+    question: str
+    answer: Optional[str] = None
+    asked_at: datetime
+    decision_run_id: Optional[int] = None
+    present: bool
+    created_by: Optional[str] = None
+    anulada: bool
+    motivo_anulacion: Optional[str] = None
+
+
+class SessionParticipationSummaryResponse(BaseModel):
+    """Resumen de participaciones de una sesión (HU-P4).
+
+    OJO con el nombre: ya existía un `SessionSummaryResponse` que resume la
+    SESION (id, curso, fecha, tema). Este es el resumen de lo que ha PASADO
+    en ella. Son cosas distintas y confundirlas es fácil, de ahí el prefijo.
+    """
+
+    class_session_id: int
+    total: int
+    estudiantes_participando: int
+    capacidad_presentes: int
+    participaciones_por_estudiante: float
+
+
+class AnularParticipationRequest(BaseModel):
+    motivo: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Por qué se anula. Se conserva aunque la participación "
+        "nunca se borre, para poder auditar qué pasó.",
+    )

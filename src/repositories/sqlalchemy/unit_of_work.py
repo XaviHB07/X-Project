@@ -22,6 +22,7 @@ from src.repositories.sqlalchemy.repository_impl import (
     SqlAlchemyCourseRepository,
     SqlAlchemyDecisionRunRepository,
     SqlAlchemyEventRepository,
+    SqlAlchemyParticipationRepository,
     SqlAlchemyStudentRepository,
     SqlAlchemyStudentStateRepository,
     SqlAlchemySyllabusRepository,
@@ -50,6 +51,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.attendance = SqlAlchemyAttendanceRepository(self._session)
         self.decision_runs = SqlAlchemyDecisionRunRepository(self._session)
         self.events = SqlAlchemyEventRepository(self._session)
+        self.participations = SqlAlchemyParticipationRepository(self._session)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:

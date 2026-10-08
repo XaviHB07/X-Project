@@ -21,6 +21,9 @@ from datetime import date, datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy import (
+    Index,
+    Text,
+    text,
     Boolean,
     Date,
     DateTime,
@@ -88,6 +91,7 @@ class StudentORM(Base):
         back_populates="student", uselist=False, cascade="all, delete-orphan"
     )
     events: Mapped[List["SelectionEventORM"]] = relationship(back_populates="student")
+    participations: Mapped[List["ParticipationORM"]] = relationship(back_populates="student")
 
 
 class StudentStateORM(Base):
@@ -128,6 +132,7 @@ class ClassSessionORM(Base):
     course: Mapped["CourseORM"] = relationship(back_populates="class_sessions")
     decision_runs: Mapped[List["DecisionRunORM"]] = relationship(back_populates="class_session")
     attendance: Mapped[List["SessionAttendanceORM"]] = relationship(back_populates="class_session")
+    participations: Mapped[List["ParticipationORM"]] = relationship(back_populates="class_session")
 
 
 class SyllabusEntryORM(Base):
@@ -175,6 +180,7 @@ class DecisionRunORM(Base):
 
     class_session: Mapped["ClassSessionORM"] = relationship(back_populates="decision_runs")
     events: Mapped[List["SelectionEventORM"]] = relationship(back_populates="decision_run")
+    participations: Mapped[List["ParticipationORM"]] = relationship(back_populates="decision_run")
 
 
 class SelectionEventORM(Base):
@@ -201,3 +207,77 @@ class SelectionEventORM(Base):
 
     decision_run: Mapped["DecisionRunORM"] = relationship(back_populates="events")
     student: Mapped["StudentORM"] = relationship(back_populates="events")
+
+
+class ParticipationORM(Base):
+    """Una participacion efectiva de un estudiante en una sesion (HU-P4).
+
+    Es lo que cierra MVP 1: sin esta tabla el sistema sortea estudiantes pero
+    no queda registro de que se pregunto ni de que respondio. `selection_events`
+    es la traza del ALGORITMO; esta es la traza de lo que PASO EN CLASE. Son
+    cosas distintas y hacen falta las dos.
+
+    Decisiones de esquema:
+
+    - No hay unicidad sobre (class_session_id, student_id). El backlog de
+      HU-P1 pide explícitamente "dar menor probabilidad a quienes ya
+      participaron" y HU-X3 "volver a sortear antes de iniciar la actividad",
+      asi que un estudiante puede participar varias veces en una sesion. Un
+      UNIQUE aqui impediria un caso de uso legitimo.
+
+    - `present` se congela al registrar. No se lee de `session_attendance`
+      en vivo: si el docente corrige la asistencia despues, el historial no
+      debe cambiarle bajo los pies.
+
+    - `anulada` con indice parcial: las participaciones anuladas no deben
+      aparecer en el historial normal, pero se conservan para auditar.
+    """
+
+    __tablename__ = "participations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    class_session_id: Mapped[int] = mapped_column(
+        ForeignKey("class_sessions.id"), nullable=False
+    )
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), nullable=False)
+    # Opcional a proposito: HU-P4 no lo pide. Permite registrar a mano una
+    # participacion que no salio de un sorteo (el profe pregunta por su cuenta).
+    decision_run_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("decision_runs.id"), nullable=True
+    )
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    asked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    present: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    anulada: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    motivo_anulacion: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    class_session: Mapped["ClassSessionORM"] = relationship(
+        back_populates="participations"
+    )
+    student: Mapped["StudentORM"] = relationship(back_populates="participations")
+    decision_run: Mapped["DecisionRunORM"] = relationship(back_populates="participations")
+
+    __table_args__ = (
+        # Indices explicitos: son las columnas por las que se consulta el
+        # historial todo el tiempo, y dejar el indice en manos del motor
+        # hace que el esquema cambie de comportamiento entre SQLite y
+        # PostgreSQL (que es el caso de un despliegue real).
+        #
+        # El parcial es el que importa de verdad: el historial que ve el
+        # docente filtra por `anulada = false`, y asi el indice solo cubre
+        # las filas que se muestran.
+        Index(
+            "ix_participations_sesion",
+            "class_session_id",
+            postgresql_where=text("anulada = false"),
+            sqlite_where=text("anulada = 0"),
+        ),
+        Index(
+            "ix_participations_estudiante",
+            "student_id",
+            postgresql_where=text("anulada = false"),
+            sqlite_where=text("anulada = 0"),
+        ),
+    )

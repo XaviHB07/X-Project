@@ -388,3 +388,56 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* --- HU-P4: registrar participacion ---------------------------------------
+   Aparece debajo del resultado del sorteo. El orden importa y refleja el
+   flujo real: primero sale el nombre, despues se escribe la pregunta. Por eso
+   el panel va aparte del resultado y no dentro de el. */
+
+.participation-panel {
+  padding: 18px 20px;
+  border-left: 3px solid var(--teal);
+  animation: rise-in .25s ease both;
+}
+.participation-panel .form-label { margin-top: 14px; }
+.participation-panel .form-label:first-of-type { margin-top: 10px; }
+.participation-panel .form-label em { color: var(--muted); font-style: normal; font-weight: 400; }
+
+/* Los textarea necesitan alto automatico: `.field` fija 42px, que para una
+   pregunta de tres lineas deja el texto cortado y el docente no ve lo que
+   esta escribiendo. */
+.participation-panel .field-area {
+  height: auto;
+  min-height: 62px;
+  padding: 10px 12px;
+  line-height: 1.5;
+  resize: vertical;
+  font: inherit;
+  font-size: 14px;
+}
+.participation-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.participation-history { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+.participation-history summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.participation-history summary:hover { color: var(--forest); }
+.participation-history ul { margin: 12px 0 0; padding: 0; list-style: none; }
+.participation-history li {
+  padding: 9px 0;
+  border-top: 1px solid #eef1ee;
+  font-size: 13px;
+}
+.participation-history li:first-child { border-top: none; }
+.participation-history strong { display: block; color: var(--forest); font-size: 13px; }
+.ph-q { display: block; margin-top: 2px; color: #3f4b44; }
+.ph-a { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; font-style: italic; }
+.ph-empty { color: var(--muted); font-style: italic; }

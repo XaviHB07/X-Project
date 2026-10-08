@@ -422,6 +422,98 @@ function renderSelectionResult(result) {
     return `<div class="selected-person"><span aria-hidden="true">✓</span>${escapeHtml(name)} <small>ID ${id}</small></div>`;
   }).join("");
   elements.resultPanel.hidden = false;
+  abrirPanelParticipacion(result);
+}
+
+/* --------------------------------------------------------------------------
+   HU-P4 — registrar la participación de quien acaba de salir del sorteo.
+
+   El flujo es deliberadamente de dos pasos: el sorteo YA se registró (es la
+   traza del algoritmo), y la participación se guarda después, cuando el
+   docente sabe qué preguntó y qué le respondieron. Meterlo todo en el mismo
+   clic obligaría a escribir la pregunta antes de ver a quién le tocó, que es
+   al revés de como se da la clase.
+
+   "Volver a sortear" conserva lo escrito: el docente puede cambiar de
+   estudiante sin perder la pregunta que ya tenía preparada. Es el criterio de
+   HU-P1 ("permitir volver a realizar la selección cuando corresponda").
+   -------------------------------------------------------------------------- */
+
+function abrirPanelParticipacion(result) {
+  const panel = $("#participation-panel");
+  if (!panel || !state.session) { panel && (panel.hidden = true); return; }
+
+  const sel = $("#participation-student");
+  sel.innerHTML = result.selected_student_ids.map((id) => {
+    const nombre = (state.students.find((s) => Number(s.id) === Number(id)) || {}).display_name;
+    return `<option value="${id}">${escapeHtml(nombre || `Estudiante ${id}`)}</option>`;
+  }).join("");
+
+  panel.hidden = false;
+  state.lastDecisionRunId = result.decision_run_id;
+
+  // Se vacía la respuesta pero NO la pregunta: si el docente ya la tenía
+  // escrita y solo quiere cambiar de estudiante, no la pierde.
+  $("#participation-answer").value = "";
+  cargarHistorialSesion();
+}
+
+async function cargarHistorialSesion() {
+  if (!state.session) return;
+  const sid = state.session.id;
+  try {
+    const [lista, resumen] = await Promise.all([
+      api(`/class-sessions/${sid}/participations`),
+      api(`/class-sessions/${sid}/participations/summary`),
+    ]);
+    $("#participation-count").textContent = resumen.total;
+    $("#participation-history-count").textContent = lista.length;
+    $("#participation-history").innerHTML = lista.length
+      ? lista.map((p) => `<li>
+          <strong>${escapeHtml(p.student_name)}</strong>
+          <span class="ph-q">${escapeHtml(p.question)}</span>
+          ${p.answer ? `<span class="ph-a">→ ${escapeHtml(p.answer)}</span>` : ""}
+        </li>`).join("")
+      : `<li class="ph-empty">Todavía no hay participaciones en esta sesión.</li>`;
+  } catch (err) {
+    console.warn("No se pudo cargar el historial:", err);
+  }
+}
+
+async function guardarParticipacion() {
+  const sel = $("#participation-student");
+  const pregunta = $("#participation-question").value.trim();
+  const boton = $("#participation-save");
+
+  if (!state.session) { notify("Abrí una sesión primero.", true); return; }
+  if (!sel.value) { notify("No hay ningún estudiante seleccionado.", true); return; }
+  if (!pregunta) { notify("Escribí la pregunta.", true); return; }
+
+  setBusy(boton, true, "Guardando...");
+  try {
+    await api(`/class-sessions/${state.session.id}/participations`, {
+      method: "POST",
+      body: JSON.stringify({
+        student_id: Number(sel.value),
+        question: pregunta,
+        answer: $("#participation-answer").value.trim() || null,
+        decision_run_id: state.lastDecisionRunId || null,
+        created_by: "docente",
+      }),
+    });
+    notify("Participación registrada ✓");
+    $("#participation-answer").value = "";
+    await cargarHistorialSesion();
+    // `refreshCourse` es la recarga completa que ya usa el botón "Actualizar":
+    // vuelve a traer estudiantes, métricas de equidad y sesión. Se reutiliza
+    // en vez de inventar una segunda vía de refresco, que terminaría
+    // actualizando una parte de la pantalla y dejando otra vieja.
+    await refreshCourse();
+  } catch (err) {
+    notify(`No se pudo guardar: ${err.message}`, true);
+  } finally {
+    setBusy(boton, false);
+  }
 }
 
 function presentStudents() {
@@ -875,6 +967,21 @@ $("#refresh-button").addEventListener("click", async () => {
   } catch (error) {
     notify(error.message, true);
   }
+});
+
+// --- HU-P4: registrar participación -----------------------------------------
+$("#participation-save").addEventListener("click", guardarParticipacion);
+
+// "Volver a sortear" reutiliza el envío del formulario de decisión, que es el
+// mismo camino que el botón normal. Así el sorteo se rehace con la MISMA
+// estrategia y las MISMAS reglas, y no por un atajo que podría desviarse.
+$("#participation-resortear").addEventListener("click", () => {
+  const form = $("#selection-form");
+  if (!form || !presentStudents().length) {
+    notify("No hay presentes a quienes sortear.", true);
+    return;
+  }
+  form.requestSubmit ? form.requestSubmit() : form.dispatchEvent(new Event("submit", { cancelable: true }));
 });
 
 $("#dialog-close").addEventListener("click", () => elements.dialog.close());

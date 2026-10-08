@@ -22,3 +22,7 @@ class SessionNotFoundError(LookupError):
 class InvalidAttendanceError(ValueError):
     """Se intentó marcar asistencia de estudiantes que no pertenecen (o
     ya no están activos) en el curso de la sesión."""
+
+
+class ParticipationNotFoundError(LookupError):
+    """La participación indicada no existe."""

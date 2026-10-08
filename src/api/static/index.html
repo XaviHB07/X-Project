@@ -214,6 +214,37 @@
                 <div class="selected-list" id="selected-list"></div>
               </section>
 
+              <!-- HU-P4: registrar la participación de lo que acaba de salir
+                   del sorteo. El docente ve QUIÉN es, escribe la pregunta y
+                   la respuesta, y recién ahí queda en el historial. -->
+              <section class="participation-panel" id="participation-panel" hidden aria-live="polite">
+                <div class="panel-heading">
+                  <h2 id="participation-title">Registrar participación</h2>
+                  <span class="count-badge" id="participation-count">0</span>
+                </div>
+
+                <label class="form-label" for="participation-student">Estudiante</label>
+                <select id="participation-student" class="field"></select>
+
+                <label class="form-label" for="participation-question">Pregunta que se hizo</label>
+                <textarea id="participation-question" class="field field-area" rows="3"
+                  placeholder="Escribe la pregunta tal como la hiciste…"></textarea>
+
+                <label class="form-label" for="participation-answer">Respuesta <em>(opcional)</em></label>
+                <textarea id="participation-answer" class="field field-area" rows="2"
+                  placeholder="Puedes escribirla ahora o dejarla para después…"></textarea>
+
+                <div class="participation-actions">
+                  <button class="button button-add" id="participation-save" type="button">Guardar participación</button>
+                  <button class="button button-quiet" id="participation-resortear" type="button">Volver a sortear</button>
+                </div>
+
+                <details class="participation-history" id="participation-history-box">
+                  <summary>Ver historial de la sesión (<span id="participation-history-count">0</span>)</summary>
+                  <ul id="participation-history"></ul>
+                </details>
+              </section>
+
               <section class="fairness-panel">
                 <div class="fairness-title"><span class="fairness-symbol">◎</span><span>Equidad del curso</span></div>
                 <div class="fairness-bar"><span id="fairness-bar-fill"></span></div>

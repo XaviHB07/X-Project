@@ -26,6 +26,7 @@ from src.domain.entities import (
     ClassSession,
     Course,
     DecisionRun,
+    Participation,
     Student,
     SyllabusEntry,
 )
@@ -42,6 +43,8 @@ from src.repositories.interfaces import (
     DecisionRunRepository,
     DuplicateStudentError,
     EventRepository,
+    ParticipationError,
+    ParticipationRepository,
     StudentRepository,
     StudentStateRepository,
     SyllabusRepository,
@@ -94,6 +97,7 @@ class InMemoryDatabase:
         self.attendance: Dict[Tuple[int, int], AttendanceRecord] = {}
         self.decision_runs: Dict[int, DecisionRun] = {}
         self.events: List[SelectionEventRecord] = []
+        self.participations: Dict[int, Participation] = {}
 
         self._counters: Dict[str, int] = {}
         self._meta_lock = threading.Lock()  # protege solo la asignación de ids
@@ -427,3 +431,111 @@ class InMemoryEventRepository(EventRepository):
         matches = [e for e in self._db.events if e.student_id == student_id]
         matches.sort(key=lambda e: e.created_at, reverse=True)
         return matches[:limit]
+
+
+class InMemoryParticipationRepository(ParticipationRepository):
+    """Participaciones en memoria (HU-P4), para tests y simulacion.
+
+    Reproduce las MISMAS validaciones que la implementacion de SQLAlchemy:
+    estudiante tiene que pertenecer al curso de la sesion, y el sorteo tiene
+    que ser de esa sesion. Si el repositorio en memoria fuera mas permisivo,
+    los tests pasarian con datos invalidos y el fallo apareceria solo en
+    produccion, que es justo lo que la arquitectura en capas evita.
+    """
+
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def create(
+        self,
+        class_session_id: int,
+        student_id: int,
+        question: str,
+        answer: Optional[str],
+        asked_at,
+        decision_run_id: Optional[int] = None,
+        created_by: Optional[str] = None,
+        present: bool = True,
+    ) -> Participation:
+        question = (question or "").strip()
+        if not question:
+            raise ParticipationError("la pregunta no puede ir vacia")
+
+        sesion = self._db.class_sessions.get(class_session_id)
+        if sesion is None:
+            raise ParticipationError(f"la sesion {class_session_id} no existe")
+
+        estudiante = self._db.students.get(student_id)
+        if estudiante is None:
+            raise ParticipationError(f"el estudiante {student_id} no existe")
+        if estudiante.course_id != sesion.course_id:
+            raise ParticipationError(
+                f"el estudiante {student_id} pertenece al curso "
+                f"{estudiante.course_id}, no al curso {sesion.course_id} de la "
+                f"sesion {class_session_id}"
+            )
+
+        if decision_run_id is not None:
+            run = self._db.decision_runs.get(decision_run_id)
+            if run is None:
+                raise ParticipationError(f"el sorteo {decision_run_id} no existe")
+            if run.class_session_id != class_session_id:
+                raise ParticipationError(
+                    f"el sorteo {decision_run_id} es de otra sesion"
+                )
+
+        with self._db.write_lock:
+            pid = self._db.next_id("participations")
+        item = Participation(
+            id=pid,
+            class_session_id=class_session_id,
+            student_id=student_id,
+            question=question,
+            asked_at=asked_at,
+            answer=(answer or None),
+            decision_run_id=decision_run_id,
+            present=present,
+            created_by=created_by,
+        )
+        self._db.participations[pid] = item
+        return item
+
+    def get(self, participation_id: int) -> Optional[Participation]:
+        return self._db.participations.get(participation_id)
+
+    def list_for_session(self, class_session_id: int,
+                         include_anuladas: bool = False) -> List[Participation]:
+        out = [p for p in self._db.participations.values()
+               if p.class_session_id == class_session_id]
+        if not include_anuladas:
+            out = [p for p in out if not p.anulada]
+        out.sort(key=lambda p: (p.asked_at, p.id))
+        return out
+
+    def list_for_student(self, student_id: int,
+                         include_anuladas: bool = False) -> List[Participation]:
+        out = [p for p in self._db.participations.values()
+               if p.student_id == student_id]
+        if not include_anuladas:
+            out = [p for p in out if not p.anulada]
+        out.sort(key=lambda p: (p.asked_at, p.id), reverse=True)
+        return out
+
+    def count_for_session(self, class_session_id: int) -> int:
+        return len([p for p in self._db.participations.values()
+                    if p.class_session_id == class_session_id and not p.anulada])
+
+    def anular(self, participation_id: int,
+               motivo: Optional[str] = None) -> Optional[Participation]:
+        item = self._db.participations.get(participation_id)
+        if item is None:
+            return None
+        # `Participation` es un dataclass FROZEN (inmutable, como todas las
+        # entidades de dominio). Anular no la muta: se crea una copia
+        # modificada con `replace` y se guarda en su lugar. Es el mismo patrón
+        # que usa `_MutableStudentState` para el estado bayesiano.
+        actualizado = replace(
+            item, anulada=True, motivo_anulacion=(motivo or None)
+        )
+        self._db.participations[participation_id] = actualizado
+        return actualizado

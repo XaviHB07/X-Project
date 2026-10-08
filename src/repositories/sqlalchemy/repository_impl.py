@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from src.domain.entities import (
@@ -22,6 +22,7 @@ from src.domain.entities import (
     ClassSession,
     Course,
     DecisionRun,
+    Participation,
     Student,
     SyllabusEntry,
 )
@@ -38,6 +39,8 @@ from src.repositories.interfaces import (
     DecisionRunRepository,
     DuplicateStudentError,
     EventRepository,
+    ParticipationError,
+    ParticipationRepository,
     StudentRepository,
     StudentStateRepository,
     SyllabusRepository,
@@ -46,6 +49,7 @@ from src.repositories.sqlalchemy.models import (
     ClassSessionORM,
     CourseORM,
     DecisionRunORM,
+    ParticipationORM,
     SelectionEventORM,
     SessionAttendanceORM,
     StudentORM,
@@ -534,3 +538,150 @@ class SqlAlchemyEventRepository(EventRepository):
             )
             for r in rows
         ]
+
+
+def _to_participation(row: ParticipationORM) -> Participation:
+    return Participation(
+        id=row.id,
+        class_session_id=row.class_session_id,
+        student_id=row.student_id,
+        question=row.question,
+        asked_at=row.asked_at,
+        answer=row.answer,
+        decision_run_id=row.decision_run_id,
+        present=row.present,
+        created_by=row.created_by,
+        anulada=row.anulada,
+        motivo_anulacion=row.motivo_anulacion,
+    )
+
+
+class SqlAlchemyParticipationRepository(ParticipationRepository):
+    """Persistencia de participaciones con SQLAlchemy (HU-P4).
+
+    Valida dos cosas al crear, y no por capricho:
+
+    1. Que la sesion exista y que el estudiante pertenezca a SU curso. Sin
+       esa comprobacion, se podria registrar una participacion cruzada (alumno
+       del curso A participate en la sesion del curso B) y el historial de
+       ambos cursos quedaria contaminado. Es un error de datos silencioso: no
+       rompe nada visible hasta que las metricas de equidad salen raras.
+
+    2. Que `asked_at` no sea nulo. En SQLite una columna DateTime sin timezone
+       puede devolver `None` si la fila se inserto a mano.
+    """
+
+    def __init__(self, session: Session):
+        self._session = session
+
+    def create(
+        self,
+        class_session_id: int,
+        student_id: int,
+        question: str,
+        answer: Optional[str],
+        asked_at,
+        decision_run_id: Optional[int] = None,
+        created_by: Optional[str] = None,
+        present: bool = True,
+    ) -> Participation:
+        question = (question or "").strip()
+        if not question:
+            raise ParticipationError("la pregunta no puede ir vacia")
+
+        sesion = self._session.get(ClassSessionORM, class_session_id)
+        if sesion is None:
+            raise ParticipationError(
+                f"la sesion {class_session_id} no existe"
+            )
+
+        estudiante = self._session.get(StudentORM, student_id)
+        if estudiante is None:
+            raise ParticipationError(
+                f"el estudiante {student_id} no existe"
+            )
+        if estudiante.course_id != sesion.course_id:
+            raise ParticipationError(
+                f"el estudiante {student_id} pertenece al curso "
+                f"{estudiante.course_id}, no al curso {sesion.course_id} de la "
+                f"sesion {class_session_id}"
+            )
+
+        if decision_run_id is not None:
+            run = self._session.get(DecisionRunORM, decision_run_id)
+            if run is None:
+                raise ParticipationError(
+                    f"el sorteo {decision_run_id} no existe"
+                )
+            if run.class_session_id != class_session_id:
+                raise ParticipationError(
+                    f"el sorteo {decision_run_id} es de otra sesion"
+                )
+
+        fila = ParticipationORM(
+            class_session_id=class_session_id,
+            student_id=student_id,
+            question=question,
+            answer=(answer or None),
+            asked_at=asked_at,
+            decision_run_id=decision_run_id,
+            created_by=created_by,
+            present=present,
+        )
+        self._session.add(fila)
+        self._session.flush()
+        return _to_participation(fila)
+
+    def get(self, participation_id: int) -> Optional[Participation]:
+        fila = self._session.get(ParticipationORM, participation_id)
+        return _to_participation(fila) if fila else None
+
+    def list_for_session(
+        self,
+        class_session_id: int,
+        include_anuladas: bool = False,
+    ) -> List[Participation]:
+        stmt = select(ParticipationORM).where(
+            ParticipationORM.class_session_id == class_session_id
+        )
+        if not include_anuladas:
+            stmt = stmt.where(ParticipationORM.anulada.is_(False))
+        stmt = stmt.order_by(
+            ParticipationORM.asked_at.asc(), ParticipationORM.id.asc()
+        )
+        return [_to_participation(r) for r in self._session.execute(stmt).scalars()]
+
+    def list_for_student(
+        self,
+        student_id: int,
+        include_anuladas: bool = False,
+    ) -> List[Participation]:
+        stmt = select(ParticipationORM).where(
+            ParticipationORM.student_id == student_id
+        )
+        if not include_anuladas:
+            stmt = stmt.where(ParticipationORM.anulada.is_(False))
+        stmt = stmt.order_by(
+            ParticipationORM.asked_at.desc(), ParticipationORM.id.desc()
+        )
+        return [_to_participation(r) for r in self._session.execute(stmt).scalars()]
+
+    def count_for_session(self, class_session_id: int) -> int:
+        stmt = select(func.count()).select_from(ParticipationORM).where(
+            ParticipationORM.class_session_id == class_session_id,
+            ParticipationORM.anulada.is_(False),
+        )
+        return int(self._session.execute(stmt).scalar_one())
+
+    def anular(
+        self,
+        participation_id: int,
+        motivo: Optional[str] = None,
+    ) -> Optional[Participation]:
+        fila = self._session.get(ParticipationORM, participation_id)
+        if fila is None:
+            return None
+        fila.anulada = True
+        fila.motivo_anulacion = (motivo or None)
+        self._session.flush()
+        return _to_participation(fila)

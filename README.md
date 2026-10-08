@@ -308,7 +308,41 @@ cuadra exactamente con lo esperado — ninguna actualización se perdió.
 
 \---
 
-## 5\. De aquí a producción real: qué falta
+## 5\. Despliegue (Render)
+
+`render.yaml` está listo. Deploy manual, en cinco pasos:
+
+1. Subí el código a GitHub.
+2. En Render: **New → Blueprint**, apuntá al repo. Render lee `render.yaml`
+   y crea el web service y el Postgres.
+3. esperá el deploy. Cuando termine, abrí `https://<nombre>.onrender.com`.
+4. Verificá contra PostgreSQL (ver más abajo).
+5. Listo: `/docs` tiene la documentación interactiva de la API.
+
+**Por qué PostgreSQL y no SQLite en el despliegue.** El plan `free` de Render
+monta el sistema de archivos como efímero: cada deploy, cada reinicio y cada
+cambio de máquina borra el archivo SQLite. Con el curso y las participaciones
+dentro, eso es perder todos los datos. El Postgres del plan `free` (100 MB)
+alcanza de sobra para una cátedra.
+
+**Verificación tras el deploy.** Los tests del proyecto corren todos sobre
+SQLite, y hay diferencias entre motores que solo aparecen al ejecutar. Para
+cubrir las que importan:
+
+```bash
+# desde Render Shell, o desde tu máquina con la Internal Database URL
+python scripts/check_postgres.py
+```
+
+Comprueba los tres puntos donde SQLite miente: índices parciales (la sintaxis
+`WHERE anulada = false` es de Postgres; la de SQLite es `= 0`), `DateTime` con
+timezone (Postgres devuelve datetimes con `tzinfo`, SQLite devuelve naive) y
+booleanos. **No lo ejecutes si no hay URL de Postgres: el script sale con
+código 2 y lo dice, en vez de dar un "OK" sin haber comprobado nada.**
+
+---
+
+## 6\. De aquí a producción real: qué falta
 
 Este proyecto es un backend funcionalmente completo y probado, pero
 antes de exponerlo a usuarios reales en internet, considera agregar:
@@ -344,7 +378,7 @@ contratos) descrita en este README: son extensiones sobre la misma base.
 
 \---
 
-## 6\. Estructura completa del proyecto
+## 7\. Estructura completa del proyecto
 
 ```
 seleccion\_bayesiana/
