@@ -252,6 +252,36 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .stage-done { width: min(260px, 100%); margin: 17px auto 12px; }
 
 @keyframes rise-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+/* --- Sprint 1: sesión de clase, importación de Excel y edición --- */
+.session-box { margin-top: 20px; padding: 14px; border: 1px solid var(--line); border-left: 3px solid var(--teal); border-radius: 5px; background: #f9fbf8; }
+.session-box-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.session-box-head .eyebrow { margin: 0; color: #398371; }
+.session-date { color: #6b776f; font-size: 11px; font-weight: 600; }
+.session-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.session-form .field { height: 38px; font-size: 12px; }
+.session-box .form-note { margin: 9px 0 0; }
+.session-active { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.session-active strong { display: block; overflow: hidden; color: var(--forest); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.session-active span { display: block; margin-top: 3px; color: #6b776f; font-size: 11px; }
+.import-box { margin-top: 12px; padding: 12px; border-radius: 5px; background: #f5f7f4; }
+.import-row { display: flex; align-items: center; gap: 8px; }
+.import-pick { flex: 1 1 auto; min-width: 0; justify-content: flex-start; overflow: hidden; border: 1px dashed #b9c6bd; background: var(--white); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.import-pick:hover { background: #eef3ec; }
+.import-box .form-note { margin: 9px 0 0; }
+.import-result { margin-top: 10px; padding: 10px 12px; border-radius: 5px; background: #eaf1e5; color: #315945; font-size: 12px; line-height: 1.5; }
+.import-result.has-errors { background: #fbefe9; color: #7a3a2c; }
+.import-result ul { margin: 6px 0 0; padding-left: 18px; max-height: 140px; overflow: auto; }
+.import-errors-title { margin: 8px 0 0; font-weight: 700; }
+.edit-body { display: grid; gap: 4px; padding: 20px 25px 24px; }
+.edit-body .field { margin-bottom: 12px; }
+.edit-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 4px; }
+.danger-text { color: var(--danger); }
+.danger-text:hover:not(:disabled) { color: #8f2f29; }
+@media (max-width: 460px) {
+  .session-form { grid-template-columns: 1fr; }
+  .import-row { flex-direction: column; align-items: stretch; }
+}
+
 @keyframes wheel-spin { to { transform: rotate(360deg); } }
 @keyframes ball-jostle { from { transform: translate(-2px, 2px) rotate(-9deg); } to { transform: translate(2px, -4px) rotate(9deg); } }
 @keyframes winner-reveal { from { opacity: .45; transform: scale(.65) translateY(-15px); } to { opacity: 1; transform: scale(1) translateY(0); } }

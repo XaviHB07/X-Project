@@ -17,12 +17,14 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from src.repositories.interfaces import UnitOfWork
 from src.repositories.sqlalchemy.repository_impl import (
+    SqlAlchemyAttendanceRepository,
     SqlAlchemyClassSessionRepository,
     SqlAlchemyCourseRepository,
     SqlAlchemyDecisionRunRepository,
     SqlAlchemyEventRepository,
     SqlAlchemyStudentRepository,
     SqlAlchemyStudentStateRepository,
+    SqlAlchemySyllabusRepository,
 )
 
 SessionFactory = Callable[[], Session]
@@ -44,6 +46,8 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.students = SqlAlchemyStudentRepository(self._session)
         self.student_states = SqlAlchemyStudentStateRepository(self._session)
         self.class_sessions = SqlAlchemyClassSessionRepository(self._session)
+        self.syllabus = SqlAlchemySyllabusRepository(self._session)
+        self.attendance = SqlAlchemyAttendanceRepository(self._session)
         self.decision_runs = SqlAlchemyDecisionRunRepository(self._session)
         self.events = SqlAlchemyEventRepository(self._session)
         return self

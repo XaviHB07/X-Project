@@ -29,7 +29,9 @@ from src.domain.events import EventBus, logging_subscriber, DecisionRunCompleted
 from src.repositories.sqlalchemy.models import Base
 from src.repositories.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork, build_session_factory
 from src.services.fairness_service import FairnessMetricsService
+from src.services.roster_service import RosterService
 from src.services.selection_service import SelectionService
+from src.services.session_service import SessionService
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "default.yaml"
 
@@ -70,6 +72,44 @@ class AppContext:
     event_bus: EventBus
     selection_service: SelectionService
     fairness_service: FairnessMetricsService
+    roster_service: RosterService
+    session_service: SessionService
+
+
+# Columnas agregadas a tablas que ya existían antes del Sprint 1. `create_all`
+# crea tablas nuevas pero NO agrega columnas a tablas existentes, así que una
+# base de datos creada con una versión anterior fallaría ("no such column").
+# Esta lista es un parche mínimo y explícito hasta que se adopte Alembic (ver
+# README, "De aquí a producción real"). Sintaxis válida en SQLite >= 3.23 y
+# PostgreSQL.
+_ADDED_COLUMNS = [
+    ("students", "active", "BOOLEAN NOT NULL DEFAULT TRUE"),
+    ("class_sessions", "session_date", "DATE"),
+    ("class_sessions", "topic", "VARCHAR(255)"),
+]
+
+
+def _ensure_columns(engine) -> None:
+    """Agrega las columnas de `_ADDED_COLUMNS` que falten (idempotente)."""
+    from sqlalchemy import inspect, text
+
+    # Primero se lee el esquema completo y recién después se ejecutan los
+    # ALTER: así no se mezcla reflexión con una transacción de escritura
+    # abierta (SQLite lo tolera mal con varios accesos simultáneos).
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    missing = []
+    for table, column, ddl in _ADDED_COLUMNS:
+        if table not in existing_tables:
+            continue  # tabla nueva: create_all la creará completa
+        present = {c["name"] for c in inspector.get_columns(table)}
+        if column not in present:
+            missing.append((table, column, ddl))
+    if not missing:
+        return
+    with engine.begin() as conn:
+        for table, column, ddl in missing:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
 
 def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bool = True) -> AppContext:
@@ -90,6 +130,10 @@ def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bo
 
     session_factory = build_session_factory(config.database_url)
     if create_tables:
+        # Primero se ajustan las tablas viejas (si las hay) y luego create_all
+        # crea lo que falte: así una base anterior al Sprint 1 sigue
+        # funcionando sin perder datos.
+        _ensure_columns(session_factory.engine)
         Base.metadata.create_all(session_factory.engine)
 
     event_bus = EventBus()
@@ -104,4 +148,6 @@ def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bo
         event_bus=event_bus,
         selection_service=SelectionService(uow_factory, event_bus=event_bus),
         fairness_service=FairnessMetricsService(uow_factory),
+        roster_service=RosterService(uow_factory),
+        session_service=SessionService(uow_factory),
     )

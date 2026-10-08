@@ -11,12 +11,20 @@ responsabilidad exclusiva de la Unit of Work.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence
+from datetime import date, datetime, timezone
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from src.domain.entities import ClassSession, Course, DecisionRun, Student
+from src.domain.entities import (
+    AttendanceRecord,
+    ClassSession,
+    Course,
+    DecisionRun,
+    Student,
+    SyllabusEntry,
+)
 from src.domain.value_objects import (
     Candidate,
     GenericCountersUpdate,
@@ -24,20 +32,25 @@ from src.domain.value_objects import (
     SelectionEventRecord,
 )
 from src.repositories.interfaces import (
+    AttendanceRepository,
     ClassSessionRepository,
     CourseRepository,
     DecisionRunRepository,
+    DuplicateStudentError,
     EventRepository,
     StudentRepository,
     StudentStateRepository,
+    SyllabusRepository,
 )
 from src.repositories.sqlalchemy.models import (
     ClassSessionORM,
     CourseORM,
     DecisionRunORM,
     SelectionEventORM,
+    SessionAttendanceORM,
     StudentORM,
     StudentStateORM,
+    SyllabusEntryORM,
 )
 
 
@@ -58,6 +71,18 @@ def _to_student(row: StudentORM) -> Student:
         external_ref=row.external_ref,
         display_name=row.display_name,
         created_at=row.created_at,
+        active=row.active,
+    )
+
+
+def _to_class_session(row: ClassSessionORM) -> ClassSession:
+    return ClassSession(
+        id=row.id,
+        course_id=row.course_id,
+        created_at=row.created_at,
+        label=row.label,
+        session_date=row.session_date,
+        topic=row.topic,
     )
 
 
@@ -76,6 +101,10 @@ class SqlAlchemyCourseRepository(CourseRepository):
         if row is None:
             return None
         return Course(id=row.id, name=row.name, created_at=row.created_at)
+
+    def list_all(self) -> List[Course]:
+        rows = self._session.execute(select(CourseORM).order_by(CourseORM.id)).scalars().all()
+        return [Course(id=r.id, name=r.name, created_at=r.created_at) for r in rows]
 
 
 class SqlAlchemyStudentRepository(StudentRepository):
@@ -109,14 +138,68 @@ class SqlAlchemyStudentRepository(StudentRepository):
 
         return _to_student(row)
 
+    def upsert_from_roster(
+        self,
+        course_id: int,
+        external_ref: str,
+        display_name: str,
+        alpha_init: float,
+        beta_init: float,
+    ) -> Tuple[Student, str]:
+        existing = self._session.execute(
+            select(StudentORM).where(
+                StudentORM.course_id == course_id,
+                StudentORM.external_ref == external_ref,
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            return self.get_or_create(course_id, external_ref, display_name, alpha_init, beta_init), "created"
+        if existing.display_name == display_name and existing.active:
+            return _to_student(existing), "unchanged"
+        existing.display_name = display_name
+        existing.active = True
+        self._session.flush()
+        return _to_student(existing), "updated"
+
+    def update(
+        self,
+        student_id: int,
+        external_ref: Optional[str] = None,
+        display_name: Optional[str] = None,
+        active: Optional[bool] = None,
+    ) -> Optional[Student]:
+        row = self._session.get(StudentORM, student_id)
+        if row is None:
+            return None
+        if external_ref is not None and external_ref != row.external_ref:
+            clash = self._session.execute(
+                select(StudentORM.id).where(
+                    StudentORM.course_id == row.course_id,
+                    StudentORM.external_ref == external_ref,
+                    StudentORM.id != row.id,
+                )
+            ).first()
+            if clash is not None:
+                raise DuplicateStudentError(
+                    f"Ya existe un estudiante con el código {external_ref!r} en este curso."
+                )
+            row.external_ref = external_ref
+        if display_name is not None:
+            row.display_name = display_name
+        if active is not None:
+            row.active = active
+        self._session.flush()
+        return _to_student(row)
+
     def get(self, student_id: int) -> Optional[Student]:
         row = self._session.get(StudentORM, student_id)
         return _to_student(row) if row is not None else None
 
-    def list_by_course(self, course_id: int) -> List[Student]:
-        rows = self._session.execute(
-            select(StudentORM).where(StudentORM.course_id == course_id)
-        ).scalars().all()
+    def list_by_course(self, course_id: int, include_inactive: bool = False) -> List[Student]:
+        stmt = select(StudentORM).where(StudentORM.course_id == course_id)
+        if not include_inactive:
+            stmt = stmt.where(StudentORM.active.is_(True))
+        rows = self._session.execute(stmt.order_by(StudentORM.id)).scalars().all()
         return [_to_student(r) for r in rows]
 
 
@@ -208,17 +291,121 @@ class SqlAlchemyClassSessionRepository(ClassSessionRepository):
     def __init__(self, session: Session):
         self._session = session
 
-    def create(self, course_id: int, label: Optional[str] = None) -> ClassSession:
-        row = ClassSessionORM(course_id=course_id, label=label)
+    def create(
+        self,
+        course_id: int,
+        label: Optional[str] = None,
+        session_date: Optional[date] = None,
+        topic: Optional[str] = None,
+    ) -> ClassSession:
+        row = ClassSessionORM(
+            course_id=course_id,
+            label=label,
+            session_date=session_date or datetime.now(timezone.utc).date(),
+            topic=topic,
+        )
         self._session.add(row)
         self._session.flush()
-        return ClassSession(id=row.id, course_id=row.course_id, created_at=row.created_at, label=row.label)
+        return _to_class_session(row)
 
     def get(self, class_session_id: int) -> Optional[ClassSession]:
         row = self._session.get(ClassSessionORM, class_session_id)
+        return _to_class_session(row) if row is not None else None
+
+    def list_by_course(self, course_id: int) -> List[ClassSession]:
+        rows = self._session.execute(
+            select(ClassSessionORM)
+            .where(ClassSessionORM.course_id == course_id)
+            .order_by(ClassSessionORM.id.desc())
+        ).scalars().all()
+        return [_to_class_session(r) for r in rows]
+
+
+class SqlAlchemySyllabusRepository(SyllabusRepository):
+    def __init__(self, session: Session):
+        self._session = session
+
+    @staticmethod
+    def _to_entry(row: SyllabusEntryORM) -> SyllabusEntry:
+        return SyllabusEntry(
+            id=row.id, course_id=row.course_id, session_date=row.session_date, topic=row.topic
+        )
+
+    def upsert(self, course_id: int, session_date: date, topic: str) -> SyllabusEntry:
+        row = self._session.execute(
+            select(SyllabusEntryORM).where(
+                SyllabusEntryORM.course_id == course_id,
+                SyllabusEntryORM.session_date == session_date,
+            )
+        ).scalar_one_or_none()
         if row is None:
-            return None
-        return ClassSession(id=row.id, course_id=row.course_id, created_at=row.created_at, label=row.label)
+            row = SyllabusEntryORM(course_id=course_id, session_date=session_date, topic=topic)
+            self._session.add(row)
+        else:
+            row.topic = topic
+        self._session.flush()
+        return self._to_entry(row)
+
+    def get_topic_for_date(self, course_id: int, session_date: date) -> Optional[str]:
+        return self._session.execute(
+            select(SyllabusEntryORM.topic).where(
+                SyllabusEntryORM.course_id == course_id,
+                SyllabusEntryORM.session_date == session_date,
+            )
+        ).scalar_one_or_none()
+
+    def list_by_course(self, course_id: int) -> List[SyllabusEntry]:
+        rows = self._session.execute(
+            select(SyllabusEntryORM)
+            .where(SyllabusEntryORM.course_id == course_id)
+            .order_by(SyllabusEntryORM.session_date)
+        ).scalars().all()
+        return [self._to_entry(r) for r in rows]
+
+
+class SqlAlchemyAttendanceRepository(AttendanceRepository):
+    def __init__(self, session: Session):
+        self._session = session
+
+    def set_many(self, class_session_id: int, present_by_student: Dict[int, bool]) -> None:
+        if not present_by_student:
+            return
+        existing = {
+            r.student_id: r
+            for r in self._session.execute(
+                select(SessionAttendanceORM).where(
+                    SessionAttendanceORM.class_session_id == class_session_id,
+                    SessionAttendanceORM.student_id.in_(list(present_by_student)),
+                )
+            ).scalars()
+        }
+        for student_id, present in present_by_student.items():
+            row = existing.get(student_id)
+            if row is None:
+                self._session.add(
+                    SessionAttendanceORM(
+                        class_session_id=class_session_id, student_id=student_id, present=bool(present)
+                    )
+                )
+            else:
+                row.present = bool(present)
+        self._session.flush()
+
+    def list_for_session(self, class_session_id: int) -> List[AttendanceRecord]:
+        rows = self._session.execute(
+            select(SessionAttendanceORM)
+            .where(SessionAttendanceORM.class_session_id == class_session_id)
+            .order_by(SessionAttendanceORM.student_id)
+        ).scalars().all()
+        return [
+            AttendanceRecord(
+                class_session_id=r.class_session_id, student_id=r.student_id, present=r.present
+            )
+            for r in rows
+        ]
+
+    def present_ids(self, class_session_id: int) -> List[int]:
+        return [r.student_id for r in self.list_for_session(class_session_id) if r.present]
 
 
 class SqlAlchemyDecisionRunRepository(DecisionRunRepository):

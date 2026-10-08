@@ -36,7 +36,7 @@ def main() -> None:
     ctx = build_app_context(config_path=args.config, create_tables=True)
     print(f"Base de datos inicializada en: {ctx.config.database_url}")
     print("Tablas creadas (o ya existentes): courses, students, student_state, "
-          "class_sessions, decision_runs, selection_events.")
+          "class_sessions, syllabus_entries, session_attendance, decision_runs, selection_events.")
 
 
 if __name__ == "__main__":

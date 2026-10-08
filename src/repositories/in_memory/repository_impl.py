@@ -17,10 +17,18 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Sequence
+from dataclasses import replace
+from datetime import date, datetime, timezone
+from typing import Dict, List, Optional, Sequence, Tuple
 
-from src.domain.entities import ClassSession, Course, DecisionRun, Student
+from src.domain.entities import (
+    AttendanceRecord,
+    ClassSession,
+    Course,
+    DecisionRun,
+    Student,
+    SyllabusEntry,
+)
 from src.domain.value_objects import (
     Candidate,
     GenericCountersUpdate,
@@ -28,12 +36,15 @@ from src.domain.value_objects import (
     SelectionEventRecord,
 )
 from src.repositories.interfaces import (
+    AttendanceRepository,
     ClassSessionRepository,
     CourseRepository,
     DecisionRunRepository,
+    DuplicateStudentError,
     EventRepository,
     StudentRepository,
     StudentStateRepository,
+    SyllabusRepository,
 )
 
 
@@ -79,6 +90,8 @@ class InMemoryDatabase:
         self.students: Dict[int, Student] = {}
         self.student_states: Dict[int, _MutableStudentState] = {}
         self.class_sessions: Dict[int, ClassSession] = {}
+        self.syllabus: Dict[int, SyllabusEntry] = {}
+        self.attendance: Dict[Tuple[int, int], AttendanceRecord] = {}
         self.decision_runs: Dict[int, DecisionRun] = {}
         self.events: List[SelectionEventRecord] = []
 
@@ -103,6 +116,9 @@ class InMemoryCourseRepository(CourseRepository):
 
     def get(self, course_id: int) -> Optional[Course]:
         return self._db.courses.get(course_id)
+
+    def list_all(self) -> List[Course]:
+        return sorted(self._db.courses.values(), key=lambda c: c.id)
 
 
 class InMemoryStudentRepository(StudentRepository):
@@ -134,11 +150,65 @@ class InMemoryStudentRepository(StudentRepository):
         )
         return student
 
+    def upsert_from_roster(
+        self,
+        course_id: int,
+        external_ref: str,
+        display_name: str,
+        alpha_init: float,
+        beta_init: float,
+    ) -> Tuple[Student, str]:
+        for s in self._db.students.values():
+            if s.course_id == course_id and s.external_ref == external_ref:
+                if s.display_name == display_name and s.active:
+                    return s, "unchanged"
+                updated = replace(s, display_name=display_name, active=True)
+                self._db.students[s.id] = updated
+                return updated, "updated"
+        student = self.get_or_create(course_id, external_ref, display_name, alpha_init, beta_init)
+        return student, "created"
+
+    def update(
+        self,
+        student_id: int,
+        external_ref: Optional[str] = None,
+        display_name: Optional[str] = None,
+        active: Optional[bool] = None,
+    ) -> Optional[Student]:
+        current = self._db.students.get(student_id)
+        if current is None:
+            return None
+        if external_ref is not None and external_ref != current.external_ref:
+            for other in self._db.students.values():
+                if other.course_id == current.course_id and other.external_ref == external_ref:
+                    raise DuplicateStudentError(
+                        f"Ya existe un estudiante con el código {external_ref!r} en este curso."
+                    )
+        changes = {
+            k: v
+            for k, v in (
+                ("external_ref", external_ref),
+                ("display_name", display_name),
+                ("active", active),
+            )
+            if v is not None
+        }
+        updated = replace(current, **changes)
+        self._db.students[student_id] = updated
+        return updated
+
     def get(self, student_id: int) -> Optional[Student]:
         return self._db.students.get(student_id)
 
-    def list_by_course(self, course_id: int) -> List[Student]:
-        return [s for s in self._db.students.values() if s.course_id == course_id]
+    def list_by_course(self, course_id: int, include_inactive: bool = False) -> List[Student]:
+        return sorted(
+            (
+                s
+                for s in self._db.students.values()
+                if s.course_id == course_id and (include_inactive or s.active)
+            ),
+            key=lambda s: s.id,
+        )
 
 
 class InMemoryStudentStateRepository(StudentStateRepository):
@@ -191,15 +261,83 @@ class InMemoryClassSessionRepository(ClassSessionRepository):
     def __init__(self, db: InMemoryDatabase):
         self._db = db
 
-    def create(self, course_id: int, label: Optional[str] = None) -> ClassSession:
+    def create(
+        self,
+        course_id: int,
+        label: Optional[str] = None,
+        session_date: Optional[date] = None,
+        topic: Optional[str] = None,
+    ) -> ClassSession:
+        now = _utcnow()
         session = ClassSession(
-            id=self._db.next_id("class_sessions"), course_id=course_id, created_at=_utcnow(), label=label
+            id=self._db.next_id("class_sessions"),
+            course_id=course_id,
+            created_at=now,
+            label=label,
+            session_date=session_date or now.date(),
+            topic=topic,
         )
         self._db.class_sessions[session.id] = session
         return session
 
     def get(self, class_session_id: int) -> Optional[ClassSession]:
         return self._db.class_sessions.get(class_session_id)
+
+    def list_by_course(self, course_id: int) -> List[ClassSession]:
+        return sorted(
+            (s for s in self._db.class_sessions.values() if s.course_id == course_id),
+            key=lambda s: s.id,
+            reverse=True,
+        )
+
+
+class InMemorySyllabusRepository(SyllabusRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def upsert(self, course_id: int, session_date: date, topic: str) -> SyllabusEntry:
+        for entry in self._db.syllabus.values():
+            if entry.course_id == course_id and entry.session_date == session_date:
+                updated = replace(entry, topic=topic)
+                self._db.syllabus[entry.id] = updated
+                return updated
+        entry = SyllabusEntry(
+            id=self._db.next_id("syllabus"), course_id=course_id, session_date=session_date, topic=topic
+        )
+        self._db.syllabus[entry.id] = entry
+        return entry
+
+    def get_topic_for_date(self, course_id: int, session_date: date) -> Optional[str]:
+        for entry in self._db.syllabus.values():
+            if entry.course_id == course_id and entry.session_date == session_date:
+                return entry.topic
+        return None
+
+    def list_by_course(self, course_id: int) -> List[SyllabusEntry]:
+        return sorted(
+            (e for e in self._db.syllabus.values() if e.course_id == course_id),
+            key=lambda e: e.session_date,
+        )
+
+
+class InMemoryAttendanceRepository(AttendanceRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def set_many(self, class_session_id: int, present_by_student: Dict[int, bool]) -> None:
+        for student_id, present in present_by_student.items():
+            self._db.attendance[(class_session_id, student_id)] = AttendanceRecord(
+                class_session_id=class_session_id, student_id=student_id, present=bool(present)
+            )
+
+    def list_for_session(self, class_session_id: int) -> List[AttendanceRecord]:
+        return sorted(
+            (r for (sid, _), r in self._db.attendance.items() if sid == class_session_id),
+            key=lambda r: r.student_id,
+        )
+
+    def present_ids(self, class_session_id: int) -> List[int]:
+        return [r.student_id for r in self.list_for_session(class_session_id) if r.present]
 
 
 class InMemoryDecisionRunRepository(DecisionRunRepository):

@@ -12,6 +12,7 @@ eso es lo que de verdad importa para la garantía de concurrencia (ver
 from __future__ import annotations
 
 from src.repositories.in_memory.repository_impl import (
+    InMemoryAttendanceRepository,
     InMemoryClassSessionRepository,
     InMemoryCourseRepository,
     InMemoryDatabase,
@@ -19,6 +20,7 @@ from src.repositories.in_memory.repository_impl import (
     InMemoryEventRepository,
     InMemoryStudentRepository,
     InMemoryStudentStateRepository,
+    InMemorySyllabusRepository,
 )
 from src.repositories.interfaces import UnitOfWork
 
@@ -35,6 +37,8 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.students = InMemoryStudentRepository(self._db)
         self.student_states = InMemoryStudentStateRepository(self._db)
         self.class_sessions = InMemoryClassSessionRepository(self._db)
+        self.syllabus = InMemorySyllabusRepository(self._db)
+        self.attendance = InMemoryAttendanceRepository(self._db)
         self.decision_runs = InMemoryDecisionRunRepository(self._db)
         self.events = InMemoryEventRepository(self._db)
         return self

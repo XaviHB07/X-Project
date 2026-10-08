@@ -2,6 +2,8 @@ const $ = (selector) => document.querySelector(selector);
 
 const state = {
   course: null,
+  session: null,
+  proposal: null,
   students: [],
   present: new Set(),
   methods: [],
@@ -36,6 +38,13 @@ const elements = {
   stageClose: $("#stage-close"),
   toast: $("#toast"),
   dialog: $("#student-dialog"),
+  editDialog: $("#edit-dialog"),
+  sessionFormView: $("#session-form-view"),
+  sessionActiveView: $("#session-active-view"),
+  sessionTopic: $("#session-topic"),
+  rosterFile: $("#roster-file"),
+  importButton: $("#import-button"),
+  importResult: $("#import-result"),
 };
 
 function escapeHtml(value) {
@@ -45,9 +54,11 @@ function escapeHtml(value) {
 }
 
 async function api(path, options = {}) {
+  const isForm = options.body instanceof FormData;
   const response = await fetch(path, {
     ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    // Con FormData el navegador fija el Content-Type (con su boundary).
+    headers: { ...(isForm ? {} : { "Content-Type": "application/json" }), ...(options.headers || {}) },
   });
   const body = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
@@ -145,6 +156,7 @@ function renderStudents() {
       </div>
       <div class="student-actions">
         <button class="history-link" type="button" data-history-id="${id}">Estado e historial</button>
+        <button class="history-link" type="button" data-edit-id="${id}">Editar</button>
         <label class="attendance-control">
           <input type="checkbox" data-attendance-id="${id}" ${present ? "checked" : ""} aria-label="Marcar presente a ${escapeHtml(student.display_name)}" />
           <span>${present ? "Presente" : "Ausente"}</span>
@@ -163,8 +175,9 @@ function updateSelectionControls() {
   const fullyPresent = state.students.length > 0 && presentCount === state.students.length;
   elements.toggleAll.textContent = fullyPresent ? "Desmarcar todos" : "Marcar todos";
   elements.runButton.disabled = !state.course || presentCount === 0 || state.students.length === 0;
+  const sessionNote = state.session ? " Se guarda en la sesión en curso." : " Inicia una sesión para guardar la asistencia.";
   elements.selectionNote.textContent = presentCount
-    ? `${presentCount} estudiante${presentCount === 1 ? "" : "s"} presente${presentCount === 1 ? "" : "s"}.`
+    ? `${presentCount} estudiante${presentCount === 1 ? "" : "s"} presente${presentCount === 1 ? "" : "s"}.${sessionNote}`
     : "Marca la asistencia para habilitar la selección.";
   const slots = $("#slots-input");
   slots.max = String(Math.max(1, presentCount));
@@ -193,8 +206,43 @@ function renderCourse() {
   elements.breadcrumbCourse.textContent = course ? `CURSO #${course.id}` : "SIN CURSO";
   renderRecentCourses();
   if (!isLoaded) return;
+  renderSessionBox();
   renderStudents();
   if (state.metrics) renderMetrics(state.metrics);
+}
+
+function renderSessionBox() {
+  const session = state.session;
+  elements.sessionFormView.hidden = Boolean(session);
+  elements.sessionActiveView.hidden = !session;
+  if (session) {
+    $("#session-active-title").textContent = session.topic ? `Sesión #${session.id} · ${session.topic}` : `Sesión #${session.id}`;
+    $("#session-active-meta").textContent = `${formatDay(session.session_date)} · ${session.present_count} de ${session.total_count} presentes`;
+    return;
+  }
+  const proposal = state.proposal;
+  $("#session-date-label").textContent = proposal ? formatDay(proposal.session_date) : "";
+  $("#session-hint").textContent = proposal?.suggested_topic
+    ? "Tema propuesto desde el sílabo: puedes confirmarlo o corregirlo."
+    : "Este curso no tiene tema en el sílabo para hoy: escribe uno o déjalo vacío.";
+}
+
+function formatDay(value) {
+  if (!value) return "";
+  // `value` llega como YYYY-MM-DD: se interpreta como fecha local, sin desfase de zona horaria.
+  const [year, month, day] = String(value).split("-").map(Number);
+  return new Intl.DateTimeFormat("es", { dateStyle: "medium" }).format(new Date(year, month - 1, day));
+}
+
+async function loadProposal() {
+  if (!state.course) return;
+  try {
+    state.proposal = await api(`/courses/${state.course.id}/class-sessions/proposal`);
+    elements.sessionTopic.value = state.proposal.suggested_topic || "";
+  } catch {
+    state.proposal = null;
+  }
+  renderSessionBox();
 }
 
 async function loadCourse(courseId, { remember = true } = {}) {
@@ -208,11 +256,16 @@ async function loadCourse(courseId, { remember = true } = {}) {
   state.course = course;
   state.students = students;
   state.present = new Set();
+  state.session = null;
+  state.proposal = null;
   state.metrics = metrics;
   $("#metric-last-run").textContent = "—";
   elements.resultPanel.hidden = true;
+  elements.importResult.hidden = true;
+  elements.sessionTopic.value = "";
   if (remember) saveRecentCourse(course);
   renderCourse();
+  loadProposal();
 }
 
 async function refreshCourse() {
@@ -223,9 +276,31 @@ async function refreshCourse() {
     api(`/courses/${state.course.id}/fairness-metrics`),
   ]);
   state.students = students;
-  state.present = new Set(students.filter((student) => currentPresent.has(student.id)).map((student) => student.id));
+  if (state.session) {
+    await syncSession();
+  } else {
+    state.present = new Set(students.filter((student) => currentPresent.has(student.id)).map((student) => student.id));
+  }
+  renderSessionBox();
   renderStudents();
   renderMetrics(metrics);
+}
+
+// La asistencia de una sesión en curso vive en el servidor: se vuelve a leer de ahí.
+async function syncSession() {
+  const detail = await api(`/class-sessions/${state.session.id}`);
+  state.session = detail;
+  state.present = new Set(detail.attendance.filter((entry) => entry.present).map((entry) => entry.student_id));
+}
+
+async function saveAttendance(marks) {
+  const detail = await api(`/class-sessions/${state.session.id}/attendance`, {
+    method: "PUT",
+    body: JSON.stringify({ attendance: marks.map(([student_id, present]) => ({ student_id, present })) }),
+  });
+  state.session = detail;
+  state.present = new Set(detail.attendance.filter((entry) => entry.present).map((entry) => entry.student_id));
+  renderSessionBox();
 }
 
 function setApiStatus(isOnline) {
@@ -517,10 +592,21 @@ $("#enroll-form").addEventListener("submit", async (event) => {
   }
 });
 
-elements.studentList.addEventListener("change", (event) => {
+elements.studentList.addEventListener("change", async (event) => {
   const input = event.target.closest("[data-attendance-id]");
   if (!input) return;
   const id = Number(input.dataset.attendanceId);
+  if (state.session) {
+    // Con sesión en curso, la marca se guarda en el servidor (HU-S2).
+    input.disabled = true;
+    try {
+      await saveAttendance([[id, input.checked]]);
+    } catch (error) {
+      notify(error.message, true);
+    }
+    renderStudents();
+    return;
+  }
   if (input.checked) state.present.add(id);
   else state.present.delete(id);
   input.closest(".attendance-control").querySelector("span").textContent = input.checked ? "Presente" : "Ausente";
@@ -532,8 +618,17 @@ elements.studentList.addEventListener("click", (event) => {
   if (button) openStudentHistory(button.dataset.historyId);
 });
 
-elements.toggleAll.addEventListener("click", () => {
+elements.toggleAll.addEventListener("click", async () => {
   const allPresent = state.students.length > 0 && state.present.size === state.students.length;
+  if (state.session) {
+    try {
+      await saveAttendance(state.students.map((student) => [student.id, !allPresent]));
+    } catch (error) {
+      notify(error.message, true);
+    }
+    renderStudents();
+    return;
+  }
   state.present = allPresent ? new Set() : new Set(state.students.map((student) => student.id));
   renderStudents();
 });
@@ -545,13 +640,18 @@ $("#selection-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!state.course || !state.present.size) return;
   const payload = {
-    present_student_ids: [...state.present],
     k: Number($("#slots-input").value),
     method: elements.methodSelect.value,
   };
+  if (state.session) {
+    // El servidor elige entre los presentes guardados en la sesión (HU-S2).
+    payload.class_session_id = state.session.id;
+  } else {
+    payload.present_student_ids = [...state.present];
+    const sessionLabel = $("#session-label").value.trim();
+    if (sessionLabel) payload.session_label = sessionLabel;
+  }
   if (payload.method === "weighted_softmax") payload.method_params = { tau: Number($("#tau-input").value) };
-  const sessionLabel = $("#session-label").value.trim();
-  if (sessionLabel) payload.session_label = sessionLabel;
   const stageStartedAt = prepareSelectionStage();
   setBusy(elements.runButton, true, "Seleccionando...");
   try {
@@ -578,6 +678,117 @@ $("#selection-form").addEventListener("submit", async (event) => {
 
 elements.stageClose.addEventListener("click", closeSelectionStage);
 $("#stage-done").addEventListener("click", closeSelectionStage);
+
+$("#session-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.course) return;
+  const button = $("#session-start-button");
+  const payload = { topic: elements.sessionTopic.value.trim() || null };
+  if (state.proposal?.session_date) payload.session_date = state.proposal.session_date;
+  // Si el docente ya marcó asistencia antes de iniciar, se respeta; si no, todos quedan presentes.
+  if (state.present.size) payload.present_student_ids = [...state.present];
+  setBusy(button, true, "Iniciando...");
+  try {
+    const detail = await api(`/courses/${state.course.id}/class-sessions`, { method: "POST", body: JSON.stringify(payload) });
+    state.session = detail;
+    state.present = new Set(detail.attendance.filter((entry) => entry.present).map((entry) => entry.student_id));
+    renderSessionBox();
+    renderStudents();
+    notify(`Sesión #${detail.id} iniciada.`);
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+});
+
+$("#session-end-button").addEventListener("click", async () => {
+  state.session = null;
+  state.present = new Set();
+  elements.resultPanel.hidden = true;
+  renderSessionBox();
+  renderStudents();
+  await loadProposal();
+  notify("Sesión terminada. Puedes iniciar otra.");
+});
+
+elements.rosterFile.addEventListener("change", () => {
+  const file = elements.rosterFile.files[0];
+  $("#roster-file-label").textContent = file ? `↑ ${file.name}` : "↑ Elegir Excel (.xlsx)";
+  elements.importButton.disabled = !file;
+});
+
+function renderImportResult(result) {
+  const parts = [`${result.created} nuevo${result.created === 1 ? "" : "s"}`, `${result.updated} actualizado${result.updated === 1 ? "" : "s"}`, `${result.unchanged} sin cambios`];
+  const errors = result.errors.map((error) => `<li>Fila ${error.row}: ${escapeHtml(error.message)}</li>`).join("");
+  elements.importResult.innerHTML = `<strong>${result.total_rows} fila${result.total_rows === 1 ? "" : "s"} leída${result.total_rows === 1 ? "" : "s"}:</strong> ${parts.join(" · ")}`
+    + (errors ? `<p class="import-errors-title">${result.errors.length} fila${result.errors.length === 1 ? "" : "s"} con problemas (no se importaron):</p><ul>${errors}</ul>` : "");
+  elements.importResult.classList.toggle("has-errors", result.errors.length > 0);
+  elements.importResult.hidden = false;
+}
+
+elements.importButton.addEventListener("click", async () => {
+  const file = elements.rosterFile.files[0];
+  if (!state.course || !file) return;
+  const form = new FormData();
+  form.append("file", file);
+  setBusy(elements.importButton, true, "Cargando...");
+  try {
+    const result = await api(`/courses/${state.course.id}/students/import`, { method: "POST", body: form });
+    renderImportResult(result);
+    await refreshCourse();
+    elements.rosterFile.value = "";
+    $("#roster-file-label").textContent = "↑ Elegir Excel (.xlsx)";
+    elements.importButton.disabled = true;
+    notify(result.errors.length ? "Lista cargada con observaciones." : "Lista cargada correctamente.", result.errors.length > 0);
+  } catch (error) {
+    elements.importResult.hidden = true;
+    notify(error.message, true);
+  } finally {
+    setBusy(elements.importButton, false);
+    elements.importButton.disabled = !elements.rosterFile.files[0];
+  }
+});
+
+let editingStudentId = null;
+
+elements.studentList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-edit-id]");
+  if (!button) return;
+  const student = state.students.find((item) => item.id === Number(button.dataset.editId));
+  if (!student) return;
+  editingStudentId = student.id;
+  $("#edit-name").value = student.display_name;
+  $("#edit-ref").value = student.external_ref;
+  elements.editDialog.showModal();
+});
+
+$("#edit-close").addEventListener("click", () => elements.editDialog.close());
+
+async function patchStudent(changes, successMessage) {
+  try {
+    await api(`/students/${editingStudentId}`, { method: "PATCH", body: JSON.stringify(changes) });
+    elements.editDialog.close();
+    await refreshCourse();
+    notify(successMessage);
+  } catch (error) {
+    notify(error.message, true);
+  }
+}
+
+$("#edit-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  patchStudent(
+    { display_name: $("#edit-name").value.trim(), external_ref: $("#edit-ref").value.trim() },
+    "Estudiante actualizado.",
+  );
+});
+
+$("#edit-withdraw").addEventListener("click", () => {
+  const student = state.students.find((item) => item.id === editingStudentId);
+  if (!student || !window.confirm(`¿Retirar a ${student.display_name} del curso? Conserva su historial.`)) return;
+  patchStudent({ active: false }, `${student.display_name} fue retirado del curso.`);
+});
 
 $("#refresh-button").addEventListener("click", async () => {
   try {

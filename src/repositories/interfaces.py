@@ -17,15 +17,28 @@ tecnología concreta.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Sequence
+from datetime import date
+from typing import Dict, List, Optional, Sequence, Tuple
 
-from src.domain.entities import ClassSession, Course, DecisionRun, Student
+from src.domain.entities import (
+    AttendanceRecord,
+    ClassSession,
+    Course,
+    DecisionRun,
+    Student,
+    SyllabusEntry,
+)
 from src.domain.value_objects import (
     Candidate,
     GenericCountersUpdate,
     PosteriorUpdate,
     SelectionEventRecord,
 )
+
+
+class DuplicateStudentError(ValueError):
+    """Se intentó dejar a dos estudiantes del mismo curso con el mismo
+    `external_ref`."""
 
 
 class CourseRepository(ABC):
@@ -36,6 +49,12 @@ class CourseRepository(ABC):
 
     @abstractmethod
     def get(self, course_id: int) -> Optional[Course]: ...
+
+    @abstractmethod
+    def list_all(self) -> List[Course]:
+        """Todos los cursos, del más antiguo al más reciente (HU-S1: el
+        docente elige el curso sobre el que inicia la sesión)."""
+        ...
 
 
 class StudentRepository(ABC):
@@ -63,10 +82,42 @@ class StudentRepository(ABC):
         ...
 
     @abstractmethod
+    def upsert_from_roster(
+        self,
+        course_id: int,
+        external_ref: str,
+        display_name: str,
+        alpha_init: float,
+        beta_init: float,
+    ) -> Tuple[Student, str]:
+        """Crea o actualiza un estudiante a partir de una fila del Excel
+        (HU-C1). A diferencia de `get_or_create`, si el estudiante ya
+        existe SÍ actualiza su nombre (y lo reactiva si estaba retirado).
+
+        Devuelve `(estudiante, estado)` con estado `"created"`,
+        `"updated"` o `"unchanged"`, para que quien importa pueda
+        informar al docente qué pasó con cada fila.
+        """
+        ...
+
+    @abstractmethod
+    def update(
+        self,
+        student_id: int,
+        external_ref: Optional[str] = None,
+        display_name: Optional[str] = None,
+        active: Optional[bool] = None,
+    ) -> Optional[Student]:
+        """Actualiza los campos no-`None`. Devuelve `None` si el
+        estudiante no existe; lanza `DuplicateStudentError` si el nuevo
+        `external_ref` ya lo usa otro estudiante del mismo curso."""
+        ...
+
+    @abstractmethod
     def get(self, student_id: int) -> Optional[Student]: ...
 
     @abstractmethod
-    def list_by_course(self, course_id: int) -> List[Student]: ...
+    def list_by_course(self, course_id: int, include_inactive: bool = False) -> List[Student]: ...
 
 
 class StudentStateRepository(ABC):
@@ -135,10 +186,57 @@ class ClassSessionRepository(ABC):
     """
 
     @abstractmethod
-    def create(self, course_id: int, label: Optional[str] = None) -> ClassSession: ...
+    def create(
+        self,
+        course_id: int,
+        label: Optional[str] = None,
+        session_date: Optional[date] = None,
+        topic: Optional[str] = None,
+    ) -> ClassSession:
+        """Si `session_date` es `None` se usa la fecha actual (UTC)."""
+        ...
 
     @abstractmethod
     def get(self, class_session_id: int) -> Optional[ClassSession]: ...
+
+    @abstractmethod
+    def list_by_course(self, course_id: int) -> List[ClassSession]:
+        """Sesiones del curso, la más reciente primero."""
+        ...
+
+
+class SyllabusRepository(ABC):
+    """Persistencia de la planificación (sílabo) del curso: qué tema
+    corresponde a cada fecha. Alimenta la propuesta de tema de HU-S1."""
+
+    @abstractmethod
+    def upsert(self, course_id: int, session_date: date, topic: str) -> SyllabusEntry:
+        """Una sola entrada por (curso, fecha): si ya existía, reemplaza el tema."""
+        ...
+
+    @abstractmethod
+    def get_topic_for_date(self, course_id: int, session_date: date) -> Optional[str]: ...
+
+    @abstractmethod
+    def list_by_course(self, course_id: int) -> List[SyllabusEntry]: ...
+
+
+class AttendanceRepository(ABC):
+    """Asistencia por sesión (HU-S2)."""
+
+    @abstractmethod
+    def set_many(self, class_session_id: int, present_by_student: Dict[int, bool]) -> None:
+        """Crea o actualiza la marca de asistencia de cada estudiante dado."""
+        ...
+
+    @abstractmethod
+    def list_for_session(self, class_session_id: int) -> List[AttendanceRecord]: ...
+
+    @abstractmethod
+    def present_ids(self, class_session_id: int) -> List[int]:
+        """Ids de los estudiantes marcados como presentes. Un estudiante
+        sin registro de asistencia NO cuenta como presente."""
+        ...
 
 
 class DecisionRunRepository(ABC):
@@ -212,6 +310,8 @@ class UnitOfWork(ABC):
     students: StudentRepository
     student_states: StudentStateRepository
     class_sessions: ClassSessionRepository
+    syllabus: SyllabusRepository
+    attendance: AttendanceRepository
     decision_runs: DecisionRunRepository
     events: EventRepository
 

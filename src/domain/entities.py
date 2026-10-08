@@ -13,7 +13,7 @@ un test), nada fuera de `repositories/` se entera del cambio.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 
@@ -47,6 +47,10 @@ class Student:
     external_ref: str
     display_name: str
     created_at: datetime
+    # HU-C1: un estudiante retirado del curso no se borra (conserva su
+    # historial de selección); solo deja de aparecer en la lista activa
+    # y de ser elegible. Re-importarlo desde el Excel lo reactiva.
+    active: bool = True
 
 
 @dataclass(frozen=True)
@@ -78,6 +82,10 @@ class ClassSession:
     course_id: int
     created_at: datetime
     label: Optional[str] = None
+    # HU-S1: fecha de la clase (por defecto, la fecha actual) y tema
+    # confirmado por el docente (propuesto desde el sílabo si existe).
+    session_date: Optional[date] = None
+    topic: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -96,3 +104,31 @@ class DecisionRun:
     k_selected: int
     created_at: datetime
     request_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class SyllabusEntry:
+    """Una línea de la planificación/sílabo de un curso: "el día D se ve
+    el tema T". Es lo que permite que HU-S1 proponga el tema al iniciar
+    una sesión. La carga masiva del sílabo no es parte del Sprint 1; por
+    ahora las entradas se registran una a una.
+    """
+
+    id: int
+    course_id: int
+    session_date: date
+    topic: str
+
+
+@dataclass(frozen=True)
+class AttendanceRecord:
+    """Asistencia de un estudiante a una sesión de clase concreta (HU-S2).
+
+    Es distinta de `StudentState.n_present`: aquella es un contador
+    acumulado que solo se actualiza cuando se ejecuta una selección;
+    esta es la marca editable del docente para UNA sesión.
+    """
+
+    class_session_id: int
+    student_id: int
+    present: bool

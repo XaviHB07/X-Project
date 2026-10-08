@@ -10,15 +10,27 @@ Esquema (ver README para el diagrama y la justificación completa):
 
     courses (1) ---- (N) students (1) ---- (1) student_state
     courses (1) ---- (N) class_sessions (1) ---- (N) decision_runs (1) ---- (N) selection_events
+    courses (1) ---- (N) syllabus_entries
+    class_sessions (1) ---- (N) session_attendance (N) ---- (1) students
     students (1) ---- (N) selection_events
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    true,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -46,6 +58,7 @@ class CourseORM(Base):
 
     students: Mapped[List["StudentORM"]] = relationship(back_populates="course")
     class_sessions: Mapped[List["ClassSessionORM"]] = relationship(back_populates="course")
+    syllabus_entries: Mapped[List["SyllabusEntryORM"]] = relationship(back_populates="course")
 
 
 class StudentORM(Base):
@@ -62,6 +75,11 @@ class StudentORM(Base):
     external_ref: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    # server_default: las filas que ya existían antes de esta columna
+    # quedan activas (ver `_ensure_columns` en services/bootstrap.py).
+    active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
 
     course: Mapped["CourseORM"] = relationship(back_populates="students")
     state: Mapped[Optional["StudentStateORM"]] = relationship(
@@ -102,9 +120,40 @@ class ClassSessionORM(Base):
     course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), nullable=False)
     label: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    session_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    topic: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     course: Mapped["CourseORM"] = relationship(back_populates="class_sessions")
     decision_runs: Mapped[List["DecisionRunORM"]] = relationship(back_populates="class_session")
+    attendance: Mapped[List["SessionAttendanceORM"]] = relationship(back_populates="class_session")
+
+
+class SyllabusEntryORM(Base):
+    """Planificación del curso: tema previsto para una fecha (HU-S1)."""
+
+    __tablename__ = "syllabus_entries"
+    __table_args__ = (
+        UniqueConstraint("course_id", "session_date", name="uq_syllabus_course_date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), nullable=False)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    topic: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    course: Mapped["CourseORM"] = relationship(back_populates="syllabus_entries")
+
+
+class SessionAttendanceORM(Base):
+    """Asistencia de un estudiante a una sesión concreta (HU-S2)."""
+
+    __tablename__ = "session_attendance"
+
+    class_session_id: Mapped[int] = mapped_column(ForeignKey("class_sessions.id"), primary_key=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), primary_key=True)
+    present: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+    class_session: Mapped["ClassSessionORM"] = relationship(back_populates="attendance")
 
 
 class DecisionRunORM(Base):

@@ -109,6 +109,38 @@
                 <button class="text-button" id="toggle-all-button" type="button" disabled>Marcar todos</button>
               </div>
 
+              <section class="session-box" id="session-box" aria-labelledby="session-title">
+                <div id="session-form-view">
+                  <div class="session-box-head">
+                    <span class="eyebrow" id="session-title">SESIÓN DE CLASE</span>
+                    <span class="session-date" id="session-date-label"></span>
+                  </div>
+                  <form id="session-form" class="session-form">
+                    <label class="sr-only" for="session-topic">Tema de la sesión</label>
+                    <input id="session-topic" class="field" type="text" maxlength="255" placeholder="Tema de la clase (opcional)" />
+                    <button class="button button-add" id="session-start-button" type="submit">Iniciar sesión</button>
+                  </form>
+                  <p class="form-note" id="session-hint"></p>
+                </div>
+                <div id="session-active-view" class="session-active" hidden>
+                  <div>
+                    <strong id="session-active-title">Sesión en curso</strong>
+                    <span id="session-active-meta"></span>
+                  </div>
+                  <button class="text-button" id="session-end-button" type="button">Terminar sesión</button>
+                </div>
+              </section>
+
+              <div class="import-box">
+                <div class="import-row">
+                  <input id="roster-file" class="sr-only" type="file" accept=".xlsx" />
+                  <label for="roster-file" class="button button-quiet import-pick" id="roster-file-label">↑ Elegir Excel (.xlsx)</label>
+                  <button class="button button-add" id="import-button" type="button" disabled>Cargar lista</button>
+                </div>
+                <p class="form-note">Columnas: <strong>codigo</strong> y <strong>nombre</strong>. Volver a cargar el archivo actualiza nombres sin duplicar estudiantes.</p>
+                <div id="import-result" class="import-result" hidden aria-live="polite"></div>
+              </div>
+
               <form id="enroll-form" class="enroll-form">
                 <div class="enroll-fields">
                   <label class="sr-only" for="student-name">Nombre del estudiante</label>
@@ -214,6 +246,29 @@
       <div id="dialog-state" class="dialog-state"></div>
       <div class="dialog-history-heading"><h3>Historial de selección</h3><span id="dialog-history-count">0 eventos</span></div>
       <div id="dialog-history" class="dialog-history"></div>
+    </dialog>
+
+    <dialog class="student-dialog" id="edit-dialog" aria-labelledby="edit-dialog-title">
+      <form id="edit-form">
+        <div class="dialog-head">
+          <div>
+            <p class="eyebrow">EDITAR ESTUDIANTE</p>
+            <h2 id="edit-dialog-title">Datos del estudiante</h2>
+          </div>
+          <button class="icon-button dialog-close" id="edit-close" type="button" aria-label="Cerrar">×</button>
+        </div>
+        <div class="edit-body">
+          <label class="form-label" for="edit-name">Nombre</label>
+          <input id="edit-name" class="field" type="text" maxlength="255" required />
+          <label class="form-label" for="edit-ref">Código / matrícula</label>
+          <input id="edit-ref" class="field" type="text" maxlength="255" required />
+          <div class="edit-actions">
+            <button class="button button-add" id="edit-save" type="submit">Guardar cambios</button>
+            <button class="text-button danger-text" id="edit-withdraw" type="button">Retirar del curso</button>
+          </div>
+          <p class="form-note">Retirar no borra al estudiante: conserva su historial y puede volver a cargarse desde el Excel.</p>
+        </div>
+      </form>
     </dialog>
 
     <dialog class="selection-stage" id="selection-stage" aria-labelledby="stage-heading">

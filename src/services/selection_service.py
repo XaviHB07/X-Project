@@ -85,7 +85,7 @@ class SelectionService:
     def run_selection(
         self,
         course_id: int,
-        present_student_ids: Sequence[int],
+        present_student_ids: Optional[Sequence[int]],
         k: int,
         method_name: str,
         method_params: Optional[dict] = None,
@@ -100,9 +100,10 @@ class SelectionService:
             course_id: curso al que pertenece la sesión (se usa solo si
                 hay que crear una `class_session` nueva).
             present_student_ids: ids de los estudiantes que asistieron a
-                esta sesión y por lo tanto son elegibles. Se asume que la
-                asistencia ya fue determinada por quien llama (este
-                servicio no decide quién está presente).
+                esta sesión y por lo tanto son elegibles. Si es `None`,
+                se usa la asistencia registrada en la sesión indicada por
+                `class_session_id` (HU-S2); en ese caso `class_session_id`
+                es obligatorio.
             k: cupos a llenar en esta sesión.
             method_name: clave de `SelectorRegistry` (p. ej.
                 "bayesian_fairness"). Debe haberse importado
@@ -132,8 +133,19 @@ class SelectionService:
 
         Raises:
             NoEligibleStudentsError: si ninguno de los
-                `present_student_ids` tiene un `StudentState` registrado.
+                `present_student_ids` tiene un `StudentState` registrado,
+                o si se pidió usar la asistencia de la sesión y no hay
+                nadie marcado como presente.
+            NoClassSessionError: si `class_session_id` no existe o es de
+                otro curso.
+            ValueError: si `present_student_ids` es `None` y no se indicó
+                `class_session_id`.
         """
+        if present_student_ids is None and class_session_id is None:
+            raise ValueError(
+                "Indica present_student_ids o una class_session_id con asistencia registrada."
+            )
+
         rng = rng or np.random.default_rng()
         selector = SelectorRegistry.create(method_name, method_params or {})
 
@@ -141,10 +153,21 @@ class SelectionService:
             if class_session_id is None:
                 session = uow.class_sessions.create(course_id, label=session_label)
                 class_session_id = session.id
-            elif uow.class_sessions.get(class_session_id) is None:
-                raise NoClassSessionError(
-                    f"La sesión de clase {class_session_id} no existe."
-                )
+            else:
+                existing = uow.class_sessions.get(class_session_id)
+                if existing is None or existing.course_id != course_id:
+                    # Una sesión de OTRO curso se trata igual que una
+                    # inexistente: no se revela ni se usa su asistencia.
+                    raise NoClassSessionError(
+                        f"La sesión de clase {class_session_id} no existe en este curso."
+                    )
+
+            if present_student_ids is None:
+                present_student_ids = uow.attendance.present_ids(class_session_id)
+                if not present_student_ids:
+                    raise NoEligibleStudentsError(
+                        "La sesión no tiene estudiantes marcados como presentes."
+                    )
 
             # Lectura CON bloqueo (equivalente a `SELECT ... FOR UPDATE`,
             # ver `repositories/sqlalchemy/repository_impl.py`): desde

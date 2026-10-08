@@ -20,28 +20,54 @@ de dominio a una respuesta HTTP. La lógica de negocio real vive en
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from src.api.dependencies import get_fairness_service, get_selection_service, new_unit_of_work
+from src.api.dependencies import (
+    get_fairness_service,
+    get_roster_service,
+    get_selection_service,
+    get_session_service,
+    new_unit_of_work,
+)
 from src.api.schemas import (
+    AttendanceEntryResponse,
+    AttendanceUpdateRequest,
     AvailableMethodsResponse,
     CourseCreateRequest,
     CourseResponse,
     DecisionResultResponse,
     FairnessMetricsResponse,
+    RosterImportResponse,
+    RosterRowErrorResponse,
     RunSelectionRequest,
     SelectionEventResponse,
+    SessionDetailResponse,
+    SessionProposalResponse,
+    SessionStartRequest,
+    SessionSummaryResponse,
     StudentEnrollRequest,
     StudentResponse,
     StudentStateResponse,
+    StudentUpdateRequest,
+    SyllabusEntryRequest,
+    SyllabusEntryResponse,
 )
-from src.repositories.interfaces import UnitOfWork
+from src.repositories.interfaces import DuplicateStudentError, UnitOfWork
 from src.services.bootstrap import build_app_context
+from src.services.errors import (
+    CourseNotFoundError,
+    InvalidAttendanceError,
+    SessionNotFoundError,
+    StudentNotFoundError,
+)
+from src.services.roster_import import MAX_FILE_BYTES, RosterFormatError
+from src.services.session_service import SessionDetail
 from src.services.selection_service import NoEligibleStudentsError, NoClassSessionError
 from src.strategies.registry import (
     InvalidSelectorParametersError,
@@ -94,6 +120,34 @@ def list_methods() -> AvailableMethodsResponse:
     return AvailableMethodsResponse(methods=SelectorRegistry.available())
 
 
+def _student_response(s) -> StudentResponse:
+    return StudentResponse(
+        id=s.id, course_id=s.course_id, external_ref=s.external_ref,
+        display_name=s.display_name, created_at=s.created_at, active=s.active,
+    )
+
+
+def _session_detail_response(detail: SessionDetail) -> SessionDetailResponse:
+    session = detail.session
+    return SessionDetailResponse(
+        id=session.id,
+        course_id=session.course_id,
+        session_date=session.session_date,
+        topic=session.topic,
+        label=session.label,
+        created_at=session.created_at,
+        present_count=detail.present_count,
+        total_count=len(detail.attendance),
+        attendance=[
+            AttendanceEntryResponse(
+                student_id=a.student_id, external_ref=a.external_ref,
+                display_name=a.display_name, present=a.present,
+            )
+            for a in detail.attendance
+        ],
+    )
+
+
 # --------------------------------------------------------------------------
 # Cursos
 # --------------------------------------------------------------------------
@@ -107,6 +161,14 @@ def create_course(payload: CourseCreateRequest, uow: UnitOfWork = Depends(new_un
         course = uow.courses.create(payload.name)
         uow.commit()
     return CourseResponse(id=course.id, name=course.name, created_at=course.created_at)
+
+
+@app.get("/courses", response_model=List[CourseResponse], tags=["cursos"])
+def list_courses(uow: UnitOfWork = Depends(new_unit_of_work)) -> List[CourseResponse]:
+    """Todos los cursos (HU-S1: el docente elige el curso de la sesión)."""
+    with uow:
+        courses = uow.courses.list_all()
+    return [CourseResponse(id=c.id, name=c.name, created_at=c.created_at) for c in courses]
 
 
 @app.get("/courses/{course_id}", response_model=CourseResponse, tags=["cursos"])
@@ -148,28 +210,75 @@ def enroll_student(
             beta_init=payload.beta_init,
         )
         uow.commit()
-    return StudentResponse(
-        id=student.id,
-        course_id=student.course_id,
-        external_ref=student.external_ref,
-        display_name=student.display_name,
-        created_at=student.created_at,
+    return _student_response(student)
+
+
+@app.post(
+    "/courses/{course_id}/students/import",
+    response_model=RosterImportResponse,
+    tags=["estudiantes"],
+)
+def import_students_from_excel(
+    course_id: int,
+    file: UploadFile = File(..., description="Excel .xlsx con columnas de código y nombre."),
+    roster_service=Depends(get_roster_service),
+) -> RosterImportResponse:
+    """HU-C1: carga (o re-carga) la lista de estudiantes desde un Excel.
+
+    Encabezados aceptados: `codigo` (o matrícula) y `nombre` (o apellidos y
+    nombres). Las filas válidas se guardan; las inválidas se devuelven en
+    `errors` con su número de fila. Si el archivo no tiene la estructura
+    esperada, responde 400 y no se guarda nada. Es idempotente: volver a
+    cargar el archivo actualiza nombres y no duplica estudiantes.
+    """
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "El archivo debe ser un Excel en formato .xlsx.")
+    data = file.file.read(MAX_FILE_BYTES + 1)  # endpoint síncrono: corre en el threadpool
+    try:
+        result = roster_service.import_roster(course_id, data)
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except RosterFormatError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return RosterImportResponse(
+        total_rows=result.total_rows,
+        created=result.created,
+        updated=result.updated,
+        unchanged=result.unchanged,
+        errors=[RosterRowErrorResponse(row=e.row_number, message=e.message) for e in result.errors],
     )
 
 
 @app.get(
     "/courses/{course_id}/students", response_model=List[StudentResponse], tags=["estudiantes"]
 )
-def list_students(course_id: int, uow: UnitOfWork = Depends(new_unit_of_work)) -> List[StudentResponse]:
+def list_students(
+    course_id: int, include_inactive: bool = False, uow: UnitOfWork = Depends(new_unit_of_work)
+) -> List[StudentResponse]:
+    """Lista del curso. Por defecto solo estudiantes activos; con
+    `include_inactive=true` también los retirados."""
     with uow:
-        students = uow.students.list_by_course(course_id)
-    return [
-        StudentResponse(
-            id=s.id, course_id=s.course_id, external_ref=s.external_ref,
-            display_name=s.display_name, created_at=s.created_at,
+        students = uow.students.list_by_course(course_id, include_inactive=include_inactive)
+    return [_student_response(s) for s in students]
+
+
+@app.patch("/students/{student_id}", response_model=StudentResponse, tags=["estudiantes"])
+def update_student(
+    student_id: int, payload: StudentUpdateRequest, roster_service=Depends(get_roster_service)
+) -> StudentResponse:
+    """HU-C1: corrige nombre/código, retira (`active=false`) o reincorpora a un estudiante."""
+    try:
+        student = roster_service.update_student(
+            student_id,
+            external_ref=payload.external_ref,
+            display_name=payload.display_name,
+            active=payload.active,
         )
-        for s in students
-    ]
+    except StudentNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except DuplicateStudentError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return _student_response(student)
 
 
 @app.get(
@@ -214,6 +323,154 @@ def get_student_history(
         )
         for e in events
     ]
+
+
+# --------------------------------------------------------------------------
+# Sesiones de clase y asistencia (HU-S1, HU-S2)
+# --------------------------------------------------------------------------
+
+
+@app.post(
+    "/courses/{course_id}/syllabus",
+    response_model=SyllabusEntryResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["sesiones"],
+)
+def set_syllabus_entry(
+    course_id: int, payload: SyllabusEntryRequest, session_service=Depends(get_session_service)
+) -> SyllabusEntryResponse:
+    """Registra (o reemplaza) el tema previsto para una fecha. Es lo que
+    el sistema propone al iniciar una sesión ese día."""
+    try:
+        entry = session_service.set_syllabus_entry(course_id, payload.session_date, payload.topic)
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return SyllabusEntryResponse(
+        id=entry.id, course_id=entry.course_id, session_date=entry.session_date, topic=entry.topic
+    )
+
+
+@app.get(
+    "/courses/{course_id}/syllabus", response_model=List[SyllabusEntryResponse], tags=["sesiones"]
+)
+def list_syllabus(
+    course_id: int, session_service=Depends(get_session_service)
+) -> List[SyllabusEntryResponse]:
+    try:
+        entries = session_service.list_syllabus(course_id)
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return [
+        SyllabusEntryResponse(id=e.id, course_id=e.course_id, session_date=e.session_date, topic=e.topic)
+        for e in entries
+    ]
+
+
+@app.get(
+    "/courses/{course_id}/class-sessions/proposal",
+    response_model=SessionProposalResponse,
+    tags=["sesiones"],
+)
+def propose_session(
+    course_id: int,
+    session_date: Optional[date] = None,
+    session_service=Depends(get_session_service),
+) -> SessionProposalResponse:
+    """HU-S1: fecha (hoy por defecto) y tema propuesto (del sílabo, si existe)
+    para mostrar al docente ANTES de iniciar la sesión."""
+    try:
+        proposal = session_service.propose(course_id, session_date)
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return SessionProposalResponse(
+        session_date=proposal.session_date, suggested_topic=proposal.suggested_topic
+    )
+
+
+@app.post(
+    "/courses/{course_id}/class-sessions",
+    response_model=SessionDetailResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["sesiones"],
+)
+def start_class_session(
+    course_id: int, payload: SessionStartRequest, session_service=Depends(get_session_service)
+) -> SessionDetailResponse:
+    """HU-S1: inicia una sesión de clase con el tema confirmado/corregido
+    por el docente y deja registrada la asistencia inicial (por defecto,
+    todos los estudiantes activos presentes)."""
+    try:
+        detail = session_service.start_session(
+            course_id,
+            topic=payload.topic,
+            session_date=payload.session_date,
+            present_student_ids=payload.present_student_ids,
+            label=payload.label,
+        )
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except (InvalidAttendanceError, ValueError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _session_detail_response(detail)
+
+
+@app.get(
+    "/courses/{course_id}/class-sessions",
+    response_model=List[SessionSummaryResponse],
+    tags=["sesiones"],
+)
+def list_class_sessions(
+    course_id: int, session_service=Depends(get_session_service)
+) -> List[SessionSummaryResponse]:
+    try:
+        sessions = session_service.list_sessions(course_id)
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return [
+        SessionSummaryResponse(
+            id=x.id, course_id=x.course_id, session_date=x.session_date,
+            topic=x.topic, label=x.label, created_at=x.created_at,
+        )
+        for x in sessions
+    ]
+
+
+@app.get(
+    "/class-sessions/{class_session_id}", response_model=SessionDetailResponse, tags=["sesiones"]
+)
+def get_class_session(
+    class_session_id: int, session_service=Depends(get_session_service)
+) -> SessionDetailResponse:
+    try:
+        detail = session_service.get_session(class_session_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return _session_detail_response(detail)
+
+
+@app.put(
+    "/class-sessions/{class_session_id}/attendance",
+    response_model=SessionDetailResponse,
+    tags=["sesiones"],
+)
+def update_attendance(
+    class_session_id: int,
+    payload: AttendanceUpdateRequest,
+    session_service=Depends(get_session_service),
+) -> SessionDetailResponse:
+    """HU-S2: marca o desmarca la asistencia de uno o varios estudiantes.
+    La selección posterior (`present_student_ids` omitido) usa esta marca."""
+    try:
+        detail = session_service.set_attendance(
+            class_session_id, {m.student_id: m.present for m in payload.attendance}
+        )
+    except SessionNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except InvalidAttendanceError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _session_detail_response(detail)
 
 
 # --------------------------------------------------------------------------
