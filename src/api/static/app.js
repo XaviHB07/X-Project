@@ -13,10 +13,11 @@ const state = {
   metrics: null,
   toastTimer: null,
   visualTimer: null,
+  ballMachine: null,
 };
 
 const selectionAnimationDuration = 5500;
-const visualPalette = ["#df795e", "#f3c86a", "#5ca28e", "#b9d996", "#60876f", "#e7a9a0"];
+const visualPalette = ["#df795e", "#f3c86a", "#2f6fe0", "#8ec5f5", "#1e3a8a", "#e7a9a0"];
 
 const elements = {
   apiDot: $("#api-dot"),
@@ -520,6 +521,306 @@ function presentStudents() {
   return state.students.filter((student) => state.present.has(Number(student.id)));
 }
 
+/* ==========================================================================
+   Bolillero: física 2D en <canvas>.
+   - Las bolillas llevan el NÚMERO DE ORDEN del estudiante (orden alfabético
+     por display_name, ver studentOrderMap); el nombre NO se dibuja.
+   - Mientras se espera el resultado las bolillas "chocolatean": chorro de
+     aire desde abajo, choques entre bolillas y contra las paredes.
+   - Con el resultado, la bolilla elegida se destaca, baja hasta el orificio
+     del piso y rueda por el canal hacia abajo a la derecha. Recién cuando
+     termina de salir se invoca onDone y se muestra el nombre.
+   ========================================================================== */
+const BALL_W = 520;
+const BALL_H = 330;
+const BALL_BOX = { x: 14, y: 8, w: 400, h: 250, r: 14 };
+const BALL_TUBE_X = 360;   // eje del tramo vertical del canal (bajo la caja)
+const BALL_TUBE_Y = 296;   // eje del tramo horizontal
+const BALL_TUBE_END = 504; // boca de salida (derecha)
+
+function studentOrderMap() {
+  const sorted = [...state.students].sort((a, b) =>
+    String(a.display_name).trim().localeCompare(String(b.display_name).trim(), "es", { sensitivity: "base" }));
+  return new Map(sorted.map((student, index) => [Number(student.id), index + 1]));
+}
+
+function createBallMachine(canvas, candidates, orderMap, reduceMotion) {
+  const ctx = canvas.getContext("2d");
+  const left = BALL_BOX.x + 8;
+  const right = BALL_BOX.x + BALL_BOX.w - 8;
+  const top = BALL_BOX.y + 8;
+  const floor = BALL_BOX.y + BALL_BOX.h - 8;
+  const count = Math.max(candidates.length, 1);
+  const radius = Math.max(8, Math.min(20, Math.sqrt(0.3 * (right - left) * (floor - top) / (count * Math.PI))));
+  const tubeW = Math.max(2 * radius + 8, 30);
+  const floorLine = BALL_BOX.y + BALL_BOX.h;
+
+  // Colocación inicial: apiladas en el fondo, como si acabaran de caer.
+  const perRow = Math.max(1, Math.floor((right - left) / (2 * radius + 1)));
+  const balls = candidates.map((student, index) => ({
+    id: Number(student.id),
+    num: orderMap.get(Number(student.id)) ?? index + 1,
+    color: visualPalette[index % visualPalette.length],
+    x: left + radius + (index % perRow) * (2 * radius + 1) + Math.random() * 1.5,
+    y: floor - radius - Math.floor(index / perRow) * (2 * radius + 1),
+    vx: 0, vy: 0, ghost: false, chosen: false, exit: null,
+  }));
+
+  let intensity = reduceMotion ? 0 : 1;
+  let intensityTarget = intensity;
+  let clock = 0;
+  let last = 0;
+  let raf = 0;
+  let stopped = false;
+  let gateOpen = false;
+  let doneAt = null;
+  let doneFired = false;
+  let onDone = null;
+  let stopAt = Infinity;
+
+  function step(dt) {
+    const gravity = 900;
+    for (const b of balls) {
+      if (b.ghost) continue;
+      let ay = gravity;
+      if (intensity > 0.01) {
+        const depth = (b.y - top) / (floor - top);
+        ay -= intensity * (1700 + 1500 * Math.random()) * Math.max(0, depth - 0.15);
+        b.vx += intensity * (Math.sin(clock * 5 + b.y * 0.045) * 520 + (Math.random() - 0.5) * 1700) * dt;
+        if (Math.random() < 0.012 * intensity) {
+          b.vx += (Math.random() - 0.5) * 760;
+          b.vy -= Math.random() * 420;
+        }
+      }
+      b.vy += ay * dt;
+      const damping = 1 - 0.4 * dt;
+      b.vx *= damping; b.vy *= damping;
+      const speed = Math.hypot(b.vx, b.vy);
+      if (speed > 650) { b.vx *= 650 / speed; b.vy *= 650 / speed; }
+      b.x += b.vx * dt; b.y += b.vy * dt;
+      if (b.x < left + radius) { b.x = left + radius; b.vx = Math.abs(b.vx) * 0.85; }
+      if (b.x > right - radius) { b.x = right - radius; b.vx = -Math.abs(b.vx) * 0.85; }
+      if (b.y < top + radius) { b.y = top + radius; b.vy = Math.abs(b.vy) * 0.85; }
+      if (b.y > floor - radius) { b.y = floor - radius; b.vy = -Math.abs(b.vy) * 0.55; }
+    }
+    const min = 2 * radius;
+    for (let i = 0; i < balls.length; i += 1) {
+      const a = balls[i];
+      if (a.ghost) continue;
+      for (let j = i + 1; j < balls.length; j += 1) {
+        const c = balls[j];
+        if (c.ghost) continue;
+        const dx = c.x - a.x; const dy = c.y - a.y;
+        const distSq = dx * dx + dy * dy;
+        if (distSq >= min * min || distSq === 0) continue;
+        const dist = Math.sqrt(distSq);
+        const nx = dx / dist; const ny = dy / dist;
+        const push = (min - dist) / 2;
+        a.x -= nx * push; a.y -= ny * push; c.x += nx * push; c.y += ny * push;
+        const rel = (c.vx - a.vx) * nx + (c.vy - a.vy) * ny;
+        if (rel < 0) {
+          const impulse = -(1 + 0.9) * rel / 2;
+          a.vx -= impulse * nx; a.vy -= impulse * ny; c.vx += impulse * nx; c.vy += impulse * ny;
+        }
+      }
+    }
+  }
+
+  // Recorrido de salida de una bolilla: del piso de la caja por el canal.
+  function exitPath(slot) {
+    const slotX = Math.max(BALL_TUBE_X + radius + 18, BALL_TUBE_END - radius - 4 - slot * (2 * radius + 3));
+    return [
+      { x: BALL_TUBE_X, y: floor - radius },
+      { x: BALL_TUBE_X, y: BALL_TUBE_Y - 16 },
+      { x: BALL_TUBE_X + 16, y: BALL_TUBE_Y },
+      { x: slotX, y: BALL_TUBE_Y },
+    ];
+  }
+  function along(path, u) {
+    const lengths = [];
+    let total = 0;
+    for (let i = 1; i < path.length; i += 1) {
+      const len = Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+      lengths.push(len); total += len;
+    }
+    let dist = u * total;
+    for (let i = 0; i < lengths.length; i += 1) {
+      if (dist <= lengths[i] || i === lengths.length - 1) {
+        const k = lengths[i] ? Math.min(1, dist / lengths[i]) : 1;
+        return { x: path[i].x + (path[i + 1].x - path[i].x) * k, y: path[i].y + (path[i + 1].y - path[i].y) * k };
+      }
+      dist -= lengths[i];
+    }
+    return path[path.length - 1];
+  }
+  const easeInOut = (u) => (u < 0.5 ? 2 * u * u : 1 - ((-2 * u + 2) ** 2) / 2);
+
+  const LIFT = 0.9;  // s: la elegida sube/baja hasta la boca del canal
+  const ROLL = 1.3;  // s: rueda por el canal
+
+  function updateExits() {
+    for (const b of balls) {
+      if (!b.exit) continue;
+      const e = b.exit;
+      const t = clock - e.start;
+      if (t < 0) continue;
+      if (!b.ghost) {
+        b.ghost = true; b.chosen = true; e.from = { x: b.x, y: b.y }; gateOpen = true;
+      }
+      if (t < LIFT) {
+        const k = easeInOut(t / LIFT);
+        b.x = e.from.x + (e.path[0].x - e.from.x) * k;
+        b.y = e.from.y + (e.path[0].y - e.from.y) * k;
+        b.scale = 1 + 0.3 * Math.sin(Math.PI * k);
+      } else if (t < LIFT + ROLL) {
+        const u = (t - LIFT) / ROLL;
+        const p = along(e.path, u * u * (3 - 2 * u));
+        b.x = p.x; b.y = p.y; b.scale = 1;
+      } else {
+        const p = e.path[e.path.length - 1];
+        b.x = p.x; b.y = p.y; b.scale = 1;
+      }
+    }
+  }
+
+  function fit() {
+    const dpr = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.round(canvas.clientWidth * dpr));
+    if (canvas.width !== width) { canvas.width = width; canvas.height = Math.round(width * BALL_H / BALL_W); }
+    const s = canvas.width / BALL_W;
+    ctx.setTransform(s, 0, 0, s, 0, 0);
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function drawTube() {
+    ctx.save();
+    ctx.lineJoin = "round"; ctx.lineCap = "butt";
+    ctx.beginPath();
+    ctx.moveTo(BALL_TUBE_X, floorLine);
+    ctx.lineTo(BALL_TUBE_X, BALL_TUBE_Y - 16);
+    ctx.lineTo(BALL_TUBE_X + 16, BALL_TUBE_Y);
+    ctx.lineTo(BALL_TUBE_END, BALL_TUBE_Y);
+    ctx.strokeStyle = "#17398a"; ctx.lineWidth = tubeW + 10; ctx.stroke();
+    ctx.strokeStyle = "#d6e8fb"; ctx.lineWidth = tubeW; ctx.stroke();
+    ctx.restore();
+    // boca de salida
+    ctx.fillStyle = "#17398a";
+    roundRect(BALL_TUBE_END - 4, BALL_TUBE_Y - tubeW / 2 - 8, 11, tubeW + 16, 4);
+    ctx.fill();
+  }
+
+  function drawBox() {
+    const { x, y, w, h, r } = BALL_BOX;
+    const glass = ctx.createLinearGradient(0, y, 0, y + h);
+    glass.addColorStop(0, "rgba(255,255,255,.85)");
+    glass.addColorStop(1, "rgba(173,208,247,.55)");
+    roundRect(x, y, w, h, r);
+    ctx.fillStyle = glass; ctx.fill();
+    ctx.lineWidth = 4; ctx.strokeStyle = "#17398a"; ctx.stroke();
+    if (gateOpen) { // orificio abierto en el piso
+      ctx.fillStyle = "#d6e8fb";
+      ctx.fillRect(BALL_TUBE_X - tubeW / 2, floorLine - 3, tubeW, 7);
+    }
+  }
+
+  function drawBall(b) {
+    const r = radius * (b.scale || 1);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.fillStyle = "rgba(13,37,87,.16)";
+    ctx.beginPath(); ctx.ellipse(1.5, r * 0.92, r * 0.85, r * 0.28, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fillStyle = b.color; ctx.fill();
+    const shade = ctx.createRadialGradient(-r * 0.35, -r * 0.4, r * 0.05, 0, 0, r);
+    shade.addColorStop(0, "rgba(255,255,255,.7)");
+    shade.addColorStop(0.5, "rgba(255,255,255,0)");
+    shade.addColorStop(1, "rgba(0,20,70,.3)");
+    ctx.fillStyle = shade; ctx.fill();
+    if (b.chosen) {
+      ctx.shadowColor = "#e66e55"; ctx.shadowBlur = 12;
+      ctx.lineWidth = 3; ctx.strokeStyle = "#e66e55";
+      ctx.beginPath(); ctx.arc(0, 0, r + 2.5, 0, Math.PI * 2); ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+    ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.arc(0, 0, r * 0.62, 0, Math.PI * 2); ctx.fill();
+    const text = String(b.num);
+    const size = r * (text.length === 1 ? 0.98 : text.length === 2 ? 0.8 : 0.62);
+    ctx.fillStyle = "#0d2557";
+    ctx.font = `700 ${size}px "DM Sans", "Trebuchet MS", sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(text, 0, size * 0.04);
+    ctx.restore();
+  }
+
+  function draw() {
+    fit();
+    ctx.clearRect(0, 0, BALL_W, BALL_H);
+    drawTube();
+    drawBox();
+    for (const b of balls) if (!b.ghost) drawBall(b);
+    ctx.save(); // brillo del vidrio
+    roundRect(BALL_BOX.x, BALL_BOX.y, BALL_BOX.w, BALL_BOX.h, BALL_BOX.r); ctx.clip();
+    ctx.fillStyle = "rgba(255,255,255,.14)";
+    ctx.beginPath(); ctx.moveTo(BALL_BOX.x + 40, BALL_BOX.y); ctx.lineTo(BALL_BOX.x + 110, BALL_BOX.y);
+    ctx.lineTo(BALL_BOX.x + 40, BALL_BOX.y + BALL_BOX.h); ctx.lineTo(BALL_BOX.x - 30, BALL_BOX.y + BALL_BOX.h); ctx.fill();
+    ctx.restore();
+    for (const b of balls) if (b.ghost) drawBall(b);
+  }
+
+  function frame(now) {
+    if (stopped) return;
+    const dt = Math.min(0.033, last ? (now - last) / 1000 : 0.016);
+    last = now; clock += dt;
+    intensity += (intensityTarget - intensity) * Math.min(1, dt * 4);
+    step(dt / 2); step(dt / 2);
+    updateExits();
+    draw();
+    if (doneAt !== null && !doneFired && clock >= doneAt) { doneFired = true; if (onDone) onDone(); }
+    if (clock > stopAt) return; // ya terminó: se deja el último cuadro
+    raf = requestAnimationFrame(frame);
+  }
+
+  // Con "reducir movimiento": se asientan sin animar y se dibuja una vez.
+  if (reduceMotion) { for (let i = 0; i < 240; i += 1) step(1 / 120); draw(); } else { raf = requestAnimationFrame(frame); }
+
+  return {
+    release(ids, done) {
+      onDone = done;
+      const chosen = ids.map((id) => balls.find((b) => b.id === Number(id))).filter(Boolean);
+      if (reduceMotion) {
+        chosen.forEach((b, slot) => {
+          const path = exitPath(slot); const p = path[path.length - 1];
+          b.ghost = true; b.chosen = true; b.x = p.x; b.y = p.y; b.scale = 1;
+        });
+        gateOpen = chosen.length > 0; draw(); done(); return;
+      }
+      intensityTarget = 0.35;          // baja el aire: se calma el chocolateo
+      const settle = clock + 0.9;
+      chosen.forEach((b, slot) => { b.exit = { start: settle + slot * 0.95, path: exitPath(slot), from: null }; });
+      const lastStart = settle + Math.max(0, chosen.length - 1) * 0.95;
+      doneAt = chosen.length ? lastStart + LIFT + ROLL + 0.6 : clock + 0.8;
+      stopAt = doneAt + 3;
+      if (chosen.length) setTimeout(() => { if (!stopped) intensityTarget = 0.15; }, 900);
+      setTimeout(() => { if (!stopped) intensityTarget = 0; }, (doneAt - clock) * 1000);
+    },
+    stop() { stopped = true; cancelAnimationFrame(raf); },
+  };
+}
+
+function stopBallMachine() {
+  if (state.ballMachine) { state.ballMachine.stop(); state.ballMachine = null; }
+}
+
 function prepareSelectionStage() {
   const mode = document.querySelector('input[name="selection-visual"]:checked').value;
   const candidates = presentStudents();
@@ -571,11 +872,11 @@ function prepareSelectionStage() {
     const cssOffset = (value) => `calc(50% ${value < 0 ? "-" : "+"} ${Math.abs(value)}px)`;
     return `<span class="roulette-name" data-student-index="${index}" title="${escapeHtml(student.display_name)}" style="left:${cssOffset(x)};top:${cssOffset(y)};width:${maxWidth}px;max-width:${maxWidth}px">${escapeHtml(student.display_name)}</span>`;
   }).join("");
-  $("#ball-machine").classList.remove("mixing");
-  $("#ball-tray").classList.remove("is-final");
-  $("#ball-tray").innerHTML = candidates.map((student, index) =>
-    `<span class="draw-ball" data-student-index="${index}" role="img" aria-label="Bolilla de ${escapeHtml(student.display_name)}" title="${escapeHtml(student.display_name)}" style="--ball-color:${visualPalette[index % visualPalette.length]};--ball-delay:${index * -35}ms"><span>${escapeHtml(student.display_name)}</span></span>`,
-  ).join("");
+  stopBallMachine();
+  if (mode === "balls") {
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    state.ballMachine = createBallMachine($("#ball-canvas"), candidates, studentOrderMap(), reduce);
+  }
   $("#ball-count").textContent = `${candidates.length} ${candidates.length === 1 ? "BOLILLA" : "BOLILLAS"}`;
   $("#ball-machine-footer").textContent = "Mezclando participantes";
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -592,13 +893,6 @@ function prepareSelectionStage() {
         wheel.style.setProperty("--spin-duration", `${0.3 + easedProgress * 1.5}s`);
         $("#roulette-orbit").querySelectorAll(".roulette-name").forEach((name, nameIndex) => {
           name.classList.toggle("active", nameIndex === activeIndex);
-        });
-      } else {
-        const machine = $("#ball-machine");
-        machine.classList.add("mixing");
-        machine.style.setProperty("--ball-duration", `${0.28 + easedProgress * 1.1}s`);
-        $("#ball-tray").querySelectorAll(".draw-ball").forEach((ball, ballIndex) => {
-          ball.classList.toggle("active", ballIndex === activeIndex);
         });
       }
     }
@@ -625,10 +919,14 @@ function finishSelectionStage(result, stage, error = null) {
   wheel.classList.remove("spinning");
   wheel.style.transition = "transform 850ms cubic-bezier(.16,.75,.24,1)";
   $("#ball-machine").classList.remove("mixing");
-  $("#stage-result").hidden = false;
-  $("#stage-done").hidden = false;
-  elements.stageClose.hidden = false;
+  const revealResult = () => {
+    $("#stage-result").hidden = false;
+    $("#stage-done").hidden = false;
+    elements.stageClose.hidden = false;
+  };
   if (error) {
+    stopBallMachine();
+    revealResult();
     $("#roulette-visual").hidden = true;
     $("#balls-visual").hidden = true;
     $("#stage-status").textContent = "NO SE PUDO COMPLETAR";
@@ -642,7 +940,19 @@ function finishSelectionStage(result, stage, error = null) {
   const winners = result.selected_student_ids.map((id) => ({ id, name: names.get(Number(id)) || `Estudiante ${id}` }));
   $("#roulette-visual").hidden = stage.mode !== "roulette";
   $("#balls-visual").hidden = stage.mode !== "balls";
+  // Texto final con el/los nombres. En la ruleta sale de inmediato; en el
+  // bolillero solo después de que la bolilla termina de salir por el canal.
+  const showFinalText = () => {
+    $("#stage-status").textContent = "DECISIÓN REGISTRADA";
+    $("#stage-heading").textContent = winners.length ? "¡Ya tenemos resultado!" : "Ronda completada";
+    $("#stage-winners").innerHTML = winners.length
+      ? winners.map((student, index) => `<div class="stage-winner" style="animation-delay:${index * 90}ms"><span>${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(student.name)}</strong><small>ID ${student.id}</small></div>`).join("")
+      : '<p class="stage-empty-result">No hubo estudiantes seleccionados.</p>';
+    $("#stage-result-meta").textContent = `Sesión #${result.class_session_id} · Decisión #${result.decision_run_id}`;
+    $("#stage-footnote").textContent = "Esta decisión ya quedó guardada en el curso.";
+  };
   if (stage.mode === "roulette") {
+    revealResult();
     const winnerIndex = stage.candidates.findIndex((student) => Number(student.id) === Number(winners[0]?.id));
     const targetAngle = winnerIndex < 0 ? 0 : 360 - (360 * (winnerIndex + 0.5)) / stage.candidates.length;
     wheel.style.transform = `rotate(${targetAngle + 1440}deg)`;
@@ -654,30 +964,30 @@ function finishSelectionStage(result, stage, error = null) {
       name.classList.toggle("active", selected);
       name.classList.toggle("not-selected", !selected);
     });
-  } else {
-    const selectedIds = new Set(winners.map((winner) => Number(winner.id)));
-    $("#ball-tray").classList.add("is-final");
-    $("#ball-tray").querySelectorAll(".draw-ball").forEach((ball) => {
-      const candidate = stage.candidates[Number(ball.dataset.studentIndex)];
-      const selected = selectedIds.has(Number(candidate.id));
-      ball.classList.toggle("winner", selected);
-      ball.classList.toggle("eliminated", !selected);
-    });
-    $("#ball-count").textContent = `${winners.length} ${winners.length === 1 ? "SELECCIONADA" : "SELECCIONADAS"}`;
-    $("#ball-machine-footer").textContent = winners.length ? "Bolilla seleccionada" : "No hubo bolillas seleccionadas";
+    showFinalText();
+    return;
   }
-  $("#stage-status").textContent = "DECISIÓN REGISTRADA";
-  $("#stage-heading").textContent = winners.length ? "¡Ya tenemos resultado!" : "Ronda completada";
-  $("#stage-winners").innerHTML = winners.length
-    ? winners.map((student, index) => `<div class="stage-winner" style="animation-delay:${index * 90}ms"><span>${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(student.name)}</strong><small>ID ${student.id}</small></div>`).join("")
-    : '<p class="stage-empty-result">No hubo estudiantes seleccionados.</p>';
-  $("#stage-result-meta").textContent = `Sesión #${result.class_session_id} · Decisión #${result.decision_run_id}`;
-  $("#stage-footnote").textContent = "Esta decisión ya quedó guardada en el curso.";
+  const orderMap = studentOrderMap();
+  const numbers = winners.map((winner) => String(orderMap.get(Number(winner.id)) ?? "?").padStart(2, "0"));
+  $("#stage-status").textContent = winners.length ? "SALE LA BOLILLA" : "CONFIRMANDO RESULTADO";
+  $("#stage-heading").textContent = winners.length ? "Saliendo la bolilla elegida" : "Ronda completada";
+  $("#stage-footnote").textContent = "El nombre aparece cuando la bolilla termina de salir.";
+  $("#ball-machine-footer").textContent = winners.length ? `Bolilla n.º ${numbers.join(", ")} en camino` : "No hubo bolillas seleccionadas";
+  const finish = () => {
+    $("#ball-count").textContent = `${winners.length} ${winners.length === 1 ? "SELECCIONADA" : "SELECCIONADAS"}`;
+    $("#ball-machine-footer").textContent = winners.length ? `Bolilla seleccionada: n.º ${numbers.join(", ")}` : "No hubo bolillas seleccionadas";
+    showFinalText();
+    revealResult();
+  };
+  if (state.ballMachine) state.ballMachine.release(winners.map((winner) => Number(winner.id)), finish);
+  else finish();
 }
 
 function closeSelectionStage() {
   if (elements.selectionStage.open) elements.selectionStage.close();
 }
+
+elements.selectionStage.addEventListener("close", stopBallMachine);
 
 $("#create-course-form").addEventListener("submit", async (event) => {
   event.preventDefault();
