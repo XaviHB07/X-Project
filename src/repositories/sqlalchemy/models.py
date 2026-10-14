@@ -90,6 +90,9 @@ class StudentORM(Base):
         back_populates="student", uselist=False, cascade="all, delete-orphan"
     )
     events: Mapped[List["SelectionEventORM"]] = relationship(back_populates="student")
+    participations: Mapped[List["StudentParticipationORM"]] = relationship(
+        back_populates="student"
+    )
 
 
 class StudentStateORM(Base):
@@ -177,6 +180,9 @@ class DecisionRunORM(Base):
 
     class_session: Mapped["ClassSessionORM"] = relationship(back_populates="decision_runs")
     events: Mapped[List["SelectionEventORM"]] = relationship(back_populates="decision_run")
+    participations: Mapped[List["StudentParticipationORM"]] = relationship(
+        back_populates="decision_run"
+    )
 
 
 class SelectionEventORM(Base):
@@ -222,3 +228,6 @@ class StudentParticipationORM(Base):
     score: Mapped[float] = mapped_column(Float, nullable=False)
     present: Mapped[bool] = mapped_column(Boolean, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    decision_run: Mapped["DecisionRunORM"] = relationship(back_populates="participations")
+    student: Mapped["StudentORM"] = relationship(back_populates="participations")

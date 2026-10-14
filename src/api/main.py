@@ -20,7 +20,7 @@ de dominio a una respuesta HTTP. La lógica de negocio real vive en
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -128,6 +128,11 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+# Fecha de reserva para `created_at` en filas heredadas de una base anterior
+# al Sprint 1, donde la columna admitia NULL. Ver `_student_response`.
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
 @app.get("/methods", response_model=AvailableMethodsResponse, tags=["infraestructura"])
 def list_methods() -> AvailableMethodsResponse:
     """Estrategias de selección registradas y disponibles para usar en
@@ -139,7 +144,22 @@ def list_methods() -> AvailableMethodsResponse:
 def _student_response(s) -> StudentResponse:
     return StudentResponse(
         id=s.id, course_id=s.course_id, external_ref=s.external_ref,
-        display_name=s.display_name, created_at=s.created_at, active=s.active,
+display_name=s.display_name,
+        # `created_at` puede venir en None en una base creada antes del
+        # Sprint 1: la migracion de `bootstrap.py` aniade las columnas nuevas
+        # (students.active, class_sessions.session_date/topic), pero NO rellena
+        # created_at en las filas que ya existian, porque en el esquema
+        # anterior se permitia que fuera NULL.
+        #
+        # Sin este defecto, toda la API devolvio 500 al abrir un curso
+        # importado de una instalacion previa. Se resuelve con la epoca: es
+        # una fecha verosimil y, sobre todo, el campo es obligatorio en el
+        # esquema nuevo, asi que no puede quedar en null.
+        created_at=s.created_at or _EPOCH,
+        active=s.active,
+        # Telefono y email llegan de la carga de estudiantes (HU-C1). Son
+        # opcionales: un estudiante importado antes de que existieran esas
+        # columnas los tiene en None, y eso tiene que ser valido.
         phone_number=s.phone_number, email=s.email,
     )
 

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#183c32" />
+    <meta name="theme-color" content="#0d2557" />
     <title>Aula | Seleccion justa</title>
     <link rel="stylesheet" href="/assets/styles.css" />
     <script src="/assets/app.js" defer></script>
@@ -209,6 +209,12 @@
                   </button>
                 </form>
                 <div class="form-note" id="selection-note">Marca la asistencia para habilitar la selección.</div>
+                <div class="replacement-control">
+                  <button class="button button-quiet" id="replacement-toggle-button" type="button" aria-pressed="true" disabled>
+                    Reposición: Sí
+                  </button>
+                  <span class="form-note" id="replacement-note">Disponible después de una ronda.</span>
+                </div>
               </section>
 
               <section class="result-panel" id="result-panel" hidden aria-live="polite">
@@ -221,7 +227,7 @@
                 </form>
               </section>
 
-                  <section class="fairness-panel">
+              <section class="fairness-panel">
                 <div class="fairness-title"><span class="fairness-symbol">◎</span><span>Equidad del curso</span></div>
                 <div class="fairness-bar"><span id="fairness-bar-fill"></span></div>
                 <p id="fairness-caption">Sin datos de cobertura.</p>
@@ -239,7 +245,7 @@
             </div>
             <div class="participation-table-wrap">
               <table class="participation-table">
-                <thead><tr><th>ID estudiante</th><th>Estudiante</th><th>Nota</th><th>Fecha y hora</th><th>Asistencia</th></tr></thead>
+                <thead><tr><th>Código</th><th>Estudiante</th><th>Nota</th><th>Fecha y hora</th><th>Asistencia</th></tr></thead>
                 <tbody id="participation-history-body"></tbody>
               </table>
             </div>
@@ -349,14 +355,13 @@
         <h2 id="stage-heading">Buscando el resultado</h2>
         <div class="stage-visual roulette-visual" id="roulette-visual">
           <div class="roulette-pointer" aria-hidden="true"></div>
-          <div class="roulette-wheel" id="roulette-wheel" aria-hidden="true"></div>
-          <div class="roulette-orbit" id="roulette-orbit"></div>
+          <svg class="roulette-wheel" id="roulette-wheel" viewBox="0 0 600 600" role="img" aria-label="Ruleta de estudiantes"></svg>
           <div class="roulette-hub" aria-hidden="true"><span id="roulette-hub-label">EN JUEGO</span><strong id="roulette-winner">Ruleta</strong></div>
         </div>
         <div class="stage-visual balls-visual" id="balls-visual" hidden>
           <div class="ball-machine" id="ball-machine">
             <div class="ball-machine-header"><span>BOLILLERO</span><strong id="ball-count">0 BOLILLAS</strong></div>
-            <div class="ball-tray" id="ball-tray"></div>
+            <canvas class="ball-canvas" id="ball-canvas" width="520" height="330" role="img" aria-label="Bolillero con bolillas numeradas y canal de salida"></canvas>
             <div class="ball-machine-footer" id="ball-machine-footer">Mezclando participantes</div>
           </div>
         </div>

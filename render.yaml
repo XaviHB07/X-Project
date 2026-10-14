@@ -1,0 +1,46 @@
+# Configuracion de despliegue para Render (o cualquier hosting con buildpacks).
+#
+# Render lee este archivo: define COMO construir e iniciar la aplicacion.
+# No reemplaza a Dockerfile; son dos caminos distintos al mismo resultado.
+#
+# Por que Render y no otra cosa: da Postgres gratis, HTTPS automatico y
+# deploy desde GitHub. Para una demo de catedra alcanza de sobra.
+
+services:
+  - type: web
+    name: asistente-catedra
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn src.api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    # Sin esto, Render reinicia el servicio cada vez que la peticion tarda
+    # mas de 100s. El limite esta en 30s y las consultas de la API no llegan
+    # a eso, pero el margin deja margen para un arranque en frio.
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.4"
+      - key: LOG_LEVEL
+        value: INFO
+      # Importante: SQLite NO sirve para esto. Render monta un sistema de
+      # archivos efimero: cada deploy, cada reinicio y cada cambio de maquina
+      # borra el archivo, y con el curso y las participaciones dentro, eso es
+      # perder todos los datos. Hay que usar el Postgres que Render provee.
+      # Se pega aqui el valor que da el dashboard (Postgres > Internal Database
+      # URL), con el prefijo `postgresql://` cambiado por
+      # `postgresql+psycopg://` para que SQLAlchemy use el driver correcto.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: asistente-catedra-db
+          property: connectionString
+      - fromDatabase:
+          name: asistente-catedra-db
+          property: database
+          as: POSTGRES_DB
+
+databases:
+  - name: asistente-catedra-db
+    databaseName: asistente_catedra
+    plan: free

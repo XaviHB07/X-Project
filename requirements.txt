@@ -4,6 +4,10 @@ pandas>=2.0
 
 # --- Persistencia (Repository + Unit of Work) ---------------------------
 SQLAlchemy>=2.0
+# Driver de PostgreSQL. Necesario para desplegar (ver render.yaml): en un
+# hosting el sistema de archivos es efímero, así que SQLite perdería todos
+# los datos en cada reinicio. Para desarrollo local SQLite alcanza y no
+# requiere ningún servidor.
 psycopg[binary]>=3.1
 
 # --- API HTTP ------------------------------------------------------------
