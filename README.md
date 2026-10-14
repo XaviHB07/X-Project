@@ -159,10 +159,13 @@ muestran los estudiantes activos para la clase. Después de ejecutar una
 selección, el docente captura la nota (el campo oculta visualmente el valor)
 y confirma la asistencia de cada seleccionado. La pestaña **Historial de
 participación** muestra código del estudiante, nombre, nota, fecha/hora y asistencia.
-Después de cada ronda puede elegir si los seleccionados regresan al grupo elegible
-para la siguiente selección; esta reposición no cambia la asistencia registrada. Los
-cursos recientes se recuerdan en el
-navegador; los datos del sistema quedan en la base PostgreSQL configurada.
+El botón **Iniciar ronda** marca visualmente a todos los estudiantes como
+participantes posibles en los checks de la columna **Presente**, sin cambiar la
+asistencia registrada; esos checks determinan quién entra en la selección. El
+botón **Reposición** permite incluir o excluir de rondas futuras a los últimos
+seleccionados, también sin modificar la asistencia. Los cursos recientes se
+recuerdan en el navegador; los datos del sistema quedan en la base PostgreSQL
+configurada.
 El selector de rol de la esquina inferior izquierda permite alternar entre
 Profesor y Administrador; ambos pueden administrar la matrícula en esta
 versión del MVP.

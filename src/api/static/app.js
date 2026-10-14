@@ -10,7 +10,7 @@ const state = {
   managementStudents: [],
   role: "profesor",
   present: new Set(),
-  selectionExcludedStudentIds: new Set(),
+  roundEligibleStudentIds: new Set(),
   lastSelectedStudentIds: new Set(),
   replacementEnabled: true,
   methods: [],
@@ -40,6 +40,7 @@ const elements = {
   listEmpty: $("#list-empty"),
   toggleAll: $("#toggle-all-button"),
   markSessionPresent: $("#mark-session-present-button"),
+  startRound: $("#start-round-button"),
   runButton: $("#run-button"),
   selectionNote: $("#selection-note"),
   methodSelect: $("#method-select"),
@@ -168,26 +169,26 @@ function updateMethodFields() {
 }
 
 function renderStudents() {
+  updateReplacementStatusFromEligibility();
   const students = state.students;
   $("#roster-count").textContent = students.length;
   $("#metric-students").textContent = students.length;
   elements.studentList.innerHTML = students.map((student, index) => {
     const id = Number(student.id);
-    const present = state.present.has(id);
+    const roundEligible = state.roundEligibleStudentIds.has(id);
     const initial = (student.display_name || "?").trim().charAt(0).toUpperCase() || "?";
-    return `<article class="student-row" style="animation-delay:${Math.min(index * 22, 220)}ms">
+    return `<article class="student-row roster-student-row" style="animation-delay:${Math.min(index * 22, 220)}ms">
       <div class="student-identity">
         <span class="student-avatar" aria-hidden="true">${escapeHtml(initial)}</span>
         <div class="student-name-block">
           <div class="student-name">${escapeHtml(student.display_name)}</div>
           <div class="student-meta">${escapeHtml(student.external_ref)} · ID ${id}</div>
-          ${state.selectionExcludedStudentIds.has(id) ? '<div class="student-selection-status">Sin reposición · fuera de la próxima ronda</div>' : ""}
         </div>
       </div>
       <div class="student-actions">
         <label class="attendance-control">
-          <input type="checkbox" data-attendance-id="${id}" ${present ? "checked" : ""} aria-label="Marcar presente a ${escapeHtml(student.display_name)}" />
-          <span>${present ? "Presente" : "Ausente"}</span>
+          <input type="checkbox" data-round-id="${id}" ${roundEligible ? "checked" : ""} aria-label="Incluir a ${escapeHtml(student.display_name)} en la ronda" />
+          <span>Presente</span>
         </label>
       </div>
     </article>`;
@@ -222,25 +223,23 @@ function renderManagementStudents() {
 
 function updateSelectionControls() {
   const presentCount = state.present.size;
-  const eligibleCount = presentStudents().length;
+  const eligibleCount = roundEligibleStudents().length;
   $("#metric-present").textContent = presentCount;
-  const fullyPresent = state.students.length > 0 && presentCount === state.students.length;
-  elements.toggleAll.textContent = fullyPresent ? "Desmarcar todos" : "Marcar todos";
+  const allSelected = state.students.length > 0 && eligibleCount === state.students.length;
+  elements.toggleAll.textContent = allSelected ? "Desmarcar todos" : "Marcar todos";
   elements.markSessionPresent.disabled = !state.session || state.students.length === 0;
+  elements.startRound.disabled = !state.course || state.students.length === 0;
   elements.runButton.disabled = !state.course || eligibleCount === 0 || state.students.length === 0 || state.participationPending;
   const replacementButton = $("#replacement-toggle-button");
   replacementButton.disabled = state.lastSelectedStudentIds.size === 0;
   replacementButton.setAttribute("aria-pressed", String(state.replacementEnabled));
   replacementButton.textContent = `Reposición: ${state.replacementEnabled ? "Sí" : "No"}`;
   $("#replacement-note").textContent = state.lastSelectedStudentIds.size
-    ? state.replacementEnabled
-      ? "La última selección sigue disponible para próximas rondas."
-      : "La última selección queda fuera de las próximas rondas."
+    ? "Marca o desmarca a la última selección para próximas rondas."
     : "Disponible después de una ronda.";
-  const sessionNote = state.session ? " Se guarda en la sesión en curso." : " Inicia una sesión para guardar la asistencia.";
-  elements.selectionNote.textContent = presentCount
-    ? `${eligibleCount} de ${presentCount} presente${presentCount === 1 ? "" : "s"} elegible${eligibleCount === 1 ? "" : "s"} para esta ronda.${sessionNote}`
-    : "Marca la asistencia para habilitar la selección.";
+  elements.selectionNote.textContent = eligibleCount
+    ? `${eligibleCount} estudiante${eligibleCount === 1 ? "" : "s"} marcado${eligibleCount === 1 ? "" : "s"} para esta ronda. La asistencia se registra por separado.`
+    : "Marca estudiantes en la lista para habilitar la selección.";
   const slots = $("#slots-input");
   slots.max = String(Math.max(1, eligibleCount));
   if (eligibleCount && Number(slots.value) > eligibleCount) slots.value = String(eligibleCount);
@@ -339,7 +338,7 @@ async function loadCourse(courseId, { remember = true } = {}) {
   state.students = students;
   state.managementStudents = managementStudents;
   state.present = new Set();
-  state.selectionExcludedStudentIds = new Set();
+  state.roundEligibleStudentIds = new Set(students.map((student) => Number(student.id)));
   state.lastSelectedStudentIds = new Set();
   state.replacementEnabled = true;
   state.session = null;
@@ -360,6 +359,8 @@ async function loadCourse(courseId, { remember = true } = {}) {
 async function refreshCourse() {
   if (!state.course) return;
   const currentPresent = new Set(state.present);
+  const currentRoundEligible = new Set(state.roundEligibleStudentIds);
+  const knownStudentIds = new Set(state.students.map((student) => Number(student.id)));
   const [students, managementStudents, metrics] = await Promise.all([
     api(`/courses/${state.course.id}/students`),
     api(`/courses/${state.course.id}/students?include_inactive=true`),
@@ -367,6 +368,9 @@ async function refreshCourse() {
   ]);
   state.students = students;
   state.managementStudents = managementStudents;
+  state.roundEligibleStudentIds = new Set(students
+    .filter((student) => currentRoundEligible.has(Number(student.id)) || !knownStudentIds.has(Number(student.id)))
+    .map((student) => Number(student.id)));
   if (state.session) {
     await syncSession();
   } else {
@@ -507,24 +511,24 @@ function renderSelectionResult(result) {
   elements.resultPanel.hidden = false;
 }
 
-function presentStudents() {
-  return state.students.filter((student) =>
-    state.present.has(Number(student.id))
-    && !state.selectionExcludedStudentIds.has(Number(student.id))
-  );
+function roundEligibleStudents() {
+  return state.students.filter((student) => state.roundEligibleStudentIds.has(Number(student.id)));
+}
+
+function updateReplacementStatusFromEligibility() {
+  if (!state.lastSelectedStudentIds.size) return;
+  state.replacementEnabled = [...state.lastSelectedStudentIds].every((studentId) =>
+    state.roundEligibleStudentIds.has(studentId));
 }
 
 $("#replacement-toggle-button").addEventListener("click", () => {
   if (!state.lastSelectedStudentIds.size) return;
-  state.replacementEnabled = !state.replacementEnabled;
+  const replacementEnabled = !state.replacementEnabled;
   state.lastSelectedStudentIds.forEach((studentId) => {
-    if (state.replacementEnabled) state.selectionExcludedStudentIds.delete(studentId);
-    else state.selectionExcludedStudentIds.add(studentId);
+    if (replacementEnabled) state.roundEligibleStudentIds.add(studentId);
+    else state.roundEligibleStudentIds.delete(studentId);
   });
   renderStudents();
-  notify(state.replacementEnabled
-    ? "Reposición activada: la última selección vuelve a estar disponible."
-    : "Sin reposición: la última selección se excluyó de las próximas rondas.");
 });
 
 /* ==========================================================================
@@ -883,7 +887,7 @@ function renderRouletteWheel(candidates) {
 
 function prepareSelectionStage() {
   const mode = document.querySelector('input[name="selection-visual"]:checked').value;
-  const candidates = presentStudents();
+  const candidates = roundEligibleStudents();
   $("#stage-status").textContent = "SELECCIÓN EN CURSO";
   $("#stage-heading").textContent = mode === "roulette" ? "La ruleta está en marcha" : "Las bolillas se están mezclando";
   $("#stage-footnote").textContent = "El resultado se calcula con el método seleccionado.";
@@ -1084,24 +1088,33 @@ $("#enroll-form").addEventListener("submit", async (event) => {
 });
 
 elements.studentList.addEventListener("change", async (event) => {
-  const input = event.target.closest("[data-attendance-id]");
-  if (!input) return;
-  const id = Number(input.dataset.attendanceId);
+  const roundInput = event.target.closest("[data-round-id]");
+  if (!roundInput) return;
+  const id = Number(roundInput.dataset.roundId);
   if (state.session) {
-    // Con sesión en curso, la marca se guarda en el servidor (HU-S2).
-    input.disabled = true;
+    roundInput.disabled = true;
     try {
-      await saveAttendance([[id, input.checked]]);
+      await saveAttendance([[id, roundInput.checked]]);
     } catch (error) {
       notify(error.message, true);
+      renderStudents();
+      return;
     }
-    renderStudents();
-    return;
+  } else if (roundInput.checked) {
+    state.present.add(id);
+  } else {
+    state.present.delete(id);
   }
-  if (input.checked) state.present.add(id);
-  else state.present.delete(id);
-  input.closest(".attendance-control").querySelector("span").textContent = input.checked ? "Presente" : "Ausente";
-  updateSelectionControls();
+  if (roundInput.checked) state.roundEligibleStudentIds.add(id);
+  else state.roundEligibleStudentIds.delete(id);
+  updateReplacementStatusFromEligibility();
+  renderStudents();
+});
+
+elements.startRound.addEventListener("click", () => {
+  state.roundEligibleStudentIds = new Set(state.students.map((student) => Number(student.id)));
+  updateReplacementStatusFromEligibility();
+  renderStudents();
 });
 
 document.addEventListener("input", (event) => {
@@ -1119,16 +1132,23 @@ document.addEventListener("input", (event) => {
 
 elements.toggleAll.addEventListener("click", async () => {
   const allPresent = state.students.length > 0 && state.present.size === state.students.length;
+  const nextPresent = !allPresent;
   if (state.session) {
     try {
-      await saveAttendance(state.students.map((student) => [student.id, !allPresent]));
+      await saveAttendance(state.students.map((student) => [student.id, nextPresent]));
     } catch (error) {
       notify(error.message, true);
+      return;
     }
-    renderStudents();
-    return;
+  } else {
+    state.present = nextPresent
+      ? new Set(state.students.map((student) => Number(student.id)))
+      : new Set();
   }
-  state.present = allPresent ? new Set() : new Set(state.students.map((student) => student.id));
+  state.roundEligibleStudentIds = nextPresent
+    ? new Set(state.students.map((student) => Number(student.id)))
+    : new Set();
+  updateReplacementStatusFromEligibility();
   renderStudents();
 });
 
@@ -1137,7 +1157,7 @@ $("#slots-input").addEventListener("change", updateSelectionControls);
 
 $("#selection-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const eligibleStudents = presentStudents();
+  const eligibleStudents = roundEligibleStudents();
   if (!state.course || !eligibleStudents.length) return;
   const payload = {
     k: Number($("#slots-input").value),
@@ -1251,7 +1271,6 @@ $("#session-end-button").addEventListener("click", async () => {
   state.session = null;
   state.sessionAttendanceSnapshot = new Set();
   state.present = new Set();
-  state.selectionExcludedStudentIds = new Set();
   state.lastSelectedStudentIds = new Set();
   state.replacementEnabled = true;
   elements.resultPanel.hidden = true;
@@ -1271,6 +1290,8 @@ elements.markSessionPresent.addEventListener("click", async () => {
         state.sessionAttendanceSnapshot.has(Number(student.id)),
       ]),
     );
+    state.roundEligibleStudentIds = new Set(state.sessionAttendanceSnapshot);
+    updateReplacementStatusFromEligibility();
     renderStudents();
     notify("Asistencia inicial de la sesión restaurada.");
   } catch (error) {

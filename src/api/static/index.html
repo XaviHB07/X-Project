@@ -169,6 +169,11 @@
                   <span class="decision-index">01</span>
                 </div>
 
+                <button class="button button-start-round" id="start-round-button" type="button" disabled>
+                  Iniciar ronda
+                </button>
+                <p class="form-note round-note">Incluye a todos en la selección sin cambiar la asistencia.</p>
+
                 <form id="selection-form">
                   <label class="form-label" for="method-select">Método</label>
                   <select id="method-select" class="field" required>
@@ -208,7 +213,7 @@
                     <span>Ejecutar selección</span><span aria-hidden="true">↗</span>
                   </button>
                 </form>
-                <div class="form-note" id="selection-note">Marca la asistencia para habilitar la selección.</div>
+                <div class="form-note" id="selection-note">Marca estudiantes en la lista para habilitar la selección.</div>
                 <div class="replacement-control">
                   <button class="button button-quiet" id="replacement-toggle-button" type="button" aria-pressed="true" disabled>
                     Reposición: Sí

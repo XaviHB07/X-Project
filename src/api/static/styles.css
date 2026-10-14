@@ -124,16 +124,17 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .enroll-fields .field { height: 38px; font-size: 12px; }
 .button-add { min-height: 38px; padding: 0 11px; background: var(--forest); color: white; font-size: 12px; }
 .button-add:hover { background: var(--forest-2); }
-.roster-toolbar { display: flex; justify-content: space-between; padding: 18px 8px 9px; color: #949da9; }
+.roster-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 86px; gap: 10px; padding: 18px 8px 9px; color: #949da9; text-align: center; }
+.roster-toolbar span:first-child { text-align: left; }
 .student-list { display: grid; }
 .student-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 67px; padding: 10px 8px; border-top: 1px solid #eceef1; animation: rise-in .22s ease both; }
+.roster-student-row { grid-template-columns: minmax(0, 1fr) 86px; gap: 10px; }
 .student-identity { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .student-avatar { display: grid; flex: 0 0 34px; place-items: center; width: 34px; height: 34px; border-radius: 5px; background: #e6ecf3; color: #11458a; font-family: Fraunces, Georgia, serif; font-size: 16px; }
 .student-name-block { min-width: 0; }
 .student-name { overflow: hidden; color: var(--ink); font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .student-meta { overflow: hidden; margin-top: 3px; color: #848e9c; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.student-selection-status { margin-top: 3px; color: #a15a3b; font-size: 10px; font-weight: 700; }
-.student-actions { display: flex; align-items: center; gap: 13px; }
+.student-actions { display: flex; align-items: center; justify-content: center; gap: 13px; }
 .management-panel { padding: 22px; border: 1px solid var(--line); border-radius: 6px; background: var(--white); }
 .management-panel > .panel-heading { margin-bottom: 18px; }
 .management-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
@@ -157,6 +158,9 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .decision-panel { padding: 21px; border-top: 3px solid var(--coral); }
 .decision-index { display: grid; place-items: center; width: 33px; height: 33px; border-radius: 50%; background: #faeee7; color: #c45f49; font-family: Fraunces, Georgia, serif; font-size: 15px; }
 .decision-panel form { margin-top: 21px; }
+.button-start-round { width: 100%; min-height: 40px; margin-top: 16px; background: #a84f3c; color: #fff; font-size: 12px; font-weight: 700; }
+.button-start-round:hover:not(:disabled) { background: #8f402f; }
+.round-note { margin-top: 7px; }
 .form-label { display: block; margin-bottom: 7px; color: #535e6c; font-size: 11px; font-weight: 700; }
 .decision-panel .field { height: 40px; font-size: 12px; }
 .visual-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; margin: 16px 0 0; padding: 0; border: 0; }
@@ -383,8 +387,8 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
   .button-quiet { padding: 0 5px; font-size: 11px; }
   .enroll-fields { grid-template-columns: 1fr; }
   .button-add { grid-column: auto; }
-  .student-row { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px 4px; }
-  .student-actions { justify-content: space-between; padding-left: 45px; }
+  .student-row, .roster-student-row { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px 4px; }
+  .student-actions { justify-content: flex-end; padding-left: 45px; }
   .attendance-control { justify-content: flex-end; }
   .decision-panel { padding: 18px; }
   .visual-choice { gap: 6px; }
