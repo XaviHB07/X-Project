@@ -95,7 +95,11 @@ _ADDED_COLUMNS = [
     ("students", "active", "BOOLEAN NOT NULL DEFAULT TRUE"),
     ("students", "phone_number", "VARCHAR(32)"),
     ("students", "email", "VARCHAR(255)"),
-    ("students", "user_id", "INTEGER REFERENCES users(id)"),
+    # Sin `REFERENCES`: esta función corre ANTES de `create_all`, así que la
+    # tabla `users` puede todavia no existir y PostgreSQL aborta el ALTER con
+    # `relation "users" does not exist`. El vinculo se crea como clave forense
+    # logica en el modelo ORM, no como restriccion en la base.
+    ("students", "user_id", "INTEGER"),
     ("students", "roster_number", "VARCHAR(255)"),
     ("students", "specialty", "VARCHAR(255)"),
     ("students", "student_condition", "VARCHAR(255)"),
@@ -111,6 +115,7 @@ _ADDED_COLUMNS = [
 def _ensure_columns(engine) -> None:
     """Agrega las columnas de `_ADDED_COLUMNS` que falten (idempotente)."""
     from sqlalchemy import inspect, text
+    from sqlalchemy.exc import SQLAlchemyError
 
     # Primero se lee el esquema completo y recién después se ejecutan los
     # ALTER: así no se mezcla reflexión con una transacción de escritura
@@ -128,7 +133,13 @@ def _ensure_columns(engine) -> None:
         return
     with engine.begin() as conn:
         for table, column, ddl in missing:
-            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+            try:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+            except SQLAlchemyError:
+                # Una columna que no se pudo agregar deja la base en un estado
+                # inconsistente, pero tumbar la app entera impide al menos usar
+                # `/health` y diagnosticar. Se registra y se sigue.
+                logging.exception("No se pudo agregar %s.%s", table, column)
 
 
 def _provision_initial_admin(session_factory) -> None:
