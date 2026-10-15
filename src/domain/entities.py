@@ -28,6 +28,50 @@ class Course:
     id: int
     name: str
     created_at: datetime
+    cycle_id: Optional[int] = None
+    roster_imported_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class AcademicCycle:
+    """Un periodo académico que agrupa cursos independientes."""
+
+    id: int
+    name: str
+    created_at: datetime
+    starts_on: Optional[date] = None
+
+
+@dataclass(frozen=True)
+class StudentAccount:
+    """Cuenta global que puede vincularse a matrículas en varios cursos."""
+
+    id: int
+    username: str
+    full_name: str
+    email: Optional[str]
+    role: str
+    active: bool
+
+
+@dataclass(frozen=True)
+class StudentGroup:
+    """Grupo dentro de una propuesta de distribución de un curso."""
+
+    name: str
+    student_ids: list[int]
+
+
+@dataclass(frozen=True)
+class CourseGroupPlan:
+    """Propuesta de grupos guardada para poder consultarla y editarla."""
+
+    id: int
+    course_id: int
+    name: str
+    max_group_size: int
+    groups: list[StudentGroup]
+    created_at: datetime
 
 
 @dataclass(frozen=True)
@@ -49,6 +93,11 @@ class Student:
     created_at: datetime
     phone_number: Optional[str] = None
     email: Optional[str] = None
+    user_id: Optional[int] = None
+    roster_number: Optional[str] = None
+    specialty: Optional[str] = None
+    student_condition: Optional[str] = None
+    times_repeated: Optional[str] = None
     # HU-C1: un estudiante retirado del curso no se borra (conserva su
     # historial de selección); solo deja de aparecer en la lista activa
     # y de ser elegible. Re-importarlo desde el Excel lo reactiva.

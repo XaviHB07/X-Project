@@ -35,7 +35,8 @@ def main() -> None:
     args = parse_args()
     ctx = build_app_context(config_path=args.config, create_tables=True)
     print(f"Base de datos inicializada en: {ctx.config.database_url}")
-    print("Tablas creadas (o ya existentes): courses, students, student_state, "
+    print("Tablas creadas (o ya existentes): roles, users, auth_sessions, teacher_courses, "
+          "academic_cycles, courses, students, student_state, "
           "class_sessions, syllabus_entries, session_attendance, decision_runs, selection_events, "
           "student_participations.")
 

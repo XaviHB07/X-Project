@@ -18,12 +18,15 @@ from sqlalchemy.orm import Session, sessionmaker
 from src.repositories.interfaces import UnitOfWork
 from src.repositories.sqlalchemy.repository_impl import (
     SqlAlchemyAttendanceRepository,
+    SqlAlchemyAcademicCycleRepository,
     SqlAlchemyClassSessionRepository,
     SqlAlchemyCourseRepository,
     SqlAlchemyDecisionRunRepository,
     SqlAlchemyEventRepository,
+    SqlAlchemyGroupPlanRepository,
     SqlAlchemyParticipationRepository,
     SqlAlchemyStudentRepository,
+    SqlAlchemyStudentAccountRepository,
     SqlAlchemyStudentStateRepository,
     SqlAlchemySyllabusRepository,
 )
@@ -44,7 +47,9 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         # que hace que todas sus operaciones se confirmen o se deshagan
         # juntas al llamar a commit()/rollback().
         self.courses = SqlAlchemyCourseRepository(self._session)
+        self.cycles = SqlAlchemyAcademicCycleRepository(self._session)
         self.students = SqlAlchemyStudentRepository(self._session)
+        self.student_accounts = SqlAlchemyStudentAccountRepository(self._session)
         self.student_states = SqlAlchemyStudentStateRepository(self._session)
         self.class_sessions = SqlAlchemyClassSessionRepository(self._session)
         self.syllabus = SqlAlchemySyllabusRepository(self._session)
@@ -52,6 +57,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.decision_runs = SqlAlchemyDecisionRunRepository(self._session)
         self.events = SqlAlchemyEventRepository(self._session)
         self.participations = SqlAlchemyParticipationRepository(self._session)
+        self.group_plans = SqlAlchemyGroupPlanRepository(self._session)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:

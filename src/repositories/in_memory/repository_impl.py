@@ -16,17 +16,20 @@ estudiantes.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from src.domain.entities import (
+    AcademicCycle,
     AttendanceRecord,
     ClassSession,
     Course,
+    CourseGroupPlan,
     DecisionRun,
     Student,
+    StudentAccount,
+    StudentGroup,
     StudentParticipation,
     SyllabusEntry,
 )
@@ -37,16 +40,20 @@ from src.domain.value_objects import (
     SelectionEventRecord,
 )
 from src.repositories.interfaces import (
+    AcademicCycleRepository,
     AttendanceRepository,
     ClassSessionRepository,
     CourseRepository,
     DecisionRunRepository,
+    DuplicateAcademicCycleError,
     DuplicateStudentError,
     EventRepository,
+    GroupPlanRepository,
     InvalidParticipationStudentError,
     ParticipationDecisionNotFoundError,
     ParticipationRepository,
     StudentRepository,
+    StudentAccountRepository,
     StudentStateRepository,
     SyllabusRepository,
 )
@@ -91,7 +98,9 @@ class InMemoryDatabase:
 
     def __init__(self) -> None:
         self.courses: Dict[int, Course] = {}
+        self.cycles: Dict[int, AcademicCycle] = {}
         self.students: Dict[int, Student] = {}
+        self.student_accounts: Dict[int, StudentAccount] = {}
         self.student_states: Dict[int, _MutableStudentState] = {}
         self.class_sessions: Dict[int, ClassSession] = {}
         self.syllabus: Dict[int, SyllabusEntry] = {}
@@ -99,6 +108,7 @@ class InMemoryDatabase:
         self.decision_runs: Dict[int, DecisionRun] = {}
         self.events: List[SelectionEventRecord] = []
         self.participations: Dict[Tuple[int, int], StudentParticipation] = {}
+        self.group_plans: Dict[int, CourseGroupPlan] = {}
 
         self._counters: Dict[str, int] = {}
         self._meta_lock = threading.Lock()  # protege solo la asignación de ids
@@ -114,8 +124,13 @@ class InMemoryCourseRepository(CourseRepository):
     def __init__(self, db: InMemoryDatabase):
         self._db = db
 
-    def create(self, name: str) -> Course:
-        course = Course(id=self._db.next_id("courses"), name=name, created_at=_utcnow())
+    def create(self, name: str, cycle_id: Optional[int] = None) -> Course:
+        course = Course(
+            id=self._db.next_id("courses"),
+            name=name,
+            created_at=_utcnow(),
+            cycle_id=cycle_id,
+        )
         self._db.courses[course.id] = course
         return course
 
@@ -124,6 +139,96 @@ class InMemoryCourseRepository(CourseRepository):
 
     def list_all(self) -> List[Course]:
         return sorted(self._db.courses.values(), key=lambda c: c.id)
+
+    def claim_roster_import(self, course_id: int) -> bool:
+        with self._db._meta_lock:
+            course = self._db.courses.get(course_id)
+            if course is None or course.cycle_id is None or course.roster_imported_at is not None:
+                return False
+            self._db.courses[course_id] = replace(course, roster_imported_at=_utcnow())
+            return True
+
+
+class InMemoryAcademicCycleRepository(AcademicCycleRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def create(self, name: str, starts_on: Optional[date] = None) -> AcademicCycle:
+        if any(cycle.name == name for cycle in self._db.cycles.values()):
+            raise DuplicateAcademicCycleError(f"El ciclo “{name}” ya existe.")
+        cycle = AcademicCycle(
+            id=self._db.next_id("cycles"), name=name, created_at=_utcnow(), starts_on=starts_on
+        )
+        self._db.cycles[cycle.id] = cycle
+        return cycle
+
+    def get(self, cycle_id: int) -> Optional[AcademicCycle]:
+        return self._db.cycles.get(cycle_id)
+
+    def list_all(self) -> List[AcademicCycle]:
+        return sorted(self._db.cycles.values(), key=lambda cycle: cycle.id)
+
+    def set_starts_on(self, cycle_id: int, starts_on: date) -> Optional[AcademicCycle]:
+        current = self._db.cycles.get(cycle_id)
+        if current is None:
+            return None
+        updated = replace(current, starts_on=starts_on)
+        self._db.cycles[cycle_id] = updated
+        return updated
+
+
+class InMemoryStudentAccountRepository(StudentAccountRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def get_by_email(self, email: str) -> Optional[StudentAccount]:
+        email = email.lower()
+        return next(
+            (account for account in self._db.student_accounts.values()
+             if account.email and account.email.lower() == email),
+            None,
+        )
+
+    def get_by_username(self, username: str) -> Optional[StudentAccount]:
+        return next(
+            (account for account in self._db.student_accounts.values()
+             if account.username == username),
+            None,
+        )
+
+    def update_username(self, account_id: int, username: str) -> StudentAccount:
+        account = self._db.student_accounts.get(account_id)
+        if account is None:
+            raise LookupError(f"Cuenta de estudiante {account_id} no encontrada.")
+        if any(
+            other.id != account_id and other.username == username
+            for other in self._db.student_accounts.values()
+        ):
+            raise ValueError("Ese nombre de usuario ya está registrado.")
+        updated = replace(account, username=username)
+        self._db.student_accounts[account_id] = updated
+        return updated
+
+    def create_student(
+        self, username: str, full_name: str, email: Optional[str], password_hash: str
+    ) -> StudentAccount:
+        del password_hash
+        if self.get_by_username(username) is not None:
+            raise ValueError("Ese nombre de usuario ya está registrado.")
+        account = StudentAccount(
+            id=self._db.next_id("student_accounts"),
+            username=username,
+            full_name=full_name,
+            email=email,
+            role="estudiante",
+            active=True,
+        )
+        self._db.student_accounts[account.id] = account
+        if email:
+            for student_id, student in self._db.students.items():
+                if student.email and student.email.lower() == email.lower():
+                    self._db.students[student_id] = replace(student, user_id=account.id)
+        return account
 
 
 class InMemoryStudentRepository(StudentRepository):
@@ -139,6 +244,11 @@ class InMemoryStudentRepository(StudentRepository):
         beta_init: float,
         phone_number: Optional[str] = None,
         email: Optional[str] = None,
+        user_id: Optional[int] = None,
+        roster_number: Optional[str] = None,
+        specialty: Optional[str] = None,
+        student_condition: Optional[str] = None,
+        times_repeated: Optional[str] = None,
     ) -> Student:
         for s in self._db.students.values():
             if s.course_id == course_id and s.external_ref == external_ref:
@@ -152,6 +262,11 @@ class InMemoryStudentRepository(StudentRepository):
             created_at=_utcnow(),
             phone_number=phone_number,
             email=email,
+            user_id=user_id,
+            roster_number=roster_number,
+            specialty=specialty,
+            student_condition=student_condition,
+            times_repeated=times_repeated,
         )
         self._db.students[student.id] = student
         self._db.student_states[student.id] = _MutableStudentState(
@@ -168,6 +283,11 @@ class InMemoryStudentRepository(StudentRepository):
         beta_init: float,
         phone_number: Optional[str] = None,
         email: Optional[str] = None,
+        user_id: Optional[int] = None,
+        roster_number: Optional[str] = None,
+        specialty: Optional[str] = None,
+        student_condition: Optional[str] = None,
+        times_repeated: Optional[str] = None,
     ) -> Tuple[Student, str]:
         for s in self._db.students.values():
             if s.course_id == course_id and s.external_ref == external_ref:
@@ -176,6 +296,11 @@ class InMemoryStudentRepository(StudentRepository):
                     and s.active
                     and (phone_number is None or s.phone_number == phone_number)
                     and (email is None or s.email == email)
+                    and (user_id is None or s.user_id == user_id)
+                    and (roster_number is None or s.roster_number == roster_number)
+                    and (specialty is None or s.specialty == specialty)
+                    and (student_condition is None or s.student_condition == student_condition)
+                    and (times_repeated is None or s.times_repeated == times_repeated)
                 ):
                     return s, "unchanged"
                 updated = replace(
@@ -184,11 +309,18 @@ class InMemoryStudentRepository(StudentRepository):
                     active=True,
                     phone_number=phone_number if phone_number is not None else s.phone_number,
                     email=email if email is not None else s.email,
+                    user_id=user_id if user_id is not None else s.user_id,
+                    roster_number=roster_number if roster_number is not None else s.roster_number,
+                    specialty=specialty if specialty is not None else s.specialty,
+                    student_condition=student_condition if student_condition is not None else s.student_condition,
+                    times_repeated=times_repeated if times_repeated is not None else s.times_repeated,
                 )
                 self._db.students[s.id] = updated
                 return updated, "updated"
         student = self.get_or_create(
-            course_id, external_ref, display_name, alpha_init, beta_init, phone_number, email
+            course_id, external_ref, display_name, alpha_init, beta_init,
+            phone_number, email, user_id, roster_number, specialty,
+            student_condition, times_repeated,
         )
         return student, "created"
 
@@ -492,3 +624,50 @@ class InMemoryParticipationRepository(ParticipationRepository):
         ]
         records.sort(key=lambda record: (record.created_at, record.id), reverse=True)
         return records[:limit]
+
+
+class InMemoryGroupPlanRepository(GroupPlanRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def create(
+        self,
+        course_id: int,
+        name: str,
+        max_group_size: int,
+        groups: List[StudentGroup],
+    ) -> CourseGroupPlan:
+        plan = CourseGroupPlan(
+            id=self._db.next_id("course_group_plans"),
+            course_id=course_id,
+            name=name,
+            max_group_size=max_group_size,
+            groups=groups,
+            created_at=_utcnow(),
+        )
+        self._db.group_plans[plan.id] = plan
+        return plan
+
+    def get(self, plan_id: int) -> Optional[CourseGroupPlan]:
+        return self._db.group_plans.get(plan_id)
+
+    def list_by_course(self, course_id: int) -> List[CourseGroupPlan]:
+        plans = [p for p in self._db.group_plans.values() if p.course_id == course_id]
+        return sorted(plans, key=lambda p: (p.created_at, p.id), reverse=True)
+
+    def update(
+        self,
+        plan_id: int,
+        name: str,
+        max_group_size: int,
+        groups: List[StudentGroup],
+    ) -> Optional[CourseGroupPlan]:
+        plan = self._db.group_plans.get(plan_id)
+        if plan is None:
+            return None
+        updated = replace(plan, name=name, max_group_size=max_group_size, groups=groups)
+        self._db.group_plans[plan_id] = updated
+        return updated
+
+    def delete(self, plan_id: int) -> bool:
+        return self._db.group_plans.pop(plan_id, None) is not None

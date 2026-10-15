@@ -3,6 +3,22 @@ const $ = (selector) => document.querySelector(selector);
 const state = {
   course: null,
   availableCourses: [],
+  cycles: [],
+  activeCycleId: null,
+  authenticatedUser: null,
+  viewAs: "administrador",
+  teachers: [],
+  studentAccounts: [],
+  studentCourses: [],
+  selectedStudentCourse: null,
+  appView: "daily",
+  courseView: "attendance",
+  groupPlans: [],
+  activeGroupPlanId: null,
+  groupPlanEditing: false,
+  draftGroups: [],
+  groupMaxSize: 4,
+  draggedStudentId: null,
   session: null,
   proposal: null,
   sessionAttendanceSnapshot: new Set(),
@@ -28,13 +44,40 @@ const visualPalette = ["#df795e", "#f3c86a", "#2f6fe0", "#8ec5f5", "#1e3a8a", "#
 const elements = {
   apiDot: $("#api-dot"),
   apiStatus: $("#api-status"),
+  loginScreen: $("#login-screen"),
+  appShell: $("#app-shell"),
+  loginForm: $("#login-form"),
+  loginSubmit: $("#login-submit"),
+  loginError: $("#login-error"),
+  passwordChangeForm: $("#password-change-form"),
+  passwordChangeError: $("#password-change-error"),
+  passwordChangeSubmit: $("#password-change-submit"),
   courseTitle: $("#course-title"),
   courseMeta: $("#course-meta"),
+  pageEyebrow: $("#page-eyebrow"),
   breadcrumbCourse: $("#breadcrumb-course"),
   todayLabel: $("#today-label"),
   emptyState: $("#empty-state"),
   workspace: $("#workspace"),
+  academicSetupPage: $("#academic-setup-page"),
+  cyclesSetupPage: $("#cycles-setup-page"),
+  teacherManagementPage: $("#teacher-management-page"),
+  courseCreationPage: $("#course-creation-page"),
+  studentAccountsPage: $("#student-accounts-page"),
+  studentPortal: $("#student-portal"),
+  studentCoursesViewButton: $("#student-courses-view-button"),
+  dailyViewButton: $("#daily-view-button"),
+  cyclesViewButton: $("#cycles-view-button"),
+  teachersViewButton: $("#teachers-view-button"),
+  studentAccountsViewButton: $("#student-accounts-view-button"),
+  coursesViewButton: $("#courses-view-button"),
+  enrollmentViewButton: $("#enrollment-view-button"),
   recentCourses: $("#recent-courses"),
+  activeCycle: $("#active-cycle"),
+  courseCreationCycle: $("#course-creation-cycle"),
+  dailyCycle: $("#daily-cycle"),
+  dailyCourse: $("#daily-course"),
+  enrollmentCourse: $("#enrollment-course"),
   courseIdInput: $("#course-id-input"),
   studentList: $("#student-list"),
   listEmpty: $("#list-empty"),
@@ -51,6 +94,7 @@ const elements = {
   toast: $("#toast"),
   dialog: $("#student-dialog"),
   editDialog: $("#edit-dialog"),
+  temporaryPasswordDialog: $("#temporary-password-dialog"),
   sessionFormView: $("#session-form-view"),
   sessionActiveView: $("#session-active-view"),
   sessionTopic: $("#session-topic"),
@@ -59,14 +103,55 @@ const elements = {
   importResult: $("#import-result"),
   attendanceView: $("#attendance-view"),
   managementView: $("#management-view"),
+  setupCourseEmpty: $("#setup-course-empty"),
   attendanceTab: $("#attendance-tab"),
-  managementTab: $("#management-tab"),
   participationsTab: $("#participations-tab"),
+  groupsTab: $("#groups-tab"),
   adminStudentList: $("#admin-student-list"),
   participationsView: $("#participations-view"),
   participationHistoryBody: $("#participation-history-body"),
   participationHistoryEmpty: $("#participation-history-empty"),
+  groupsView: $("#groups-view"),
+  groupPlanSelect: $("#group-plan-select"),
+  groupEditor: $("#group-editor"),
+  groupEditorNote: $("#group-editor-note"),
+  editGroupPlanButton: $("#edit-group-plan-button"),
+  cancelGroupEditsButton: $("#cancel-group-edits-button"),
+  groupValidationMessage: $("#group-validation-message"),
+  groupSetupChoices: $("#group-setup-choices"),
+  groupGenerationForm: $("#group-generation-form"),
+  autoGroupPlanName: $("#auto-group-plan-name"),
+  groupMaxSize: $("#group-max-size"),
+  groupPlanName: $("#group-plan-name"),
+  manualGroupPlanName: $("#manual-group-plan-name"),
+  manualGroupSetup: $("#manual-group-setup"),
+  manualGroupCount: $("#manual-group-count"),
+  manualGroupSizePreview: $("#manual-group-size-preview"),
+  prepareManualGroupsButton: $("#prepare-manual-groups-button"),
+  generateGroupsButton: $("#generate-groups-button"),
+  createManualGroupsButton: $("#create-manual-groups-button"),
+  addGroupButton: $("#add-group-button"),
+  groupPlanNameField: $(".group-plan-name-field"),
+  saveGroupPlanButton: $("#save-group-plan-button"),
+  deleteGroupPlanButton: $("#delete-group-plan-button"),
   activeRole: $("#active-role"),
+  sidebarUser: $("#sidebar-user"),
+  teacherAssignmentCard: $("#teacher-assignment-card"),
+  assignmentTeacher: $("#assignment-teacher"),
+  assignmentCourseList: $("#assignment-course-list"),
+  saveAssignmentsButton: $("#save-assignments-button"),
+  createTeacherForm: $("#create-teacher-form"),
+  createTeacherCourseList: $("#create-teacher-course-list"),
+  createTeacherSubmit: $("#create-teacher-submit"),
+  teacherDirectoryList: $("#teacher-directory-list"),
+  teacherManagementHome: $("#teacher-management-home"),
+  registerTeacherButton: $("#register-teacher-button"),
+  cancelTeacherRegistration: $("#cancel-teacher-registration"),
+  studentAccountList: $("#student-account-list"),
+  studentAccountForm: $("#create-student-account-form"),
+  studentCourseIndex: $("#student-course-index"),
+  studentCourseDetail: $("#student-course-detail"),
+  studentWeeks: $("#student-weeks"),
 };
 
 function escapeHtml(value) {
@@ -84,12 +169,313 @@ async function api(path, options = {}) {
   });
   const body = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
+    if (response.status === 401 && !path.startsWith("/auth/")) {
+      showLogin("La sesión expiró. Inicia sesión nuevamente.");
+    }
     const detail = Array.isArray(body?.detail)
       ? body.detail.map((item) => item.msg).join("; ")
       : body?.detail;
     throw new Error(detail || `Error ${response.status}: no se pudo completar la solicitud.`);
   }
   return body;
+}
+
+function showLogin(message = "") {
+  state.authenticatedUser = null;
+  state.course = null;
+  state.availableCourses = [];
+  state.cycles = [];
+  state.teachers = [];
+  state.students = [];
+  state.managementStudents = [];
+  state.session = null;
+  state.proposal = null;
+  state.groupPlans = [];
+  state.activeGroupPlanId = null;
+  state.groupPlanEditing = false;
+  state.draftGroups = [];
+  state.appView = "daily";
+  elements.appShell.classList.remove("student-mode");
+  elements.loginScreen.hidden = false;
+  elements.appShell.hidden = true;
+  $("#login-title").textContent = "Iniciar sesión";
+  elements.loginForm.hidden = false;
+  elements.passwordChangeForm.hidden = true;
+  elements.passwordChangeError.hidden = true;
+  elements.loginError.textContent = message;
+  elements.loginError.hidden = !message;
+  $("#login-password").value = "";
+}
+
+function showPasswordChange() {
+  elements.loginScreen.hidden = false;
+  elements.appShell.hidden = true;
+  $("#login-title").textContent = "Configurar contraseña";
+  elements.loginForm.hidden = true;
+  elements.passwordChangeForm.hidden = false;
+  elements.passwordChangeError.hidden = true;
+  $("#new-password").value = "";
+  $("#confirm-new-password").value = "";
+  $("#new-password").focus();
+}
+
+async function loadAuthenticatedData(user) {
+  if (user.must_change_password) {
+    showPasswordChange();
+    return;
+  }
+  state.authenticatedUser = user;
+  state.viewAs = user.role === "administrador" ? "administrador" : "docente";
+  if (user.role !== "estudiante") elements.activeRole.value = state.viewAs;
+  elements.loginScreen.hidden = true;
+  elements.appShell.hidden = false;
+  if (user.role === "estudiante") {
+    state.appView = "studentPortal";
+    setAppView(state.appView);
+    try {
+      state.studentCourses = await api("/student/courses");
+      renderStudentPortal();
+    } catch (error) {
+      notify(`No se pudieron cargar tus cursos: ${error.message}`, true);
+    }
+    return;
+  }
+  setAppView(state.appView);
+  try {
+    const [methods, courses, cycles] = await Promise.all([
+      api("/methods"),
+      api("/courses"),
+      api("/cycles"),
+    ]);
+    state.methods = methods.methods;
+    state.availableCourses = courses;
+    state.cycles = cycles;
+    renderMethodOptions();
+    renderRecentCourses();
+    renderCycles();
+    if (user.role === "administrador") {
+      [state.teachers, state.studentAccounts] = await Promise.all([
+        api("/admin/teachers"),
+        api("/admin/students"),
+      ]);
+      renderTeacherAssignments();
+      renderStudentAccounts();
+    } else {
+      state.teachers = [];
+      state.studentAccounts = [];
+    }
+    setAppView(state.appView);
+  } catch (error) {
+    notify(`No se pudieron cargar los datos de la cuenta: ${error.message}`, true);
+  }
+}
+
+function renderTeacherAssignments() {
+  if (!elements.assignmentTeacher || !elements.assignmentCourseList) return;
+  const courseOptions = state.availableCourses.length
+    ? state.availableCourses.map((course) => `
+        <label class="assignment-course">
+          <input type="checkbox" value="${course.id}" />
+          <span>${escapeHtml(course.name)} <small>#${course.id}</small></span>
+        </label>
+      `).join("")
+    : '<p class="form-note">Crea un curso antes de asignarlo a un docente.</p>';
+  elements.createTeacherCourseList.innerHTML = courseOptions;
+  elements.createTeacherSubmit.disabled = !state.availableCourses.length;
+  filterCourseOptions($("#create-teacher-course-search"), elements.createTeacherCourseList);
+  elements.teacherDirectoryList.innerHTML = state.teachers.length
+    ? state.teachers.map((teacher) => {
+        const courses = state.availableCourses
+          .filter((course) => teacher.course_ids.includes(course.id))
+          .map((course) => course.name);
+        return `<details class="teacher-directory-item">
+          <summary class="teacher-directory-summary">
+            <span><strong>${escapeHtml(teacher.full_name)}</strong><small>${escapeHtml(teacher.username)}</small></span>
+            <span class="teacher-details-toggle" aria-hidden="true">＋</span>
+          </summary>
+          <div class="teacher-directory-details">
+            <span>Teléfono: ${escapeHtml(teacher.phone_number || "No registrado")}</span>
+            <span>Correo: ${escapeHtml(teacher.email || "No registrado")}</span>
+            <span>Cursos: ${escapeHtml(courses.join(", ") || "Sin cursos")}</span>
+            <button class="button button-quiet" type="button" data-reset-teacher="${teacher.id}">
+              Restablecer contraseña
+            </button>
+          </div>
+        </details>`;
+      }).join("")
+    : '<p class="form-note">Todavía no hay docentes registrados.</p>';
+  const selectedTeacherId = Number(elements.assignmentTeacher.value) || null;
+  elements.assignmentTeacher.innerHTML = `<option value="">Selecciona un docente</option>${state.teachers
+    .map((teacher) => `<option value="${teacher.id}">${escapeHtml(teacher.full_name)} · ${escapeHtml(teacher.username)}</option>`)
+    .join("")}`;
+  if (selectedTeacherId && state.teachers.some((teacher) => teacher.id === selectedTeacherId)) {
+    elements.assignmentTeacher.value = String(selectedTeacherId);
+  }
+  const teacher = state.teachers.find(
+    (item) => item.id === Number(elements.assignmentTeacher.value),
+  );
+  elements.assignmentCourseList.innerHTML = teacher
+    ? state.availableCourses.map((course) => `
+        <label class="assignment-course">
+          <input type="checkbox" value="${course.id}" ${
+            teacher.course_ids.includes(course.id) ? "checked" : ""
+          } />
+          <span>${escapeHtml(course.name)} <small>#${course.id}</small></span>
+        </label>
+      `).join("")
+    : `<p class="form-note">${
+        state.teachers.length
+          ? "Selecciona un docente para configurar sus cursos."
+          : "No hay cuentas activas con rol Docente. Agrega docentes en la base de datos."
+      }</p>`;
+  filterCourseOptions($("#assignment-course-search"), elements.assignmentCourseList);
+  elements.saveAssignmentsButton.disabled = !teacher;
+}
+
+function renderStudentAccounts() {
+  if (!elements.studentAccountList) return;
+  $("#student-account-count").textContent = state.studentAccounts.length;
+  elements.studentAccountList.innerHTML = state.studentAccounts.map((student) => {
+    const courses = state.availableCourses
+      .filter((course) => student.course_ids.includes(course.id))
+      .map((course) => course.name);
+    return `<article class="student-account-row">
+      <div>
+        <strong>${escapeHtml(student.full_name)}</strong>
+        <span>${escapeHtml(student.email || "Sin correo")}</span>
+        <span>Usuario: ${escapeHtml(student.username)}</span>
+        <span>Cursos: ${escapeHtml(courses.join(", ") || "Sin matrículas")}</span>
+      </div>
+      <button class="button button-quiet" type="button" data-reset-student-account="${student.id}">
+        Restablecer contraseña
+      </button>
+    </article>`;
+  }).join("");
+  $("#student-account-empty").hidden = state.studentAccounts.length > 0;
+}
+
+function renderStudentPortal() {
+  const groups = new Map();
+  state.studentCourses.forEach((course) => {
+    const key = course.cycle_id ?? "uncycled";
+    if (!groups.has(key)) groups.set(key, { name: course.cycle_name || "Sin ciclo académico", courses: [] });
+    groups.get(key).courses.push(course);
+  });
+  elements.studentCourseIndex.innerHTML = [...groups.entries()].map(([cycleId, group]) => `
+    <section class="student-cycle-group">
+      <div class="student-cycle-heading">
+        <h2>${escapeHtml(group.name)}</h2>
+        <span>${group.courses.length} curso${group.courses.length === 1 ? "" : "s"}</span>
+      </div>
+      <div class="student-course-cards">
+        ${group.courses.map((course) => `
+          <button class="student-course-card" type="button" data-open-student-course="${course.course_id}">
+            <span class="student-course-icon" aria-hidden="true">▦</span>
+            <span><strong>${escapeHtml(course.course_name)}</strong><small>Ver sesiones por semana</small></span>
+            <span aria-hidden="true">→</span>
+          </button>
+        `).join("")}
+      </div>
+    </section>
+  `).join("");
+  $("#student-courses-empty").hidden = state.studentCourses.length > 0;
+  elements.studentCourseIndex.hidden = state.studentCourses.length === 0;
+  elements.studentCourseDetail.hidden = true;
+}
+
+async function openStudentCourse(event) {
+  const button = event.target.closest("[data-open-student-course]");
+  if (!button) return;
+  const course = state.studentCourses.find(
+    (item) => item.course_id === Number(button.dataset.openStudentCourse),
+  );
+  if (!course) return;
+  state.selectedStudentCourse = course;
+  button.disabled = true;
+  try {
+    const response = await api(`/student/courses/${course.course_id}/weeks`);
+    $("#student-detail-title").textContent = course.course_name;
+    $("#student-detail-cycle").textContent = course.cycle_name || "Sin ciclo académico";
+    renderStudentWeeks(response);
+    elements.studentCourseIndex.hidden = true;
+    elements.studentCourseDetail.hidden = false;
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderStudentWeeks(data) {
+  elements.studentWeeks.innerHTML = data.weeks.map((week) => `
+    <section class="student-week-card">
+      <h3>Semana ${week.week_number}</h3>
+      ${week.sessions.length
+        ? `<ul>${week.sessions.map((session) => `
+            <li>
+              <strong>${escapeHtml(session.topic || session.label || "Sesión de clase")}</strong>
+              <span>${session.session_date
+                ? new Date(`${session.session_date}T00:00:00`).toLocaleDateString("es", { dateStyle: "long" })
+                : "Sin fecha registrada"}</span>
+            </li>`).join("")}</ul>`
+        : '<p class="form-note">No hay sesiones registradas.</p>'}
+    </section>
+  `).join("");
+  const unassigned = data.unassigned_sessions || [];
+  const container = $("#student-unassigned-sessions");
+  container.hidden = unassigned.length === 0;
+  container.innerHTML = unassigned.length ? `
+    <h3>Sesiones fuera de las 16 semanas</h3>
+    <p class="form-note">Estas sesiones no tienen fecha o están fuera del periodo del ciclo.</p>
+    <ul>${unassigned.map((session) => `
+      <li>${escapeHtml(session.topic || session.label || "Sesión de clase")} · ${
+        session.session_date
+          ? new Date(`${session.session_date}T00:00:00`).toLocaleDateString("es")
+          : "sin fecha"
+      }</li>`).join("")}</ul>` : "";
+}
+
+function filterCourseOptions(searchInput, optionsContainer) {
+  const search = searchInput.value.trim().toLocaleLowerCase();
+  optionsContainer.querySelectorAll(".assignment-course").forEach((option) => {
+    option.hidden = !option.textContent.toLocaleLowerCase().includes(search);
+  });
+}
+
+function showTemporaryPassword(password, description, username = "") {
+  $("#temporary-password-value").value = password;
+  $("#temporary-password-description").textContent = description;
+  $("#temporary-account-username").hidden = !username;
+  $("#temporary-account-username").textContent = username ? `Usuario: ${username}` : "";
+  elements.temporaryPasswordDialog.showModal();
+}
+
+function clearTemporaryPassword() {
+  $("#temporary-password-value").value = "";
+  $("#temporary-password-description").textContent = "";
+  $("#temporary-account-username").textContent = "";
+  $("#temporary-account-username").hidden = true;
+}
+
+function showTeacherManagementHome() {
+  elements.createTeacherForm.hidden = true;
+  elements.teacherManagementHome.hidden = false;
+  elements.registerTeacherButton.hidden = false;
+}
+
+async function initializeAuthentication() {
+  try {
+    const user = await api("/auth/me");
+    if (user.must_change_password) showPasswordChange();
+    else await loadAuthenticatedData(user);
+  } catch (error) {
+    if (error.message !== "Inicia sesión para continuar.") {
+      elements.loginError.textContent = "No se pudo verificar la sesión. Comprueba que la API esté disponible.";
+      elements.loginError.hidden = false;
+    }
+    elements.loginScreen.hidden = false;
+    elements.appShell.hidden = true;
+  }
 }
 
 function notify(message, isError = false) {
@@ -134,19 +520,86 @@ function saveRecentCourse(course) {
     ...state.availableCourses.filter((item) => item.id !== course.id),
   ];
   renderRecentCourses();
+  renderTeacherAssignments();
 }
 
 function renderRecentCourses() {
   const currentValue = state.course ? String(state.course.id) : "";
   const coursesById = new Map(state.availableCourses.map((course) => [course.id, course]));
-  readRecentCourses().forEach((course) => {
-    if (!coursesById.has(course.id)) coursesById.set(course.id, course);
-  });
-  const options = [...coursesById.values()].map((course) =>
+  const recentIds = readRecentCourses()
+    .filter((course) => coursesById.has(course.id))
+    .map((course) => course.id);
+  const orderedCourses = [
+    ...recentIds.map((id) => coursesById.get(id)),
+    ...[...coursesById.values()].filter((course) => !recentIds.includes(course.id)),
+  ];
+  const options = orderedCourses.map((course) =>
     `<option value="${course.id}">${escapeHtml(course.name)} · #${course.id}</option>`,
   ).join("");
   elements.recentCourses.innerHTML = `<option value="">Selecciona un curso</option>${options}`;
   elements.recentCourses.value = currentValue;
+  renderWorkCourseSelectors();
+}
+
+function renderCycles(preferredCycleId = state.activeCycleId) {
+  const storedCycleId = Number(localStorage.getItem("aula-active-cycle"));
+  const selectedCycleId = state.cycles.some((cycle) => cycle.id === preferredCycleId)
+    ? preferredCycleId
+    : state.cycles.some((cycle) => cycle.id === storedCycleId)
+      ? storedCycleId
+      : state.cycles[0]?.id || null;
+  state.activeCycleId = selectedCycleId;
+  elements.activeCycle.innerHTML = `<option value="">Selecciona un ciclo</option>${state.cycles
+    .map((cycle) => `<option value="${cycle.id}">${escapeHtml(cycle.name)}</option>`)
+    .join("")}`;
+  elements.activeCycle.value = selectedCycleId ? String(selectedCycleId) : "";
+  elements.courseCreationCycle.innerHTML = `<option value="">Selecciona un ciclo</option>${state.cycles
+    .map((cycle) => `<option value="${cycle.id}">${escapeHtml(cycle.name)}</option>`)
+    .join("")}`;
+  if (!state.cycles.some((cycle) => cycle.id === Number(elements.courseCreationCycle.value))) {
+    elements.courseCreationCycle.value = selectedCycleId ? String(selectedCycleId) : "";
+  }
+  const createCourseButton = $("#create-course-form button[type=submit]");
+  createCourseButton.disabled = !Number(elements.courseCreationCycle.value);
+  $("#course-cycle-hint").hidden = Boolean(Number(elements.courseCreationCycle.value));
+  $("#cycle-count").textContent = state.cycles.length;
+  renderCourseCreation();
+  $("#cycle-list").innerHTML = state.cycles.map((cycle) => `
+    <article class="cycle-row">
+      <span class="cycle-mark" aria-hidden="true">◷</span>
+      <div>
+        <strong>${escapeHtml(cycle.name)}</strong>
+        <span>Creado ${new Date(cycle.created_at).toLocaleDateString("es")}</span>
+      </div>
+      <label class="cycle-start-control">
+        <span>Inicio del ciclo</span>
+        <input class="field" type="date" data-cycle-start="${cycle.id}" value="${cycle.starts_on || ""}" />
+      </label>
+      <button class="button button-quiet" type="button" data-save-cycle-start="${cycle.id}">Guardar fecha</button>
+    </article>
+  `).join("");
+  $("#cycle-list-empty").hidden = state.cycles.length > 0;
+  renderTeacherAssignments();
+  renderWorkCourseSelectors();
+  if (selectedCycleId) localStorage.setItem("aula-active-cycle", String(selectedCycleId));
+  if (state.appView === "cycles") setAppView("cycles");
+}
+
+function renderCourseCreation() {
+  const selectedCycleId = Number(elements.courseCreationCycle.value) || null;
+  const cycleById = new Map(state.cycles.map((cycle) => [cycle.id, cycle.name]));
+  const courses = state.availableCourses.filter(
+    (course) => !selectedCycleId || course.cycle_id === selectedCycleId,
+  );
+  $("#course-creation-list").innerHTML = courses.length
+    ? courses.map((course) => `
+        <article class="course-creation-row">
+          <strong>${escapeHtml(course.name)}</strong>
+          <span>${escapeHtml(cycleById.get(course.cycle_id) || "Sin ciclo")} · #${course.id}</span>
+        </article>
+      `).join("")
+    : '<p class="setup-empty">No hay cursos en este ciclo todavía.</p>';
+  $("#course-creation-count").textContent = courses.length;
 }
 
 function renderMethodOptions() {
@@ -201,15 +654,28 @@ function renderStudents() {
 function renderManagementStudents() {
   const students = state.managementStudents;
   $("#management-count").textContent = students.length;
+  const rosterImported = Boolean(state.course?.roster_imported);
+  $("#roster-import-note").textContent = rosterImported
+    ? "La lista inicial de este curso ya fue cargada para el ciclo. Puedes seguir matriculando, editando o retirando estudiantes individualmente."
+    : state.course?.cycle_id
+      ? "El Excel admite NRO, CÓDIGO, ALUMNO, ESP, CONDICION, CORREO UNI y VECES REPETIDAS. El correo enlaza o crea la cuenta del alumno. La lista se carga una sola vez por ciclo."
+      : "Curso histórico sin ciclo académico: conserva el comportamiento de carga anterior.";
+  elements.importButton.disabled = rosterImported || !elements.rosterFile.files[0];
   elements.adminStudentList.innerHTML = students.map((student) => {
     const id = Number(student.id);
+    const details = [
+      student.roster_number && `NRO ${student.roster_number}`,
+      student.specialty && `ESP ${student.specialty}`,
+      student.student_condition,
+      student.times_repeated && `Veces repetidas: ${student.times_repeated}`,
+    ].filter(Boolean).map(escapeHtml).join(" · ");
     const contact = [student.phone_number, student.email].filter(Boolean).map(escapeHtml).join(" · ");
     return `<article class="student-row admin-student-row">
       <div class="student-identity">
         <span class="student-avatar" aria-hidden="true">${escapeHtml((student.display_name || "?").trim().charAt(0).toUpperCase() || "?")}</span>
         <div class="student-name-block">
           <div class="student-name">${escapeHtml(student.display_name)}${student.active ? "" : ' <span class="inactive-badge">Retirado</span>'}</div>
-          <div class="student-meta">${escapeHtml(student.external_ref)} · ${contact || "Sin datos de contacto"}</div>
+          <div class="student-meta">${escapeHtml(student.external_ref)} · ${contact || "Sin datos de contacto"}${details ? ` · ${details}` : ""}</div>
         </div>
       </div>
       <div class="student-actions">
@@ -259,33 +725,238 @@ function renderMetrics(metrics) {
 function renderCourse() {
   const course = state.course;
   const isLoaded = Boolean(course);
-  elements.emptyState.hidden = isLoaded;
-  elements.workspace.hidden = !isLoaded;
-  $("#refresh-button").disabled = !isLoaded;
-  elements.courseTitle.textContent = course?.name || "Panel de selección";
-  elements.courseMeta.textContent = course ? `Curso #${course.id}` : "Crea un curso o carga uno existente para comenzar.";
-  elements.breadcrumbCourse.textContent = course ? `CURSO #${course.id}` : "SIN CURSO";
   renderRecentCourses();
+  setAppView(state.appView);
+  elements.managementView.hidden = !isLoaded;
+  elements.setupCourseEmpty.hidden = isLoaded;
+  $("#management-title").textContent = course ? `Matrícula · ${course.name}` : "Matrícula inicial";
   if (!isLoaded) return;
-  setCourseView("attendance");
+  setCourseView(state.courseView);
   renderSessionBox();
   renderStudents();
   renderManagementStudents();
+  renderGroupPlans();
   if (state.metrics) renderMetrics(state.metrics);
 }
 
+function clearCourseSelection() {
+  state.course = null;
+  state.students = [];
+  state.managementStudents = [];
+  state.session = null;
+  state.sessionAttendanceSnapshot = new Set();
+  state.proposal = null;
+  state.groupPlans = [];
+  state.activeGroupPlanId = null;
+  state.groupPlanEditing = false;
+  state.draftGroups = [];
+  state.present = new Set();
+  state.roundEligibleStudentIds = new Set();
+  state.lastSelectedStudentIds = new Set();
+  state.metrics = null;
+  renderCourse();
+}
+
+function renderWorkCourseSelectors() {
+  const cycleOptions = `<option value="">Selecciona un ciclo</option>${state.cycles
+    .map((cycle) => `<option value="${cycle.id}">${escapeHtml(cycle.name)}</option>`)
+    .join("")}`;
+  elements.dailyCycle.innerHTML = cycleOptions;
+  elements.dailyCycle.value = state.activeCycleId ? String(state.activeCycleId) : "";
+
+  const filteredCourses = state.activeCycleId
+    ? state.availableCourses.filter((course) => course.cycle_id === state.activeCycleId)
+    : state.availableCourses;
+  const courseOptions = `<option value="">Selecciona un curso</option>${filteredCourses
+    .map((course) => `<option value="${course.id}">${escapeHtml(course.name)} · #${course.id}</option>`)
+    .join("")}`;
+  elements.dailyCourse.innerHTML = courseOptions;
+  elements.enrollmentCourse.innerHTML = courseOptions;
+  const selectedCourseId = filteredCourses.some((course) => course.id === state.course?.id)
+    ? String(state.course.id)
+    : "";
+  elements.dailyCourse.value = selectedCourseId;
+  elements.enrollmentCourse.value = selectedCourseId;
+}
+
+function setAppView(view) {
+  const previousView = state.appView;
+  const isStudent = state.authenticatedUser?.role === "estudiante";
+  elements.appShell.classList.toggle("student-mode", isStudent);
+  if (isStudent) {
+    if (previousView !== "studentPortal") window.scrollTo(0, 0);
+    state.appView = "studentPortal";
+    elements.studentPortal.hidden = false;
+    document.querySelector(".app-navigation").hidden = false;
+    elements.studentCoursesViewButton.hidden = false;
+    elements.studentCoursesViewButton.classList.add("active");
+    elements.studentCoursesViewButton.setAttribute("aria-current", "page");
+    [
+      elements.dailyViewButton,
+      elements.cyclesViewButton,
+      elements.teachersViewButton,
+      elements.studentAccountsViewButton,
+      elements.coursesViewButton,
+      elements.enrollmentViewButton,
+    ].forEach((button) => {
+      button.hidden = true;
+      button.classList.remove("active");
+      button.removeAttribute("aria-current");
+    });
+    elements.cyclesSetupPage.hidden = true;
+    elements.teacherManagementPage.hidden = true;
+    elements.studentAccountsPage.hidden = true;
+    elements.courseCreationPage.hidden = true;
+    elements.academicSetupPage.hidden = true;
+    $("#daily-course-picker").hidden = true;
+    elements.workspace.hidden = true;
+    elements.emptyState.hidden = true;
+    $("#refresh-button").hidden = true;
+    document.querySelector(".topbar").hidden = true;
+    document.querySelector(".page-heading").hidden = true;
+    document.querySelector(".sidebar-section").hidden = true;
+    document.querySelector(".sidebar-role").hidden = true;
+    document.querySelector(".sidebar-bottom").hidden = true;
+    elements.sidebarUser.textContent = `${state.authenticatedUser.full_name} · Estudiante`;
+    return;
+  }
+  elements.studentPortal.hidden = true;
+  elements.studentCoursesViewButton.hidden = true;
+  elements.studentCoursesViewButton.classList.remove("active");
+  elements.studentCoursesViewButton.removeAttribute("aria-current");
+  elements.dailyViewButton.hidden = false;
+  elements.enrollmentViewButton.hidden = false;
+  document.querySelector(".topbar").hidden = false;
+  document.querySelector(".page-heading").hidden = false;
+  document.querySelector(".app-navigation").hidden = false;
+  document.querySelector(".sidebar-section").hidden = false;
+  document.querySelector(".sidebar-bottom").hidden = false;
+  $("#refresh-button").hidden = false;
+  const isAdminView = state.authenticatedUser?.role === "administrador"
+    && state.viewAs === "administrador";
+  if (isAdminView && view === "daily") view = "cycles";
+  if (!isAdminView && ["cycles", "teachers", "studentAccounts", "createCourse"].includes(view)) {
+    view = "enrollment";
+  }
+  if (previousView !== view) window.scrollTo(0, 0);
+  state.appView = view;
+  const cycles = view === "cycles";
+  const teachers = view === "teachers";
+  const studentAccounts = view === "studentAccounts";
+  const createCourse = view === "createCourse";
+  const enrollment = view === "enrollment";
+  const daily = view === "daily";
+  const course = state.course;
+  const cycle = state.cycles.find((item) => item.id === course?.cycle_id);
+  elements.cyclesSetupPage.hidden = !cycles;
+  elements.teacherManagementPage.hidden = !teachers;
+  elements.studentAccountsPage.hidden = !studentAccounts;
+  elements.courseCreationPage.hidden = !createCourse;
+  if (createCourse) renderCourseCreation();
+  elements.academicSetupPage.hidden = !enrollment;
+  $("#daily-course-picker").hidden = !daily;
+  elements.workspace.hidden = !daily || !course;
+  elements.emptyState.hidden = !daily || Boolean(course);
+  $("#refresh-button").disabled = !daily || !course;
+  elements.dailyViewButton.classList.toggle("active", daily);
+  elements.cyclesViewButton.classList.toggle("active", cycles);
+  elements.teachersViewButton.classList.toggle("active", teachers);
+  elements.studentAccountsViewButton.classList.toggle("active", studentAccounts);
+  elements.coursesViewButton.classList.toggle("active", createCourse);
+  elements.enrollmentViewButton.classList.toggle("active", enrollment);
+  [
+    elements.dailyViewButton,
+    elements.cyclesViewButton,
+    elements.teachersViewButton,
+    elements.studentAccountsViewButton,
+    elements.coursesViewButton,
+    elements.enrollmentViewButton,
+  ]
+    .forEach((button) => button.removeAttribute("aria-current"));
+  const activeButton = daily
+    ? elements.dailyViewButton
+    : cycles
+      ? elements.cyclesViewButton
+      : teachers
+        ? elements.teachersViewButton
+        : studentAccounts
+          ? elements.studentAccountsViewButton
+          : createCourse
+            ? elements.coursesViewButton
+            : elements.enrollmentViewButton;
+  activeButton.setAttribute("aria-current", "page");
+  elements.dailyViewButton.hidden = isAdminView;
+  elements.cyclesViewButton.hidden = !isAdminView;
+  elements.teachersViewButton.hidden = !isAdminView;
+  elements.studentAccountsViewButton.hidden = !isAdminView;
+  elements.coursesViewButton.hidden = !isAdminView;
+  elements.activeRole.closest(".sidebar-role").hidden = state.authenticatedUser?.role !== "administrador";
+  elements.studentAccountForm.hidden = !isAdminView;
+  $("#create-cycle-form button[type=submit]").disabled = !isAdminView;
+  $("#create-course-form button[type=submit]").disabled =
+    !isAdminView || !Number(elements.courseCreationCycle.value);
+  const teacherView = state.authenticatedUser?.role === "docente" || state.viewAs === "docente";
+  elements.participationsTab.hidden = teacherView;
+  elements.sidebarUser.textContent = `${state.authenticatedUser?.full_name || ""} · ${
+    state.authenticatedUser?.role === "administrador" ? "Administrador" : "Docente"
+  }`;
+  if (cycles) {
+    elements.courseTitle.textContent = "Ciclos académicos";
+    elements.pageEyebrow.firstChild.textContent = "PERIODOS ACADÉMICOS ";
+    elements.courseMeta.textContent = `${state.cycles.length} ciclo${state.cycles.length === 1 ? "" : "s"} registrado${state.cycles.length === 1 ? "" : "s"}.`;
+    elements.breadcrumbCourse.textContent = "CICLOS";
+  } else if (enrollment) {
+    elements.courseTitle.textContent = "Matrícula de estudiantes";
+    elements.pageEyebrow.firstChild.textContent = "CONFIGURACIÓN DE CURSOS ";
+    elements.courseMeta.textContent = course
+      ? `${course.name} · Curso #${course.id}${cycle ? ` · Ciclo ${cycle.name}` : ""}`
+      : "Selecciona un ciclo y un curso para administrar su lista.";
+    elements.breadcrumbCourse.textContent = "MATRÍCULA";
+  } else if (teachers) {
+    elements.courseTitle.textContent = "Gestión de docentes";
+    elements.pageEyebrow.firstChild.textContent = "ADMINISTRACIÓN ";
+    elements.courseMeta.textContent = `${state.teachers.length} docente${state.teachers.length === 1 ? "" : "s"} registrado${state.teachers.length === 1 ? "" : "s"}.`;
+    elements.breadcrumbCourse.textContent = "DOCENTES";
+  } else if (studentAccounts) {
+    elements.courseTitle.textContent = "Cuentas de alumnos";
+    elements.pageEyebrow.firstChild.textContent = "USUARIOS ESTUDIANTILES ";
+    elements.courseMeta.textContent = `${state.studentAccounts.length} cuenta${state.studentAccounts.length === 1 ? "" : "s"} registrada${state.studentAccounts.length === 1 ? "" : "s"}.`;
+    elements.breadcrumbCourse.textContent = "ALUMNOS";
+  } else if (createCourse) {
+    elements.courseTitle.textContent = "Crear cursos";
+    elements.pageEyebrow.firstChild.textContent = "ADMINISTRACIÓN ";
+    elements.courseMeta.textContent = "Crea cursos y asígnalos a un ciclo académico.";
+    elements.breadcrumbCourse.textContent = "CURSOS";
+  } else {
+    elements.courseTitle.textContent = course?.name || "Panel de selección";
+    elements.pageEyebrow.firstChild.textContent = "SELECCIÓN EQUITATIVA ";
+    elements.courseMeta.textContent = course
+      ? `Curso #${course.id}${cycle ? ` · Ciclo ${cycle.name}` : ""}`
+      : "Selecciona un curso o créalo desde Matrícula de estudiantes para comenzar.";
+    elements.breadcrumbCourse.textContent = course ? `CURSO #${course.id}` : "SIN CURSO";
+  }
+}
+
 function setCourseView(view) {
-  const management = view === "management";
+  if (
+    (state.authenticatedUser?.role === "docente" || state.viewAs === "docente")
+    && view === "participations"
+  ) {
+    view = "attendance";
+  }
+  state.courseView = view;
+  const attendance = view === "attendance";
   const participations = view === "participations";
-  elements.attendanceView.hidden = management || participations;
-  elements.managementView.hidden = !management;
+  const groups = view === "groups";
+  elements.attendanceView.hidden = participations || groups;
   elements.participationsView.hidden = !participations;
-  elements.attendanceTab.classList.toggle("active", !management && !participations);
-  elements.managementTab.classList.toggle("active", management);
+  elements.groupsView.hidden = !groups;
+  elements.attendanceTab.classList.toggle("active", attendance);
   elements.participationsTab.classList.toggle("active", participations);
-  elements.attendanceTab.setAttribute("aria-selected", String(!management && !participations));
-  elements.managementTab.setAttribute("aria-selected", String(management));
+  elements.groupsTab.classList.toggle("active", groups);
+  elements.attendanceTab.setAttribute("aria-selected", String(attendance));
   elements.participationsTab.setAttribute("aria-selected", String(participations));
+  elements.groupsTab.setAttribute("aria-selected", String(groups));
 }
 
 function renderSessionBox() {
@@ -335,7 +1006,15 @@ async function loadCourse(courseId, { remember = true } = {}) {
     api(`/courses/${id}/fairness-metrics`).catch(() => null),
   ]);
   state.course = course;
+  state.course = course;
+  if (course.cycle_id !== null && course.cycle_id !== undefined) {
+    renderCycles(course.cycle_id);
+  }
   state.students = students;
+  state.groupPlans = [];
+  state.activeGroupPlanId = null;
+  state.groupPlanEditing = false;
+  state.draftGroups = [];
   state.managementStudents = managementStudents;
   state.present = new Set();
   state.roundEligibleStudentIds = new Set(students.map((student) => Number(student.id)));
@@ -354,6 +1033,7 @@ async function loadCourse(courseId, { remember = true } = {}) {
   if (remember) saveRecentCourse(course);
   renderCourse();
   loadProposal();
+  loadGroupPlans();
 }
 
 async function refreshCourse() {
@@ -361,7 +1041,8 @@ async function refreshCourse() {
   const currentPresent = new Set(state.present);
   const currentRoundEligible = new Set(state.roundEligibleStudentIds);
   const knownStudentIds = new Set(state.students.map((student) => Number(student.id)));
-  const [students, managementStudents, metrics] = await Promise.all([
+  const [course, students, managementStudents, metrics] = await Promise.all([
+    api(`/courses/${state.course.id}`),
     api(`/courses/${state.course.id}/students`),
     api(`/courses/${state.course.id}/students?include_inactive=true`),
     api(`/courses/${state.course.id}/fairness-metrics`),
@@ -380,6 +1061,10 @@ async function refreshCourse() {
   renderStudents();
   renderManagementStudents();
   renderMetrics(metrics);
+  if (state.activeGroupPlanId) {
+    ensureDraftRosterCoverage();
+    renderGroupEditor();
+  }
 }
 
 // La asistencia de una sesión en curso vive en el servidor: se vuelve a leer de ahí.
@@ -439,6 +1124,371 @@ async function loadParticipationHistory() {
     elements.participationHistoryEmpty.textContent = error.message;
     elements.participationHistoryEmpty.hidden = false;
   }
+}
+
+function ensureDraftRosterCoverage() {
+  const activeIds = new Set(state.students.map((student) => Number(student.id)));
+  state.draftGroups.forEach((group) => {
+    group.student_ids = group.student_ids.filter((id) => activeIds.has(Number(id)));
+  });
+}
+
+function getUnassignedStudents() {
+  const assignedIds = new Set(state.draftGroups.flatMap((group) => group.student_ids.map(Number)));
+  return state.students.filter((student) => !assignedIds.has(Number(student.id)));
+}
+
+function moveStudentToGroup(studentId, targetIndex) {
+  const sourceIndex = state.draftGroups.findIndex((group) => group.student_ids.includes(studentId));
+  const isUnassigned = getUnassignedStudents().some((student) => Number(student.id) === studentId);
+  if (
+    (sourceIndex < 0 && !isUnassigned)
+    || targetIndex < -1
+    || targetIndex >= state.draftGroups.length
+  ) return false;
+  if (sourceIndex === targetIndex) return true;
+  if (sourceIndex >= 0) {
+    state.draftGroups[sourceIndex].student_ids =
+      state.draftGroups[sourceIndex].student_ids.filter((id) => Number(id) !== studentId);
+  }
+  if (targetIndex >= 0) state.draftGroups[targetIndex].student_ids.push(studentId);
+  return true;
+}
+
+function groupPlanValidation() {
+  const maxSize = Number(elements.groupMaxSize.value);
+  if (!Number.isInteger(maxSize) || maxSize < 1 || maxSize > 1000) {
+    return "El máximo por grupo debe ser entre 1 y 1000.";
+  }
+  if (!state.draftGroups.length || state.draftGroups.length > 100) {
+    return "La propuesta debe tener entre 1 y 100 grupos.";
+  }
+  if (state.groupPlanEditing && !elements.groupPlanName.value.trim()) {
+    return "Asigna un nombre a la propuesta.";
+  }
+  const names = state.draftGroups.map((group) => group.name.trim().toLocaleLowerCase());
+  if (names.some((name) => !name) || new Set(names).size !== names.length) {
+    return "Completa los nombres de los grupos sin repetirlos.";
+  }
+  const assignedIds = state.draftGroups.flatMap((group) => group.student_ids.map(Number));
+  const activeIds = state.students.map((student) => Number(student.id));
+  if (new Set(assignedIds).size !== assignedIds.length || assignedIds.some((id) => !activeIds.includes(id))) {
+    return "Cada estudiante solo puede estar una vez y debe estar matriculado activamente.";
+  }
+  return "";
+}
+
+function renderGroupEditor() {
+  const editable = state.groupPlanEditing;
+  const studentsById = new Map(state.students.map((student) => [Number(student.id), student]));
+  elements.groupEditor.innerHTML = state.draftGroups.map((group, groupIndex) => {
+    const members = group.student_ids.map((studentId) => studentsById.get(Number(studentId))).filter(Boolean);
+    const memberRows = members.length
+      ? members.map((student) => `
+          <div class="group-member-row" ${editable ? `draggable="true" data-group-drag="${student.id}"` : ""}>
+            <span class="group-member-name">${escapeHtml(student.display_name)}<small>${escapeHtml(student.external_ref)}</small></span>
+            ${editable ? `<select class="field" data-group-student="${student.id}" aria-label="Grupo de ${escapeHtml(student.display_name)}">
+              <option value="-1">Sin grupo</option>
+              ${state.draftGroups.map((option, optionIndex) => `
+                <option value="${optionIndex}" ${optionIndex === groupIndex ? "selected" : ""}>${escapeHtml(option.name)}</option>
+              `).join("")}
+            </select>` : ""}
+          </div>`).join("")
+      : `<p class="group-empty">${editable
+        ? "Sin estudiantes. Puedes asignarlos desde el carril sin grupo."
+        : "Sin estudiantes."}</p>`;
+    return `
+      <section class="group-card" data-group-drop="${groupIndex}">
+        <div class="group-card-heading">
+          ${editable
+            ? `<input class="field" type="text" maxlength="100" value="${escapeHtml(group.name)}" data-group-name="${groupIndex}" aria-label="Nombre del grupo ${groupIndex + 1}" />`
+            : `<h3>${escapeHtml(group.name)}</h3>`}
+          <span>${members.length} estudiante${members.length === 1 ? "" : "s"}</span>
+          ${editable ? `<button class="icon-button group-remove-button" type="button" data-remove-group="${groupIndex}" aria-label="Eliminar grupo" title="Eliminar grupo">×</button>` : ""}
+        </div>
+        <div class="group-member-list">${memberRows}</div>
+      </section>`;
+  }).join("") + (state.activeGroupPlanId && getUnassignedStudents().length
+    ? `<section class="group-card unassigned-group" data-group-drop="-1">
+        <div class="group-card-heading">
+          <h3>Alumnos sin grupo</h3>
+          <span>${getUnassignedStudents().length} estudiante${getUnassignedStudents().length === 1 ? "" : "s"}</span>
+        </div>
+        <div class="group-member-list">${getUnassignedStudents().map((student) => `
+          <div class="group-member-row" ${editable ? `draggable="true" data-group-drag="${student.id}"` : ""}>
+            <span class="group-member-name">${escapeHtml(student.display_name)}<small>${escapeHtml(student.external_ref)}</small></span>
+            ${editable ? `<select class="field" data-group-student="${student.id}" aria-label="Grupo de ${escapeHtml(student.display_name)}">
+              <option value="-1" selected>Sin grupo</option>
+              ${state.draftGroups.map((group, index) => `<option value="${index}">${escapeHtml(group.name)}</option>`).join("")}
+            </select>` : ""}
+          </div>`).join("")}</div>
+      </section>`
+    : "");
+  const validation = state.activeGroupPlanId ? groupPlanValidation() : "";
+  const unassignedCount = getUnassignedStudents().length;
+  elements.groupValidationMessage.textContent = validation
+    || (state.activeGroupPlanId
+      ? unassignedCount
+        ? `${unassignedCount} estudiante${unassignedCount === 1 ? "" : "s"} sin grupo.`
+        : "Todos los estudiantes activos tienen grupo."
+      : state.course && state.students.length
+        ? "Crea una propuesta aleatoria o una distribución manual para comenzar."
+        : "Matricula estudiantes activos para poder crear grupos.");
+  elements.saveGroupPlanButton.hidden = !editable;
+  elements.saveGroupPlanButton.disabled = !editable || !state.activeGroupPlanId || Boolean(validation);
+  elements.groupPlanName.disabled = !editable;
+  elements.groupPlanNameField.hidden = !editable;
+  elements.editGroupPlanButton.hidden = editable || !state.activeGroupPlanId;
+  elements.editGroupPlanButton.disabled = !state.activeGroupPlanId;
+  elements.cancelGroupEditsButton.hidden = !editable;
+  elements.addGroupButton.hidden = !editable;
+  elements.addGroupButton.disabled = !editable || state.draftGroups.length >= 100;
+}
+
+function showGroupSetup(mode = null) {
+  elements.groupSetupChoices.hidden = Boolean(mode);
+  elements.groupGenerationForm.hidden = mode !== "random";
+  elements.manualGroupSetup.hidden = mode !== "manual";
+}
+
+function nextGroupName() {
+  const names = new Set(state.draftGroups.map((group) => group.name.toLocaleLowerCase()));
+  let index = 1;
+  while (names.has(`grupo ${index}`)) index += 1;
+  return `Grupo ${index}`;
+}
+
+function applyGroupPlan(plan) {
+  state.activeGroupPlanId = plan?.id ?? null;
+  state.groupPlanEditing = false;
+  elements.groupSetupChoices.hidden = Boolean(plan);
+  elements.groupGenerationForm.hidden = Boolean(plan);
+  elements.manualGroupSetup.hidden = Boolean(plan);
+  elements.deleteGroupPlanButton.disabled = !state.activeGroupPlanId;
+  if (!plan) {
+    state.draftGroups = [];
+    elements.groupPlanName.value = "";
+    renderGroupEditor();
+    elements.groupEditorNote.textContent = state.groupPlans.length
+      ? "Selecciona una propuesta guardada."
+      : "Genera una propuesta aleatoria para comenzar.";
+    return;
+  }
+  elements.groupPlanSelect.value = String(plan.id);
+  state.groupMaxSize = plan.max_group_size;
+  elements.groupMaxSize.value = String(plan.max_group_size);
+  elements.groupPlanName.value = plan.name;
+  state.draftGroups = plan.groups.map((group) => ({
+    name: group.name,
+    student_ids: group.student_ids.map(Number),
+  }));
+  ensureDraftRosterCoverage();
+  elements.groupEditorNote.textContent = `Propuesta guardada el ${formatDate(plan.created_at)}.`;
+  renderGroupEditor();
+}
+
+function renderGroupPlans() {
+  const options = state.groupPlans.map((plan) =>
+    `<option value="${plan.id}">${escapeHtml(plan.name)} · ${formatDate(plan.created_at)}</option>`,
+  ).join("");
+  elements.groupPlanSelect.innerHTML = options || '<option value="">Todavía no hay propuestas</option>';
+  elements.groupPlanSelect.disabled = !state.groupPlans.length;
+  elements.groupSetupChoices.hidden = Boolean(state.activeGroupPlanId);
+  elements.groupGenerationForm.hidden = Boolean(state.activeGroupPlanId);
+  elements.manualGroupSetup.hidden = Boolean(state.activeGroupPlanId);
+  elements.deleteGroupPlanButton.disabled = !state.activeGroupPlanId;
+  elements.generateGroupsButton.disabled = !state.course || !state.students.length;
+  elements.createManualGroupsButton.disabled = !state.course || !state.students.length;
+  elements.manualGroupCount.max = String(Math.min(100, state.students.length || 1));
+  if (!Number(elements.manualGroupCount.value) || Number(elements.manualGroupCount.value) > state.students.length) {
+    elements.manualGroupCount.value = String(Math.min(5, state.students.length || 1));
+  }
+  updateManualGroupSizePreview();
+  if (state.activeGroupPlanId) elements.groupPlanSelect.value = String(state.activeGroupPlanId);
+  renderGroupEditor();
+}
+
+async function loadGroupPlans() {
+  if (!state.course) return;
+  try {
+    state.groupPlans = await api(`/courses/${state.course.id}/group-plans`);
+    const selected = state.groupPlans.find((plan) => plan.id === state.activeGroupPlanId)
+      || state.groupPlans[0]
+      || null;
+    renderGroupPlans();
+    if (selected) {
+      elements.groupPlanSelect.value = String(selected.id);
+      applyGroupPlan(selected);
+    } else {
+      applyGroupPlan(null);
+    }
+  } catch (error) {
+    elements.groupEditorNote.textContent = error.message;
+    notify(`No se pudieron cargar las propuestas de grupos: ${error.message}`, true);
+  }
+}
+
+async function createGroupPlan(mode, event) {
+  if (event) event.preventDefault();
+  if (!state.course) return;
+  const maxGroupSize = Number(elements.groupMaxSize.value);
+  if (mode === "random" && (!Number.isInteger(maxGroupSize) || maxGroupSize < 1 || maxGroupSize > 1000)) {
+    notify("El máximo por grupo debe ser entre 1 y 1000.", true);
+    return;
+  }
+  const manualGroupCount = Number(elements.manualGroupCount.value);
+  if (mode === "manual" && (
+    !Number.isInteger(manualGroupCount)
+    || manualGroupCount < 1
+    || manualGroupCount > Math.min(100, state.students.length)
+  )) {
+    notify(`Elige entre 1 y ${Math.min(100, state.students.length)} grupos.`, true);
+    return;
+  }
+  const planName = mode === "manual"
+    ? elements.manualGroupPlanName.value.trim()
+    : elements.autoGroupPlanName.value.trim();
+  const confirmation = mode === "manual"
+    ? `Se guardará una propuesta con ${manualGroupCount} grupos. ¿Continuar?`
+    : `Se generará y guardará una propuesta aleatoria con máximo ${maxGroupSize} estudiantes por grupo. ¿Continuar?`;
+  if (!window.confirm(confirmation)) return;
+  const button = mode === "manual"
+    ? elements.prepareManualGroupsButton
+    : elements.generateGroupsButton;
+  setBusy(button, true, mode === "manual" ? "Creando..." : "Generando...");
+  try {
+    const suffix = mode === "manual" ? "/manual" : "";
+    const payload = mode === "manual"
+      ? {
+          group_count: Number(elements.manualGroupCount.value),
+          name: planName || null,
+        }
+      : {
+          max_group_size: maxGroupSize,
+          name: planName || null,
+        };
+    const plan = await api(`/courses/${state.course.id}/group-plans${suffix}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    state.groupPlans = [plan, ...state.groupPlans.filter((item) => item.id !== plan.id)];
+    renderGroupPlans();
+    applyGroupPlan(plan);
+    notify(mode === "manual"
+      ? "Grupos creados. Puedes mover estudiantes para definir tu distribución."
+      : "Propuesta aleatoria generada y guardada.");
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    setBusy(button, false);
+    renderGroupPlans();
+  }
+}
+
+function generateGroupPlan(event) {
+  return createGroupPlan("random", event);
+}
+
+function updateManualGroupSizePreview() {
+  const studentCount = state.students.length;
+  const groupCount = Number(elements.manualGroupCount.value);
+  if (!studentCount) {
+    elements.manualGroupSizePreview.textContent = "Primero matricula estudiantes en este curso.";
+    elements.prepareManualGroupsButton.disabled = true;
+    return;
+  }
+  if (!Number.isInteger(groupCount) || groupCount < 1 || groupCount > Math.min(100, studentCount)) {
+    elements.manualGroupSizePreview.textContent =
+      `Elige entre 1 y ${Math.min(100, studentCount)} grupos para ${studentCount} estudiantes.`;
+    elements.prepareManualGroupsButton.disabled = true;
+    return;
+  }
+  const smallerGroups = Math.floor(studentCount / groupCount);
+  const largerGroupCount = studentCount % groupCount;
+  const smallerGroupCount = groupCount - largerGroupCount;
+  const parts = [];
+  if (largerGroupCount) {
+    parts.push(`${largerGroupCount} grupo${largerGroupCount === 1 ? "" : "s"} de ${smallerGroups + 1}`);
+  }
+  if (smallerGroupCount) {
+    parts.push(`${smallerGroupCount} grupo${smallerGroupCount === 1 ? "" : "s"} de ${smallerGroups}`);
+  }
+  elements.manualGroupSizePreview.textContent =
+    `${studentCount} estudiantes en ${groupCount} grupos: ${parts.join(" y ")}.`;
+  elements.prepareManualGroupsButton.disabled = false;
+}
+
+async function saveGroupPlan() {
+  if (!state.course || !state.activeGroupPlanId || !state.groupPlanEditing) return;
+  const validation = groupPlanValidation();
+  if (validation) {
+    notify(validation, true);
+    return;
+  }
+  const unassigned = getUnassignedStudents();
+  const groupSizes = state.draftGroups.map((group) => group.student_ids.length);
+  const unbalanced = Math.max(...groupSizes) - Math.min(...groupSizes) > 1;
+  const details = [
+    ...state.draftGroups.map((group) => `${group.name}: ${group.student_ids.length}`),
+    ...(unassigned.length ? [`Alumnos sin grupo: ${unassigned.length}`] : []),
+  ].join("\n");
+  const notice = unbalanced ? "Los grupos tienen tamaños diferentes.\n" : "";
+  if (!window.confirm(`${notice}${details}\n\n¿Guardar los cambios de esta propuesta?`)) return;
+  setBusy(elements.saveGroupPlanButton, true, "Guardando...");
+  try {
+    const plan = await api(
+      `/courses/${state.course.id}/group-plans/${state.activeGroupPlanId}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          name: elements.groupPlanName.value.trim(),
+          max_group_size: Number(elements.groupMaxSize.value),
+          groups: state.draftGroups,
+        }),
+      },
+    );
+    state.groupPlans = state.groupPlans.map((item) => item.id === plan.id ? plan : item);
+    applyGroupPlan(plan);
+    renderGroupPlans();
+    notify("Distribución de grupos guardada.");
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    setBusy(elements.saveGroupPlanButton, false);
+    renderGroupEditor();
+  }
+}
+
+async function deleteGroupPlan() {
+  if (!state.course || !state.activeGroupPlanId) return;
+  const selected = state.groupPlans.find((plan) => plan.id === state.activeGroupPlanId);
+  if (!window.confirm(`¿Eliminar la propuesta "${selected?.name || ""}"?`)) return;
+  try {
+    await api(`/courses/${state.course.id}/group-plans/${state.activeGroupPlanId}`, {
+      method: "DELETE",
+    });
+    state.groupPlans = state.groupPlans.filter((plan) => plan.id !== state.activeGroupPlanId);
+    applyGroupPlan(state.groupPlans[0] || null);
+    renderGroupPlans();
+    notify("Propuesta eliminada.");
+  } catch (error) {
+    notify(error.message, true);
+  }
+}
+
+function startGroupPlanEditing() {
+  if (!state.activeGroupPlanId || state.groupPlanEditing) return;
+  state.groupPlanEditing = true;
+  elements.groupEditorNote.textContent =
+    "Modo de edición: reorganiza los estudiantes o incorpora a los que aparecen sin grupo.";
+  renderGroupEditor();
+}
+
+function cancelGroupPlanEditing() {
+  if (!state.activeGroupPlanId || !state.groupPlanEditing) return;
+  if (!window.confirm("¿Descartar los cambios que todavía no guardaste?")) return;
+  const plan = state.groupPlans.find((item) => item.id === state.activeGroupPlanId);
+  applyGroupPlan(plan || null);
 }
 
 async function openStudentHistory(studentId) {
@@ -1021,6 +2071,63 @@ function closeSelectionStage() {
 
 elements.selectionStage.addEventListener("close", stopBallMachine);
 
+elements.loginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const username = $("#login-username").value.trim();
+  const password = $("#login-password").value;
+  elements.loginError.hidden = true;
+  setBusy(elements.loginSubmit, true, "Ingresando...");
+  try {
+    const user = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    });
+    $("#login-password").value = "";
+    if (user.must_change_password) showPasswordChange();
+    else await loadAuthenticatedData(user);
+  } catch (error) {
+    elements.loginError.textContent = error.message;
+    elements.loginError.hidden = false;
+  } finally {
+    setBusy(elements.loginSubmit, false);
+  }
+});
+
+elements.passwordChangeForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const newPassword = $("#new-password").value;
+  if (newPassword !== $("#confirm-new-password").value) {
+    elements.passwordChangeError.textContent = "Las contraseñas no coinciden.";
+    elements.passwordChangeError.hidden = false;
+    return;
+  }
+  elements.passwordChangeError.hidden = true;
+  setBusy(elements.passwordChangeSubmit, true, "Guardando...");
+  try {
+    const user = await api("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ new_password: newPassword }),
+    });
+    elements.passwordChangeForm.reset();
+    await loadAuthenticatedData(user);
+  } catch (error) {
+    elements.passwordChangeError.textContent = error.message;
+    elements.passwordChangeError.hidden = false;
+  } finally {
+    setBusy(elements.passwordChangeSubmit, false);
+  }
+});
+
+$("#logout-button").addEventListener("click", async () => {
+  try {
+    await api("/auth/logout", { method: "POST" });
+  } catch (error) {
+    showLogin(`Se cerró esta vista, pero no se pudo confirmar el cierre en el servidor: ${error.message}`);
+    return;
+  }
+  showLogin();
+});
+
 $("#create-course-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (state.participationPending) {
@@ -1030,17 +2137,306 @@ $("#create-course-form").addEventListener("submit", async (event) => {
   const form = event.currentTarget;
   const button = form.querySelector("button[type=submit]");
   const name = $("#course-name").value.trim();
-  if (!name) return;
+  const cycleId = Number(elements.courseCreationCycle.value) || null;
+  if (!name || !cycleId) return;
   setBusy(button, true, "Creando...");
   try {
-    const course = await api("/courses", { method: "POST", body: JSON.stringify({ name }) });
+    const course = await api("/courses", {
+      method: "POST",
+      body: JSON.stringify({ name, cycle_id: cycleId }),
+    });
     await loadCourse(course.id);
     form.reset();
+    setAppView("enrollment");
     notify(`Curso “${course.name}” creado.`);
   } catch (error) {
     notify(error.message, true);
   } finally {
     setBusy(button, false);
+  }
+});
+
+$("#create-cycle-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button[type=submit]");
+  const name = $("#cycle-name").value.trim();
+  const startsOn = $("#cycle-starts-on").value;
+  if (!name || !startsOn) return;
+  setBusy(button, true, "Creando...");
+  try {
+    const cycle = await api("/cycles", {
+      method: "POST",
+      body: JSON.stringify({ name, starts_on: startsOn }),
+    });
+    state.cycles = [...state.cycles, cycle];
+    renderCycles(cycle.id);
+    form.reset();
+    notify(`Ciclo “${cycle.name}” creado con inicio el ${startsOn}.`);
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+});
+
+$("#cycle-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-save-cycle-start]");
+  if (!button) return;
+  const cycleId = Number(button.dataset.saveCycleStart);
+  const input = document.querySelector(`[data-cycle-start="${cycleId}"]`);
+  if (!input?.value) {
+    notify("Selecciona la fecha de inicio del ciclo.", true);
+    return;
+  }
+  setBusy(button, true, "Guardando...");
+  try {
+    const updated = await api(`/cycles/${cycleId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ starts_on: input.value }),
+    });
+    state.cycles = state.cycles.map((cycle) => cycle.id === cycleId ? updated : cycle);
+    renderCycles(state.activeCycleId);
+    notify(`Fecha de inicio de “${updated.name}” guardada.`);
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+});
+
+elements.studentAccountForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("#create-student-account-submit");
+  const payload = {
+    username: $("#account-student-code").value.trim(),
+    full_name: $("#account-student-name").value.trim(),
+    email: $("#account-student-email").value.trim(),
+  };
+  setBusy(button, true, "Registrando...");
+  try {
+    const created = await api("/admin/students", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    const { temporary_password, ...account } = created;
+    state.studentAccounts = [...state.studentAccounts, account];
+    renderStudentAccounts();
+    elements.studentAccountForm.reset();
+    showTemporaryPassword(
+      temporary_password,
+      `Contraseña temporal de ${account.full_name}. Comparte el usuario y la contraseña por un canal privado.`,
+      account.username,
+    );
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+});
+
+elements.studentAccountList.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-reset-student-account]");
+  if (!button) return;
+  const student = state.studentAccounts.find(
+    (item) => item.id === Number(button.dataset.resetStudentAccount),
+  );
+  if (!student || !window.confirm(`¿Generar una nueva contraseña temporal para ${student.full_name}?`)) return;
+  setBusy(button, true, "Generando...");
+  try {
+    const result = await api(`/admin/students/${student.id}/reset-password`, { method: "POST" });
+    showTemporaryPassword(
+      result.temporary_password,
+      `Contraseña temporal de ${student.full_name}. Comparte el acceso por un canal privado.`,
+      student.username,
+    );
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+});
+
+elements.importResult.addEventListener("click", async (event) => {
+  if (!event.target.closest("#copy-import-passwords")) return;
+  const accounts = [...elements.importResult.querySelectorAll(".import-account-credentials li")]
+    .map((item) => item.textContent.trim())
+    .join("\n");
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error("El portapapeles no está disponible.");
+    await navigator.clipboard.writeText(accounts);
+    notify("Accesos temporales copiados.");
+  } catch {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(elements.importResult.querySelector(".import-account-credentials"));
+    selection.removeAllRanges();
+    selection.addRange(range);
+    notify("No se pudo copiar automáticamente. Los accesos quedaron seleccionados.", true);
+  }
+});
+
+elements.activeCycle.addEventListener("change", () => {
+  const nextCycleId = Number(elements.activeCycle.value) || null;
+  if (state.participationPending) {
+    notify("Guarda la participación pendiente antes de cambiar el ciclo.", true);
+    renderCycles(state.activeCycleId);
+    return;
+  }
+  state.activeCycleId = nextCycleId;
+  if (state.activeCycleId) localStorage.setItem("aula-active-cycle", String(state.activeCycleId));
+  if (state.course && state.course.cycle_id !== state.activeCycleId) {
+    clearCourseSelection();
+  }
+  renderCycles(state.activeCycleId);
+});
+
+elements.courseCreationCycle.addEventListener("change", () => {
+  const hasCycle = Boolean(Number(elements.courseCreationCycle.value));
+  $("#create-course-form button[type=submit]").disabled = !hasCycle;
+  $("#course-cycle-hint").hidden = hasCycle;
+  renderCourseCreation();
+});
+
+elements.dailyCycle.addEventListener("change", () => {
+  const nextCycleId = Number(elements.dailyCycle.value) || null;
+  if (state.participationPending) {
+    notify("Guarda la participación pendiente antes de cambiar el ciclo.", true);
+    renderWorkCourseSelectors();
+    return;
+  }
+  state.activeCycleId = nextCycleId;
+  if (state.activeCycleId) localStorage.setItem("aula-active-cycle", String(state.activeCycleId));
+  if (state.course && state.course.cycle_id !== state.activeCycleId) {
+    clearCourseSelection();
+  }
+  renderCycles(state.activeCycleId);
+});
+
+async function selectCourseFromPicker(courseId) {
+  if (!courseId) {
+    if (state.participationPending) {
+      notify("Guarda la participación pendiente antes de cambiar el curso.", true);
+      renderWorkCourseSelectors();
+      return;
+    }
+    if (state.course) clearCourseSelection();
+    return;
+  }
+  try {
+    await loadCourse(courseId);
+  } catch (error) {
+    renderWorkCourseSelectors();
+    notify(error.message, true);
+  }
+}
+
+elements.dailyCourse.addEventListener("change", () => {
+  selectCourseFromPicker(elements.dailyCourse.value);
+});
+elements.enrollmentCourse.addEventListener("change", () => {
+  selectCourseFromPicker(elements.enrollmentCourse.value);
+});
+
+elements.assignmentTeacher.addEventListener("change", renderTeacherAssignments);
+$("#create-teacher-course-search").addEventListener("input", (event) => {
+  filterCourseOptions(event.currentTarget, elements.createTeacherCourseList);
+});
+$("#assignment-course-search").addEventListener("input", (event) => {
+  filterCourseOptions(event.currentTarget, elements.assignmentCourseList);
+});
+elements.registerTeacherButton.addEventListener("click", () => {
+  elements.teacherManagementHome.hidden = true;
+  elements.registerTeacherButton.hidden = true;
+  elements.createTeacherForm.hidden = false;
+  $("#teacher-full-name").focus();
+});
+elements.cancelTeacherRegistration.addEventListener("click", () => {
+  elements.createTeacherForm.reset();
+  $("#create-teacher-course-search").value = "";
+  filterCourseOptions($("#create-teacher-course-search"), elements.createTeacherCourseList);
+  showTeacherManagementHome();
+});
+elements.assignmentCourseList.addEventListener("change", () => {
+  elements.saveAssignmentsButton.disabled = !elements.assignmentTeacher.value;
+});
+elements.createTeacherForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const courseIds = [...elements.createTeacherCourseList.querySelectorAll("input:checked")]
+    .map((checkbox) => Number(checkbox.value));
+  if (!courseIds.length) {
+    notify("Selecciona al menos un curso para el docente.", true);
+    return;
+  }
+  setBusy(elements.createTeacherSubmit, true, "Registrando...");
+  try {
+    const teacher = await api("/admin/teachers", {
+      method: "POST",
+      body: JSON.stringify({
+        full_name: $("#teacher-full-name").value.trim(),
+        username: $("#teacher-username").value.trim(),
+        phone_number: $("#teacher-phone").value.trim() || null,
+        email: $("#teacher-email").value.trim(),
+        course_ids: courseIds,
+      }),
+    });
+    const { temporary_password: temporaryPassword, ...teacherDetails } = teacher;
+    state.teachers = [...state.teachers, teacherDetails];
+    elements.createTeacherForm.reset();
+    $("#create-teacher-course-search").value = "";
+    renderTeacherAssignments();
+    showTeacherManagementHome();
+    showTemporaryPassword(
+      temporaryPassword,
+      `Cuenta creada para ${teacher.full_name} (${teacher.username}).`,
+    );
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    setBusy(elements.createTeacherSubmit, false);
+    renderTeacherAssignments();
+  }
+});
+
+elements.teacherDirectoryList.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-reset-teacher]");
+  if (!button) return;
+  const teacher = state.teachers.find((item) => item.id === Number(button.dataset.resetTeacher));
+  if (!teacher) return;
+  if (!window.confirm(`Se generará una nueva contraseña temporal para ${teacher.full_name}. La contraseña actual dejará de funcionar y se mostrará una sola vez. ¿Continuar?`)) return;
+  setBusy(button, true, "Generando...");
+  try {
+    const result = await api(`/admin/teachers/${teacher.id}/reset-password`, { method: "POST" });
+    showTemporaryPassword(
+      result.temporary_password,
+      `Contraseña temporal nueva para ${teacher.full_name} (${teacher.username}).`,
+    );
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+});
+
+elements.saveAssignmentsButton.addEventListener("click", async () => {
+  const teacherId = Number(elements.assignmentTeacher.value);
+  if (!teacherId) return;
+  const courseIds = [...elements.assignmentCourseList.querySelectorAll("input:checked")]
+    .map((checkbox) => Number(checkbox.value));
+  setBusy(elements.saveAssignmentsButton, true, "Guardando...");
+  try {
+    const teacher = await api(`/admin/teachers/${teacherId}/courses`, {
+      method: "PUT",
+      body: JSON.stringify({ course_ids: courseIds }),
+    });
+    state.teachers = state.teachers.map((item) => item.id === teacher.id ? teacher : item);
+    renderTeacherAssignments();
+    notify(`Cursos asignados a ${teacher.full_name}.`);
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    setBusy(elements.saveAssignmentsButton, false);
+    elements.saveAssignmentsButton.disabled = !elements.assignmentTeacher.value;
   }
 });
 
@@ -1079,7 +2475,15 @@ $("#enroll-form").addEventListener("submit", async (event) => {
     const student = await api(`/courses/${state.course.id}/students`, { method: "POST", body: JSON.stringify(payload) });
     await refreshCourse();
     form.reset();
-    notify(`${student.display_name} quedó matriculado.`);
+    if (student.temporary_password) {
+      showTemporaryPassword(
+        student.temporary_password,
+        `Acceso creado para ${student.display_name}. La persona deberá cambiar la contraseña al ingresar.`,
+        student.account_username,
+      );
+    } else {
+      notify(`${student.display_name} quedó matriculado con el usuario ${student.account_username}.`);
+    }
   } catch (error) {
     notify(error.message, true);
   } finally {
@@ -1304,14 +2708,28 @@ elements.markSessionPresent.addEventListener("click", async () => {
 elements.rosterFile.addEventListener("change", () => {
   const file = elements.rosterFile.files[0];
   $("#roster-file-label").textContent = file ? `↑ ${file.name}` : "↑ Elegir Excel (.xlsx)";
-  elements.importButton.disabled = !file;
+  elements.importButton.disabled = !file || Boolean(state.course?.roster_imported);
 });
 
 function renderImportResult(result) {
   const parts = [`${result.created} nuevo${result.created === 1 ? "" : "s"}`, `${result.updated} actualizado${result.updated === 1 ? "" : "s"}`, `${result.unchanged} sin cambios`];
   const errors = result.errors.map((error) => `<li>Fila ${error.row}: ${escapeHtml(error.message)}</li>`).join("");
+  const warnings = (result.warnings || []).map((warning) => `<li>Fila ${warning.row}: ${escapeHtml(warning.message)}</li>`).join("");
+  const accounts = (result.created_accounts || []).map((account) => `
+    <li><strong>${escapeHtml(account.full_name)}</strong> · ${escapeHtml(account.email || "Sin correo")}
+      · Usuario: <code>${escapeHtml(account.username)}</code>
+      · Contraseña temporal: <code>${escapeHtml(account.temporary_password)}</code></li>
+  `).join("");
+  const updatedAccounts = (result.updated_accounts || []).map((account) => `
+    <li>Fila ${account.row_number}: <strong>${escapeHtml(account.full_name)}</strong>
+      · nuevo usuario: <code>${escapeHtml(account.username)}</code>
+      · conserva su contraseña actual</li>
+  `).join("");
   elements.importResult.innerHTML = `<strong>${result.total_rows} fila${result.total_rows === 1 ? "" : "s"} leída${result.total_rows === 1 ? "" : "s"}:</strong> ${parts.join(" · ")}`
-    + (errors ? `<p class="import-errors-title">${result.errors.length} fila${result.errors.length === 1 ? "" : "s"} con problemas (no se importaron):</p><ul>${errors}</ul>` : "");
+    + (errors ? `<p class="import-errors-title">${result.errors.length} fila${result.errors.length === 1 ? "" : "s"} con problemas (no se importaron):</p><ul>${errors}</ul>` : "")
+    + (warnings ? `<p class="import-errors-title">Observaciones</p><ul>${warnings}</ul>` : "")
+    + (accounts ? `<div class="import-account-credentials"><p><strong>Contraseñas temporales</strong> · Cópialas ahora; no volverán a mostrarse.</p><button class="button button-quiet" id="copy-import-passwords" type="button">Copiar accesos</button><ul>${accounts}</ul></div>` : "")
+    + (updatedAccounts ? `<div class="import-account-credentials"><p><strong>Usuarios de cuentas existentes</strong> · La contraseña no cambió.</p><ul>${updatedAccounts}</ul></div>` : "");
   elements.importResult.classList.toggle("has-errors", result.errors.length > 0);
   elements.importResult.hidden = false;
 }
@@ -1328,14 +2746,13 @@ elements.importButton.addEventListener("click", async () => {
     await refreshCourse();
     elements.rosterFile.value = "";
     $("#roster-file-label").textContent = "↑ Elegir Excel (.xlsx)";
-    elements.importButton.disabled = true;
     notify(result.errors.length ? "Lista cargada con observaciones." : "Lista cargada correctamente.", result.errors.length > 0);
   } catch (error) {
     elements.importResult.hidden = true;
     notify(error.message, true);
   } finally {
     setBusy(elements.importButton, false);
-    elements.importButton.disabled = !elements.rosterFile.files[0];
+    elements.importButton.disabled = !elements.rosterFile.files[0] || Boolean(state.course?.roster_imported);
   }
 });
 
@@ -1356,8 +2773,25 @@ elements.adminStudentList.addEventListener("click", (event) => {
   $("#edit-ref").value = student.external_ref;
   $("#edit-phone").value = student.phone_number || "";
   $("#edit-email").value = student.email || "";
+  $("#edit-reset-password").hidden = !student.user_id;
   $("#edit-withdraw").textContent = student.active ? "Retirar del curso" : "Reincorporar al curso";
   elements.editDialog.showModal();
+});
+
+$("#edit-reset-password").addEventListener("click", async () => {
+  const student = state.managementStudents.find((item) => item.id === editingStudentId);
+  if (!student?.user_id) return;
+  if (!window.confirm(`¿Generar una nueva contraseña temporal para ${student.display_name}?`)) return;
+  try {
+    const result = await api(`/students/${student.id}/reset-password`, { method: "POST" });
+    showTemporaryPassword(
+      result.temporary_password,
+      `Acceso temporal de ${student.display_name}. Comparte la contraseña por un canal privado.`,
+      student.external_ref,
+    );
+  } catch (error) {
+    notify(error.message, true);
+  }
 });
 
 $("#edit-close").addEventListener("click", () => elements.editDialog.close());
@@ -1397,17 +2831,182 @@ $("#edit-withdraw").addEventListener("click", () => {
     : `${student.display_name} fue retirado del curso.`);
 });
 
+elements.dailyViewButton.addEventListener("click", () => setAppView("daily"));
+elements.cyclesViewButton.addEventListener("click", () => setAppView("cycles"));
+elements.teachersViewButton.addEventListener("click", () => setAppView("teachers"));
+elements.studentAccountsViewButton.addEventListener("click", () => setAppView("studentAccounts"));
+elements.coursesViewButton.addEventListener("click", () => setAppView("createCourse"));
+elements.enrollmentViewButton.addEventListener("click", () => setAppView("enrollment"));
+elements.studentCourseIndex.addEventListener("click", openStudentCourse);
+
+elements.studentCoursesViewButton.addEventListener("click", () => {
+  state.selectedStudentCourse = null;
+  elements.studentCourseIndex.hidden = false;
+  elements.studentCourseDetail.hidden = true;
+  setAppView("studentPortal");
+});
+$("#student-course-back").addEventListener("click", () => {
+  state.selectedStudentCourse = null;
+  elements.studentCourseDetail.hidden = true;
+  elements.studentCourseIndex.hidden = false;
+});
 elements.attendanceTab.addEventListener("click", () => setCourseView("attendance"));
-elements.managementTab.addEventListener("click", () => setCourseView("management"));
 elements.participationsTab.addEventListener("click", () => {
   setCourseView("participations");
   loadParticipationHistory();
 });
+elements.groupsTab.addEventListener("click", () => {
+  setCourseView("groups");
+  if (state.course && !state.groupPlans.length) loadGroupPlans();
+});
+elements.groupPlanSelect.addEventListener("change", () => {
+  if (state.groupPlanEditing && !window.confirm("¿Descartar los cambios que todavía no guardaste?")) {
+    elements.groupPlanSelect.value = String(state.activeGroupPlanId);
+    return;
+  }
+  const plan = state.groupPlans.find((item) => item.id === Number(elements.groupPlanSelect.value));
+  applyGroupPlan(plan || null);
+});
+$("#group-generation-form").addEventListener("submit", generateGroupPlan);
+$("#create-auto-groups-button").addEventListener("click", () => {
+  showGroupSetup("random");
+  elements.groupMaxSize.focus();
+});
+elements.createManualGroupsButton.addEventListener("click", () => {
+  showGroupSetup("manual");
+  elements.manualGroupCount.value = String(Math.min(5, state.students.length || 1));
+  updateManualGroupSizePreview();
+  elements.manualGroupCount.focus();
+});
+document.querySelectorAll("[data-back-to-group-methods]").forEach((button) => {
+  button.addEventListener("click", () => showGroupSetup());
+});
+elements.manualGroupCount.addEventListener("input", updateManualGroupSizePreview);
+elements.prepareManualGroupsButton.addEventListener("click", () => createGroupPlan("manual"));
+elements.groupMaxSize.addEventListener("change", () => {
+  state.groupMaxSize = Number(elements.groupMaxSize.value);
+  renderGroupEditor();
+});
+elements.groupPlanName.addEventListener("input", () => {
+  elements.saveGroupPlanButton.disabled = !state.activeGroupPlanId || Boolean(groupPlanValidation());
+});
+elements.groupEditor.addEventListener("change", (event) => {
+  if (!state.groupPlanEditing) return;
+  const nameInput = event.target.closest("[data-group-name]");
+  if (nameInput) {
+    state.draftGroups[Number(nameInput.dataset.groupName)].name = nameInput.value.trim();
+    renderGroupEditor();
+    return;
+  }
+  const studentSelect = event.target.closest("[data-group-student]");
+  if (!studentSelect) return;
+  const studentId = Number(studentSelect.dataset.groupStudent);
+  const toIndex = Number(studentSelect.value);
+  if (!moveStudentToGroup(studentId, toIndex)) {
+    notify("No se pudo mover al estudiante a ese grupo.", true);
+    renderGroupEditor();
+    return;
+  }
+  renderGroupEditor();
+});
+elements.groupEditor.addEventListener("dragstart", (event) => {
+  if (!state.groupPlanEditing) return;
+  const row = event.target.closest("[data-group-drag]");
+  if (!row || !event.dataTransfer) return;
+  state.draggedStudentId = Number(row.dataset.groupDrag);
+  event.dataTransfer.setData("text/plain", String(state.draggedStudentId));
+  event.dataTransfer.effectAllowed = "move";
+  row.classList.add("is-dragging");
+});
+elements.groupEditor.addEventListener("dragend", (event) => {
+  const row = event.target.closest("[data-group-drag]");
+  if (row) row.classList.remove("is-dragging");
+  state.draggedStudentId = null;
+  elements.groupEditor.querySelectorAll(".is-drop-target").forEach((card) => {
+    card.classList.remove("is-drop-target");
+  });
+});
+elements.groupEditor.addEventListener("dragover", (event) => {
+  if (!state.groupPlanEditing) return;
+  const card = event.target.closest("[data-group-drop]");
+  if (!card || !event.dataTransfer) return;
+  const targetIndex = Number(card.dataset.groupDrop);
+  const studentId = state.draggedStudentId;
+  if (studentId === null) return;
+  const sourceIndex = state.draftGroups.findIndex((group) => group.student_ids.includes(studentId));
+  const isUnassigned = getUnassignedStudents().some((student) => Number(student.id) === studentId);
+  if ((sourceIndex >= 0 || isUnassigned) && targetIndex >= -1 && targetIndex < state.draftGroups.length) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    card.classList.add("is-drop-target");
+  }
+});
+elements.groupEditor.addEventListener("dragleave", (event) => {
+  const card = event.target.closest("[data-group-drop]");
+  if (card && !card.contains(event.relatedTarget)) card.classList.remove("is-drop-target");
+});
+elements.groupEditor.addEventListener("drop", (event) => {
+  if (!state.groupPlanEditing) return;
+  const card = event.target.closest("[data-group-drop]");
+  if (!card || !event.dataTransfer) return;
+  event.preventDefault();
+  const studentId = state.draggedStudentId ?? Number(event.dataTransfer.getData("text/plain"));
+  const targetIndex = Number(card.dataset.groupDrop);
+  if (!moveStudentToGroup(studentId, targetIndex)) return;
+  state.draggedStudentId = null;
+  renderGroupEditor();
+});
+elements.groupEditor.addEventListener("click", (event) => {
+  if (!state.groupPlanEditing) return;
+  const removeButton = event.target.closest("[data-remove-group]");
+  if (!removeButton) return;
+  const index = Number(removeButton.dataset.removeGroup);
+  if (state.draftGroups.length <= 1) {
+    notify("La propuesta debe conservar al menos un grupo.", true);
+    return;
+  }
+  const group = state.draftGroups[index];
+  if (!group) return;
+  const message = group.student_ids.length
+    ? `¿Eliminar el grupo "${group.name}"? Sus ${group.student_ids.length} estudiantes pasarán a "Alumnos sin grupo".`
+    : `¿Eliminar el grupo vacío "${group.name}"?`;
+  if (!window.confirm(message)) return;
+  state.draftGroups.splice(index, 1);
+  state.draftGroups.forEach((group) => {
+    group.student_ids = group.student_ids.map(Number);
+  });
+  renderGroupEditor();
+});
+elements.addGroupButton.addEventListener("click", () => {
+  if (!state.groupPlanEditing) return;
+  if (state.draftGroups.length >= 100) return;
+  state.draftGroups.push({
+    name: nextGroupName(),
+    student_ids: [],
+  });
+  renderGroupEditor();
+});
+elements.saveGroupPlanButton.addEventListener("click", saveGroupPlan);
+elements.deleteGroupPlanButton.addEventListener("click", deleteGroupPlan);
+elements.editGroupPlanButton.addEventListener("click", startGroupPlanEditing);
+elements.cancelGroupEditsButton.addEventListener("click", cancelGroupPlanEditing);
 $("#refresh-participations").addEventListener("click", loadParticipationHistory);
 elements.activeRole.addEventListener("change", () => {
-  state.role = elements.activeRole.value;
-  localStorage.setItem("aula-active-role", state.role);
-  notify(`Rol seleccionado: ${state.role === "administrador" ? "Administrador" : "Profesor"}.`);
+  if (state.authenticatedUser?.role !== "administrador") return;
+  state.viewAs = elements.activeRole.value;
+  if (
+    state.viewAs === "docente"
+    && ["cycles", "teachers", "studentAccounts", "createCourse"].includes(state.appView)
+  ) {
+    state.appView = "enrollment";
+  }
+  setAppView(state.appView);
+  setCourseView(state.courseView);
+  notify(
+    state.viewAs === "docente"
+      ? "Vista Docente (previsualización). Tus permisos reales siguen siendo de administrador."
+      : "Vista Administrador.",
+  );
 });
 
 $("#refresh-button").addEventListener("click", async () => {
@@ -1424,18 +3023,28 @@ elements.dialog.addEventListener("click", (event) => {
   if (event.target === elements.dialog) elements.dialog.close();
 });
 
+$("#temporary-password-close").addEventListener("click", () => {
+  elements.temporaryPasswordDialog.close();
+});
+$("#temporary-password-done").addEventListener("click", () => {
+  elements.temporaryPasswordDialog.close();
+});
+elements.temporaryPasswordDialog.addEventListener("close", clearTemporaryPassword);
+$("#copy-temporary-password").addEventListener("click", async () => {
+  const passwordField = $("#temporary-password-value");
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error("El portapapeles no está disponible.");
+    await navigator.clipboard.writeText(passwordField.value);
+    notify("Contraseña temporal copiada.");
+  } catch {
+    passwordField.select();
+    notify("No se pudo copiar automáticamente. La contraseña quedó seleccionada para copiarla.", true);
+  }
+});
+
 $("#today-label").textContent = new Intl.DateTimeFormat("es", { dateStyle: "long" }).format(new Date());
+setAppView("daily");
 renderRecentCourses();
-state.role = localStorage.getItem("aula-active-role") || "profesor";
-elements.activeRole.value = ["profesor", "administrador"].includes(state.role) ? state.role : "profesor";
-state.role = elements.activeRole.value;
 checkApi();
 setInterval(checkApi, 30000);
-api("/methods").then((response) => {
-  state.methods = response.methods;
-  renderMethodOptions();
-}).catch((error) => notify(error.message, true));
-api("/courses").then((courses) => {
-  state.availableCourses = courses;
-  renderRecentCourses();
-}).catch((error) => notify(`No se pudieron cargar los cursos: ${error.message}`, true));
+initializeAuthentication();

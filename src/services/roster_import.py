@@ -44,6 +44,7 @@ from openpyxl import load_workbook
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_ROWS = 5000
 MAX_FIELD_LENGTH = 255
+MAX_USERNAME_LENGTH = 120
 
 _CODE_HEADERS = {"codigo", "matricula", "externalref", "dni", "id", "codigodematricula"}
 _NAME_HEADERS = {
@@ -51,7 +52,11 @@ _NAME_HEADERS = {
     "alumnos", "displayname",
 }
 _PHONE_HEADERS = {"telefono", "celular", "movil", "phone", "phonenumber", "numerotelefono"}
-_EMAIL_HEADERS = {"correo", "email", "emailaddress", "correoelectronico"}
+_EMAIL_HEADERS = {"correo", "email", "emailaddress", "correoelectronico", "correouni"}
+_ROSTER_NUMBER_HEADERS = {"nro", "numero", "numerodeorden"}
+_SPECIALTY_HEADERS = {"esp", "especialidad", "specialty"}
+_CONDITION_HEADERS = {"condicion", "condition", "estadomatricula"}
+_REPEATED_HEADERS = {"vecesrepetidas", "vecesrepetido", "repeticiones", "timesrepeated"}
 _COURSE_CODE_PATTERN = re.compile(r"\b[A-Z]{1,10}[- ]?\d{1,5}[A-Z]{0,3}\b", re.IGNORECASE)
 _COURSE_NAME_PATTERN = re.compile(
     r"\b(?:curso|asignatura|course|subject)\s*[:\-]\s*\S+", re.IGNORECASE
@@ -69,6 +74,10 @@ class RosterRow:
     display_name: str
     phone_number: Optional[str] = None
     email: Optional[str] = None
+    roster_number: Optional[str] = None
+    specialty: Optional[str] = None
+    student_condition: Optional[str] = None
+    times_repeated: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -103,8 +112,9 @@ def _cell_text(value: Any) -> str:
 
 def _header_columns(
     cells: tuple,
-) -> tuple[Optional[int], Optional[int], Optional[int], Optional[int]]:
+) -> tuple[Optional[int], ...]:
     code_col = name_col = phone_col = email_col = None
+    roster_number_col = specialty_col = condition_col = repeated_col = None
     for index, cell in enumerate(cells):
         key = _normalize_header(cell)
         if code_col is None and key in _CODE_HEADERS:
@@ -115,7 +125,22 @@ def _header_columns(
             phone_col = index
         if email_col is None and key in _EMAIL_HEADERS:
             email_col = index
-    return code_col, name_col, phone_col, email_col
+        if roster_number_col is None and key in _ROSTER_NUMBER_HEADERS:
+            roster_number_col = index
+        if specialty_col is None and key in _SPECIALTY_HEADERS:
+            specialty_col = index
+        if condition_col is None and key in _CONDITION_HEADERS:
+            condition_col = index
+        if repeated_col is None and key in _REPEATED_HEADERS:
+            repeated_col = index
+    return (
+        code_col, name_col, phone_col, email_col, roster_number_col,
+        specialty_col, condition_col, repeated_col,
+    )
+
+
+def _optional_cell(cells: tuple, column: Optional[int]) -> Optional[str]:
+    return _cell_text(cells[column]) or None if column is not None and column < len(cells) else None
 
 
 def _has_course_context(rows: List[tuple]) -> bool:
@@ -156,10 +181,11 @@ def parse_roster_xlsx(data: bytes) -> RosterParseResult:
         row_iter = sheet.iter_rows(values_only=True)
 
         header_cells: Optional[tuple] = None
-        code_col = name_col = phone_col = email_col = None
+        columns = (None,) * 8
         preamble_rows: List[tuple] = []
         for header_row_number, cells in enumerate(row_iter, start=1):
-            code_col, name_col, phone_col, email_col = _header_columns(cells)
+            columns = _header_columns(cells)
+            code_col, name_col = columns[:2]
             if code_col is not None and name_col is not None:
                 header_cells = cells
                 break
@@ -183,16 +209,13 @@ def parse_roster_xlsx(data: bytes) -> RosterParseResult:
         for current_row, cells in enumerate(row_iter, start=header_row_number + 1):
             code = _cell_text(cells[code_col]) if code_col < len(cells) else ""
             name = _cell_text(cells[name_col]) if name_col < len(cells) else ""
-            phone = (
-                _cell_text(cells[phone_col]) or None
-                if phone_col is not None and phone_col < len(cells)
-                else None
-            )
-            email = (
-                _cell_text(cells[email_col]) or None
-                if email_col is not None and email_col < len(cells)
-                else None
-            )
+            _, _, phone_col, email_col, roster_number_col, specialty_col, condition_col, repeated_col = columns
+            phone = _optional_cell(cells, phone_col)
+            email = _optional_cell(cells, email_col)
+            roster_number = _optional_cell(cells, roster_number_col)
+            specialty = _optional_cell(cells, specialty_col)
+            student_condition = _optional_cell(cells, condition_col)
+            times_repeated = _optional_cell(cells, repeated_col)
             if not code and not name:
                 continue  # fila en blanco: se ignora sin reportarla
             result.total_rows += 1
@@ -202,18 +225,29 @@ def parse_roster_xlsx(data: bytes) -> RosterParseResult:
             problem = None
             if not code:
                 problem = "Falta el código del estudiante."
+            elif len(code) > MAX_USERNAME_LENGTH:
+                problem = f"El código del estudiante admite hasta {MAX_USERNAME_LENGTH} caracteres."
             elif not name:
                 problem = "Falta el nombre del estudiante."
             elif (
-                len(code) > MAX_FIELD_LENGTH
-                or len(name) > MAX_FIELD_LENGTH
+                len(name) > MAX_FIELD_LENGTH
                 or (phone is not None and len(phone) > 32)
                 or (email is not None and len(email) > MAX_FIELD_LENGTH)
+                or any(
+                    value is not None and len(value) > MAX_FIELD_LENGTH
+                    for value in (roster_number, specialty, student_condition, times_repeated)
+                )
             ):
                 problem = (
-                    f"El código, nombre y correo admiten hasta {MAX_FIELD_LENGTH} caracteres "
-                    "y el teléfono hasta 32."
+                    f"El nombre, correo y datos de roster admiten hasta {MAX_FIELD_LENGTH} "
+                    "caracteres y el teléfono hasta 32."
                 )
+            elif email is not None and (
+                any(character.isspace() for character in email)
+                or email.count("@") != 1
+                or "." not in email.rsplit("@", 1)[1]
+            ):
+                problem = "El correo electrónico no tiene un formato válido."
             elif code in seen:
                 problem = f"El código {code!r} ya aparece en la fila {seen[code]}."
             if problem:
@@ -221,7 +255,12 @@ def parse_roster_xlsx(data: bytes) -> RosterParseResult:
                 continue
 
             seen[code] = current_row
-            result.rows.append(RosterRow(current_row, code, name, phone, email))
+            result.rows.append(
+                RosterRow(
+                    current_row, code, name, phone, email, roster_number, specialty,
+                    student_condition, times_repeated,
+                )
+            )
 
         if result.total_rows == 0:
             raise RosterFormatError("El Excel solo tiene encabezado: no hay estudiantes para cargar.")

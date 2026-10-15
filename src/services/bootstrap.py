@@ -26,9 +26,13 @@ import yaml
 # registrarlas en SelectorRegistry (ver src/strategies/__init__.py).
 import src.strategies  # noqa: F401
 from src.domain.events import EventBus, logging_subscriber, DecisionRunCompleted
-from src.repositories.sqlalchemy.models import Base
+from src.repositories.sqlalchemy.models import Base, RoleORM, UserORM
 from src.repositories.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork, build_session_factory
 from src.services.fairness_service import FairnessMetricsService
+from src.services.auth_service import (
+    AuthService, ROLE_ADMIN, ROLE_STUDENT, ROLE_TEACHER, hash_password,
+)
+from src.services.group_planning_service import GroupPlanningService
 from src.services.roster_service import RosterService
 from src.services.selection_service import SelectionService
 from src.services.session_service import SessionService
@@ -74,6 +78,8 @@ class AppContext:
     fairness_service: FairnessMetricsService
     roster_service: RosterService
     session_service: SessionService
+    auth_service: AuthService
+    group_planning_service: GroupPlanningService
 
 
 # Columnas agregadas a tablas que ya existían antes del Sprint 1. `create_all`
@@ -83,9 +89,20 @@ class AppContext:
 # README, "De aquí a producción real"). Sintaxis válida en SQLite >= 3.23 y
 # PostgreSQL.
 _ADDED_COLUMNS = [
+    ("academic_cycles", "starts_on", "DATE"),
+    ("courses", "cycle_id", "INTEGER"),
+    ("courses", "roster_imported_at", "TIMESTAMP WITH TIME ZONE"),
     ("students", "active", "BOOLEAN NOT NULL DEFAULT TRUE"),
     ("students", "phone_number", "VARCHAR(32)"),
     ("students", "email", "VARCHAR(255)"),
+    ("students", "user_id", "INTEGER REFERENCES users(id)"),
+    ("students", "roster_number", "VARCHAR(255)"),
+    ("students", "specialty", "VARCHAR(255)"),
+    ("students", "student_condition", "VARCHAR(255)"),
+    ("students", "times_repeated", "VARCHAR(255)"),
+    ("users", "phone_number", "VARCHAR(32)"),
+    ("users", "email", "VARCHAR(255)"),
+    ("users", "must_change_password", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ("class_sessions", "session_date", "DATE"),
     ("class_sessions", "topic", "VARCHAR(255)"),
 ]
@@ -114,6 +131,42 @@ def _ensure_columns(engine) -> None:
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
 
+def _provision_initial_admin(session_factory) -> None:
+    username = os.environ.get("ADMIN_USERNAME")
+    password = os.environ.get("ADMIN_PASSWORD")
+    if username is None and password is None:
+        return
+
+    with session_factory() as session:
+        admin_role = session.query(RoleORM).filter_by(name=ROLE_ADMIN).one()
+        existing_admin = session.query(UserORM).filter_by(role_id=admin_role.id).first()
+        if existing_admin:
+            return
+
+        if username is None or password is None:
+            raise RuntimeError("ADMIN_USERNAME y ADMIN_PASSWORD deben configurarse juntos.")
+
+        username = username.strip()
+        if not username:
+            raise RuntimeError("ADMIN_USERNAME no puede estar vacío.")
+
+        if session.query(UserORM).filter_by(username=username).first():
+            raise RuntimeError(
+                "ADMIN_USERNAME ya pertenece a una cuenta que no es Administrador."
+            )
+
+        session.add(
+            UserORM(
+                username=username,
+                full_name="Administrador",
+                password_hash=hash_password(password),
+                role_id=admin_role.id,
+            )
+        )
+        session.commit()
+        logging.info("Se creó la cuenta inicial de Administrador desde variables de entorno.")
+
+
 def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bool = True) -> AppContext:
     """Construye el contexto completo de la aplicación para producción
     (respaldado por SQLAlchemy).
@@ -137,6 +190,14 @@ def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bo
         # funcionando sin perder datos.
         _ensure_columns(session_factory.engine)
         Base.metadata.create_all(session_factory.engine)
+        with session_factory() as session:
+            existing_roles = set(session.query(RoleORM.name).all())
+            existing_names = {name for (name,) in existing_roles}
+            for role_name in (ROLE_ADMIN, ROLE_TEACHER, ROLE_STUDENT):
+                if role_name not in existing_names:
+                    session.add(RoleORM(name=role_name))
+            session.commit()
+        _provision_initial_admin(session_factory)
 
     event_bus = EventBus()
     event_bus.subscribe(DecisionRunCompleted, logging_subscriber)
@@ -152,4 +213,6 @@ def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bo
         fairness_service=FairnessMetricsService(uow_factory),
         roster_service=RosterService(uow_factory),
         session_service=SessionService(uow_factory),
+        auth_service=AuthService(session_factory),
+        group_planning_service=GroupPlanningService(uow_factory),
     )
