@@ -22,10 +22,14 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from src.domain.entities import (
     AttendanceRecord,
+    AcademicCycle,
     ClassSession,
     Course,
+    CourseGroupPlan,
     DecisionRun,
     Student,
+    StudentAccount,
+    StudentGroup,
     StudentParticipation,
     SyllabusEntry,
 )
@@ -42,6 +46,10 @@ class DuplicateStudentError(ValueError):
     `external_ref`."""
 
 
+class DuplicateAcademicCycleError(ValueError):
+    """Ya existe un ciclo académico con ese nombre."""
+
+
 class ParticipationDecisionNotFoundError(ValueError):
     """La decisión no existe o no pertenece al curso indicado."""
 
@@ -54,7 +62,7 @@ class CourseRepository(ABC):
     """Persistencia de cursos (el contenedor de estudiantes)."""
 
     @abstractmethod
-    def create(self, name: str) -> Course: ...
+    def create(self, name: str, cycle_id: Optional[int] = None) -> Course: ...
 
     @abstractmethod
     def get(self, course_id: int) -> Optional[Course]: ...
@@ -64,6 +72,47 @@ class CourseRepository(ABC):
         """Todos los cursos, del más antiguo al más reciente (HU-S1: el
         docente elige el curso sobre el que inicia la sesión)."""
         ...
+
+    @abstractmethod
+    def claim_roster_import(self, course_id: int) -> bool:
+        """Atomically claims the course's one roster import for its cycle."""
+        ...
+
+
+class AcademicCycleRepository(ABC):
+    """Persistencia de ciclos académicos que agrupan cursos."""
+
+    @abstractmethod
+    def create(self, name: str, starts_on: Optional[date] = None) -> AcademicCycle: ...
+
+    @abstractmethod
+    def get(self, cycle_id: int) -> Optional[AcademicCycle]: ...
+
+    @abstractmethod
+    def list_all(self) -> List[AcademicCycle]: ...
+
+    @abstractmethod
+    def set_starts_on(self, cycle_id: int, starts_on: date) -> Optional[AcademicCycle]: ...
+
+
+class StudentAccountRepository(ABC):
+    @abstractmethod
+    def get_by_email(self, email: str) -> Optional[StudentAccount]: ...
+
+    @abstractmethod
+    def get_by_username(self, username: str) -> Optional[StudentAccount]: ...
+
+    @abstractmethod
+    def update_username(self, account_id: int, username: str) -> StudentAccount: ...
+
+    @abstractmethod
+    def create_student(
+        self,
+        username: str,
+        full_name: str,
+        email: Optional[str],
+        password_hash: str,
+    ) -> StudentAccount: ...
 
 
 class StudentRepository(ABC):
@@ -83,6 +132,11 @@ class StudentRepository(ABC):
         beta_init: float,
         phone_number: Optional[str] = None,
         email: Optional[str] = None,
+        user_id: Optional[int] = None,
+        roster_number: Optional[str] = None,
+        specialty: Optional[str] = None,
+        student_condition: Optional[str] = None,
+        times_repeated: Optional[str] = None,
     ) -> Student:
         """Devuelve el estudiante si ya existe (por `external_ref` dentro
         del curso); si no, lo crea junto con su `StudentState` inicial
@@ -102,6 +156,11 @@ class StudentRepository(ABC):
         beta_init: float,
         phone_number: Optional[str] = None,
         email: Optional[str] = None,
+        user_id: Optional[int] = None,
+        roster_number: Optional[str] = None,
+        specialty: Optional[str] = None,
+        student_condition: Optional[str] = None,
+        times_repeated: Optional[str] = None,
     ) -> Tuple[Student, str]:
         """Crea o actualiza un estudiante a partir de una fila del Excel
         (HU-C1). A diferencia de `get_or_create`, si el estudiante ya
@@ -322,6 +381,37 @@ class ParticipationRepository(ABC):
         ...
 
 
+class GroupPlanRepository(ABC):
+    """Propuestas guardadas de distribución de estudiantes en grupos."""
+
+    @abstractmethod
+    def create(
+        self,
+        course_id: int,
+        name: str,
+        max_group_size: int,
+        groups: List[StudentGroup],
+    ) -> CourseGroupPlan: ...
+
+    @abstractmethod
+    def get(self, plan_id: int) -> Optional[CourseGroupPlan]: ...
+
+    @abstractmethod
+    def list_by_course(self, course_id: int) -> List[CourseGroupPlan]: ...
+
+    @abstractmethod
+    def update(
+        self,
+        plan_id: int,
+        name: str,
+        max_group_size: int,
+        groups: List[StudentGroup],
+    ) -> Optional[CourseGroupPlan]: ...
+
+    @abstractmethod
+    def delete(self, plan_id: int) -> bool: ...
+
+
 class UnitOfWork(ABC):
     """Agrupa todos los repositorios de una transacción y garantiza que
     se confirman o se descartan juntos (patrón Unit of Work).
@@ -341,6 +431,7 @@ class UnitOfWork(ABC):
     """
 
     courses: CourseRepository
+    cycles: AcademicCycleRepository
     students: StudentRepository
     student_states: StudentStateRepository
     class_sessions: ClassSessionRepository
@@ -349,6 +440,8 @@ class UnitOfWork(ABC):
     decision_runs: DecisionRunRepository
     events: EventRepository
     participations: ParticipationRepository
+    group_plans: GroupPlanRepository
+    student_accounts: StudentAccountRepository
 
     @abstractmethod
     def __enter__(self) -> "UnitOfWork": ...

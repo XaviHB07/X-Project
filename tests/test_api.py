@@ -7,6 +7,10 @@ tablas y el ciclo completo request -> transacción -> respuesta.
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+
+from src.repositories.sqlalchemy.models import RoleORM, UserORM
+from src.services.auth_service import hash_password
 
 
 @pytest.fixture()
@@ -16,10 +20,40 @@ def client(monkeypatch, tmp_path):
     # `services/bootstrap.load_config`): así cada test usa su propia
     # base de datos SQLite temporal y no interfiere con los demás.
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+    monkeypatch.delenv("ADMIN_USERNAME", raising=False)
+    monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
 
     from src.api.main import app
 
     with TestClient(app) as test_client:
+        auth_service = app.state.app_context.auth_service
+        with auth_service._session_factory() as session:
+            administrator_role_id = session.execute(
+                select(RoleORM.id).where(RoleORM.name == "administrador")
+            ).scalar_one()
+            teacher_role_id = session.execute(
+                select(RoleORM.id).where(RoleORM.name == "docente")
+            ).scalar_one()
+            session.add_all([
+                UserORM(
+                    username="admin",
+                    full_name="Admin Test",
+                    password_hash=hash_password("test-admin-password-123"),
+                    role_id=administrator_role_id,
+                ),
+                UserORM(
+                    username="teacher",
+                    full_name="Teacher Test",
+                    password_hash=hash_password("test-teacher-password-123"),
+                    role_id=teacher_role_id,
+                ),
+            ])
+            session.commit()
+        login = test_client.post(
+            "/auth/login",
+            json={"username": "admin", "password": "test-admin-password-123"},
+        )
+        assert login.status_code == 200
         yield test_client
 
 
@@ -32,31 +66,87 @@ class TestInfraestructura:
         assert page.status_code == 200
         assert page.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
         assert 'id="course-title"' in page.text
-        assert "cargar el Excel (.xlsx)" in page.text
+        assert "Los ciclos académicos y la matrícula de estudiantes" in page.text
         assert script.status_code == 200
         assert script.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
         assert "/sessions/select" in script.text
         assert 'api("/courses")' in script.text
         assert styles.status_code == 200
         assert 'id="management-view"' in page.text
-        assert "Administrar estudiantes" in page.text
+        assert "Ciclos académicos" in page.text
+        assert "Matrícula de estudiantes" in page.text
+        assert 'id="cycles-setup-page"' in page.text
+        assert 'id="teacher-management-page"' in page.text
+        assert 'id="teachers-view-button"' in page.text
+        assert 'id="academic-setup-page"' in page.text
+        assert 'id="course-creation-page"' in page.text
+        assert 'id="course-creation-list"' in page.text
+        assert 'id="course-creation-list-title">Cursos existentes</h3>' in page.text
+        assert 'id="courses-view-button"' in page.text
+        assert 'id="enrollment-view-button"' in page.text
+        assert 'id="create-cycle-form"' in page.text
+        assert 'id="create-cycle-form"' in page.text[:page.text.index('id="academic-setup-page"')]
+        assert page.text.index('id="create-course-form"') > page.text.index('id="academic-setup-page"')
+        assert 'elements.dailyViewButton.hidden = isAdminView' in script.text
+        assert 'id="management-tab"' not in page.text
+        assert 'id="groups-tab"' in page.text
+        assert 'id="groups-view"' in page.text
+        assert 'id="group-generation-form"' in page.text
+        assert 'id="create-manual-groups-button"' in page.text
         assert 'id="active-role"' in page.text
         assert 'id="mark-session-present-button"' in page.text
-        assert '<option value="profesor">Profesor</option>' in page.text
+        assert '<option value="docente">Docente</option>' in page.text
         assert '<option value="administrador">Administrador</option>' in page.text
         assert 'data-edit-id="${id}"' in script.text
+        assert '<details class="teacher-directory-item">' in script.text
+        assert "function renderCourseCreation()" in script.text
+        assert 'id="password-change-form"' in page.text
+        assert 'id="create-teacher-form"' in page.text
+        assert 'id="create-teacher-form" class="teacher-create-form" hidden' in page.text
+        assert 'id="register-teacher-button"' in page.text
+        assert 'id="create-teacher-course-search"' in page.text
+        assert 'id="assignment-course-search"' in page.text
+        assert 'id="daily-course-picker"' in page.text
+        assert 'id="daily-cycle"' in page.text
+        assert 'id="daily-course"' in page.text
+        assert 'id="enrollment-course"' in page.text
+        assert "/auth/change-password" in script.text
+
+    def test_api_requires_authenticated_account(self, client: TestClient):
+        client.cookies.clear()
+        assert client.get("/courses").status_code == 401
+        assert client.get("/auth/me").status_code == 401
+
+    def test_invalid_login_is_rejected(self, client: TestClient):
+        client.cookies.clear()
+        response = client.post(
+            "/auth/login", json={"username": "admin", "password": "wrong-password"}
+        )
+        assert response.status_code == 401
+
+    def test_logout_revokes_session_and_accepts_expired_session(self, client: TestClient):
+        response = client.post("/auth/logout")
+        assert response.status_code == 204
+        assert client.get("/auth/me").status_code == 401
+
+        client.cookies.clear()
+        expired_session_logout = client.post("/auth/logout")
+        assert expired_session_logout.status_code == 204
 
     def test_health(self, client: TestClient):
         resp = client.get("/health")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
 
-    def test_student_management_is_available_without_role_credentials(self, client: TestClient):
+    def test_administrator_can_manage_student_roster(self, client: TestClient):
         course_id = new_course(client)
         created = client.post(
             f"/courses/{course_id}/students",
             json={"external_ref": "A1", "display_name": "Ana"},
         )
+        assert created.json()["account_username"] == "A1"
+        assert created.json()["temporary_password"]
+        assert created.headers["cache-control"] == "no-store"
         student_id = created.json()["id"]
         updated = client.patch(
             f"/students/{student_id}", json={"display_name": "Ana María"}
@@ -72,6 +162,152 @@ class TestInfraestructura:
         assert resp.status_code == 200
         methods = set(resp.json()["methods"])
         assert {"roulette", "weighted_softmax", "bayesian_fairness"}.issubset(methods)
+
+
+class TestCiclosAcademicos:
+    def test_create_and_list_cycles_and_associate_course(self, client: TestClient):
+        created = client.post("/cycles", json={"name": "  2026-II  "})
+        assert created.status_code == 201
+        cycle = created.json()
+        assert cycle["name"] == "2026-II"
+        assert client.get("/cycles").json() == [cycle]
+
+        course = client.post(
+            "/courses", json={"name": "Cálculo", "cycle_id": cycle["id"]}
+        )
+        assert course.status_code == 201
+        assert course.json()["cycle_id"] == cycle["id"]
+        assert course.json()["roster_imported"] is False
+
+    def test_cycle_start_date_can_be_created_and_updated(self, client: TestClient):
+        cycle = client.post(
+            "/cycles", json={"name": "2029-I", "starts_on": "2029-03-01"}
+        )
+        assert cycle.status_code == 201
+        assert cycle.json()["starts_on"] == "2029-03-01"
+        updated = client.patch(
+            f"/cycles/{cycle.json()['id']}", json={"starts_on": "2029-03-08"}
+        )
+        assert updated.status_code == 200
+        assert updated.json()["starts_on"] == "2029-03-08"
+
+    def test_duplicate_cycle_name_returns_conflict(self, client: TestClient):
+        assert client.post("/cycles", json={"name": "2026-II"}).status_code == 201
+        duplicate = client.post("/cycles", json={"name": " 2026-II "})
+        assert duplicate.status_code == 409
+
+    def test_course_rejects_unknown_cycle(self, client: TestClient):
+        response = client.post(
+            "/courses", json={"name": "Curso", "cycle_id": 999}
+        )
+        assert response.status_code == 404
+
+    def test_admin_assigns_courses_to_teacher_and_teacher_is_scoped(self, client: TestClient):
+        cycle = client.post("/cycles", json={"name": "2027-I"}).json()
+        assigned_course = client.post(
+            "/courses", json={"name": "Asignado", "cycle_id": cycle["id"]}
+        ).json()
+        unassigned_course = client.post(
+            "/courses", json={"name": "No asignado", "cycle_id": cycle["id"]}
+        ).json()
+
+        teacher_list = client.get("/admin/teachers")
+        assert teacher_list.status_code == 200
+        teacher_id = teacher_list.json()[0]["id"]
+        assigned = client.put(
+            f"/admin/teachers/{teacher_id}/courses",
+            json={"course_ids": [assigned_course["id"]]},
+        )
+        assert assigned.status_code == 200
+        assert assigned.json()["course_ids"] == [assigned_course["id"]]
+
+        client.cookies.clear()
+        login = client.post(
+            "/auth/login",
+            json={"username": "teacher", "password": "test-teacher-password-123"},
+        )
+        assert login.status_code == 200
+        assert [item["id"] for item in client.get("/courses").json()] == [assigned_course["id"]]
+        assert client.get(f"/courses/{assigned_course['id']}").status_code == 200
+        assert client.get(f"/courses/{unassigned_course['id']}").status_code == 403
+        assert client.get(f"/courses/{assigned_course['id']}/group-plans").status_code == 200
+        assert client.get(f"/courses/{unassigned_course['id']}/group-plans").status_code == 403
+        assert client.post("/cycles", json={"name": "No autorizado"}).status_code == 403
+        assert client.post("/courses", json={"name": "No autorizado"}).status_code == 403
+        assert client.get("/admin/teachers").status_code == 403
+
+    def test_admin_creates_teacher_and_reset_requires_password_change(
+        self, client: TestClient
+    ):
+        cycle = client.post("/cycles", json={"name": "2028-I"}).json()
+        course = client.post(
+            "/courses", json={"name": "Matemática", "cycle_id": cycle["id"]}
+        ).json()
+        created = client.post(
+            "/admin/teachers",
+            json={
+                "username": "docente-nuevo",
+                "full_name": "Docente Nuevo",
+                "phone_number": "555-0102",
+                "email": "docente@example.com",
+                "course_ids": [course["id"]],
+            },
+        )
+        assert created.status_code == 201
+        teacher = created.json()
+        assert teacher["course_ids"] == [course["id"]]
+        assert teacher["phone_number"] == "555-0102"
+        assert teacher["email"] == "docente@example.com"
+        assert created.headers["cache-control"] == "no-store"
+        first_temporary_password = teacher.pop("temporary_password")
+        assert len(first_temporary_password) >= 12
+        assert "temporary_password" not in client.get("/admin/teachers").text
+
+        client.cookies.clear()
+        login = client.post(
+            "/auth/login",
+            json={
+                "username": "docente-nuevo",
+                "password": first_temporary_password,
+            },
+        )
+        assert login.status_code == 200
+        assert login.json()["must_change_password"] is True
+        assert client.get("/courses").status_code == 403
+        changed = client.post(
+            "/auth/change-password",
+            json={"new_password": "docente-password-final-123"},
+        )
+        assert changed.status_code == 200
+        assert changed.json()["must_change_password"] is False
+        assert [item["id"] for item in client.get("/courses").json()] == [course["id"]]
+
+        client.cookies.clear()
+        client.post(
+            "/auth/login",
+            json={"username": "admin", "password": "test-admin-password-123"},
+        )
+        reset = client.post(f"/admin/teachers/{teacher['id']}/reset-password")
+        assert reset.status_code == 200
+        assert reset.headers["cache-control"] == "no-store"
+        second_temporary_password = reset.json()["temporary_password"]
+
+        client.cookies.clear()
+        reset_login = client.post(
+            "/auth/login",
+            json={
+                "username": "docente-nuevo",
+                "password": second_temporary_password,
+            },
+        )
+        assert reset_login.status_code == 200
+        assert reset_login.json()["must_change_password"] is True
+        assert client.get("/courses").status_code == 403
+        final_change = client.post(
+            "/auth/change-password",
+            json={"new_password": "docente-password-final-456"},
+        )
+        assert final_change.status_code == 200
 
 
 class TestFlujoCompleto:
@@ -119,6 +355,169 @@ class TestFlujoCompleto:
         assert metrics["n_students"] == 6
         assert 0.0 <= metrics["gini"] <= 1.0
 
+
+class TestPropuestasDeGrupos:
+    def test_generate_edit_and_reload_group_plan(self, client: TestClient):
+        course_id = new_course(client, "Curso con grupos")
+        student_ids = [
+            client.post(
+                f"/courses/{course_id}/students",
+                json={"external_ref": f"G{i}", "display_name": f"Estudiante {i}"},
+            ).json()["id"]
+            for i in range(7)
+        ]
+
+        generated = client.post(
+            f"/courses/{course_id}/group-plans",
+            json={"max_group_size": 3, "name": "Proyecto inicial"},
+        )
+        assert generated.status_code == 201
+        original = generated.json()
+        assert original["name"] == "Proyecto inicial"
+        assert sorted(len(group["student_ids"]) for group in original["groups"]) == [2, 2, 3]
+        assert sorted(
+            student_id for group in original["groups"] for student_id in group["student_ids"]
+        ) == sorted(student_ids)
+
+        groups = original["groups"]
+        moved_students = groups[0]["student_ids"][:2]
+        groups[0]["student_ids"] = groups[0]["student_ids"][2:]
+        groups[1]["student_ids"].extend(moved_students)
+        groups[0]["name"] = "Equipo A"
+        groups[1]["name"] = "Equipo B"
+        updated = client.put(
+            f"/courses/{course_id}/group-plans/{original['id']}",
+            json={
+                "name": "Proyecto revisado",
+                "max_group_size": 3,
+                "groups": groups,
+            },
+        )
+        assert updated.status_code == 200
+        assert updated.json()["name"] == "Proyecto revisado"
+        assert updated.json()["groups"][0]["name"] == "Equipo A"
+        assert max(len(group["student_ids"]) for group in updated.json()["groups"]) > 3
+
+        reloaded = client.get(f"/courses/{course_id}/group-plans")
+        assert reloaded.status_code == 200
+        assert reloaded.json()[0]["id"] == original["id"]
+        assert reloaded.json()[0]["groups"] == updated.json()["groups"]
+
+    def test_edit_rejects_duplicates_and_allows_unassigned_students(
+        self, client: TestClient
+    ):
+        course_id = new_course(client, "Curso grupos inválidos")
+        student_ids = [
+            client.post(
+                f"/courses/{course_id}/students",
+                json={"external_ref": f"GX{i}", "display_name": f"Persona {i}"},
+            ).json()["id"]
+            for i in range(3)
+        ]
+        plan = client.post(
+            f"/courses/{course_id}/group-plans", json={"max_group_size": 2}
+        ).json()
+        groups = plan["groups"]
+        groups[1]["student_ids"].append(groups[0]["student_ids"][0])
+
+        duplicate = client.put(
+            f"/courses/{course_id}/group-plans/{plan['id']}",
+            json={
+                "name": "Distribución inválida",
+                "max_group_size": 2,
+                "groups": groups,
+            },
+        )
+        assert duplicate.status_code == 400
+
+        missing = client.put(
+            f"/courses/{course_id}/group-plans/{plan['id']}",
+            json={
+                "name": "Distribución incompleta",
+                "max_group_size": 2,
+                "groups": [
+                    {"name": "Grupo 1", "student_ids": student_ids[:2]},
+                    {"name": "Grupo 2", "student_ids": []},
+                ],
+            },
+        )
+        assert missing.status_code == 200
+        assert student_ids[2] not in [
+            student_id
+            for group in missing.json()["groups"]
+            for student_id in group["student_ids"]
+        ]
+
+        unknown = client.put(
+            f"/courses/{course_id}/group-plans/{plan['id']}",
+            json={
+                "name": "Estudiante externo",
+                "max_group_size": 2,
+                "groups": [
+                    {"name": "Grupo 1", "student_ids": [999999]},
+                    {"name": "Grupo 2", "student_ids": []},
+                ],
+            },
+        )
+        assert unknown.status_code == 400
+
+    def test_generate_requires_students_and_plans_can_be_deleted(self, client: TestClient):
+        course_id = new_course(client, "Curso grupos vacío")
+        empty = client.post(
+            f"/courses/{course_id}/group-plans", json={"max_group_size": 3}
+        )
+        assert empty.status_code == 400
+
+        client.post(
+            f"/courses/{course_id}/students",
+            json={"external_ref": "ONE", "display_name": "Única"},
+        )
+        plan = client.post(
+            f"/courses/{course_id}/group-plans", json={"max_group_size": 3}
+        ).json()
+        deleted = client.delete(f"/courses/{course_id}/group-plans/{plan['id']}")
+        assert deleted.status_code == 204
+        assert client.get(f"/courses/{course_id}/group-plans").json() == []
+
+    def test_manual_group_plan_uses_roster_and_is_saved(self, client: TestClient):
+        course_id = new_course(client, "Curso grupos manuales")
+        student_ids = [
+            client.post(
+                f"/courses/{course_id}/students",
+                json={"external_ref": f"GM{i}", "display_name": f"Persona {i}"},
+            ).json()["id"]
+            for i in range(5)
+        ]
+
+        response = client.post(
+            f"/courses/{course_id}/group-plans/manual",
+            json={"group_count": 3, "name": "Grupos elegidos"},
+        )
+        assert response.status_code == 201
+        plan = response.json()
+        assert plan["name"] == "Grupos elegidos"
+        assert [group["student_ids"] for group in plan["groups"]] == [
+            student_ids[:2], student_ids[2:4], student_ids[4:]
+        ]
+        assert plan["max_group_size"] == 2
+        saved = client.get(f"/courses/{course_id}/group-plans").json()
+        assert len(saved) == 1
+        assert saved[0]["name"] == plan["name"]
+        assert saved[0]["groups"] == plan["groups"]
+
+    def test_manual_group_plan_rejects_more_groups_than_students(self, client: TestClient):
+        course_id = new_course(client, "Curso con pocos estudiantes")
+        client.post(
+            f"/courses/{course_id}/students",
+            json={"external_ref": "GM1", "display_name": "Persona 1"},
+        )
+
+        response = client.post(
+            f"/courses/{course_id}/group-plans/manual",
+            json={"group_count": 2},
+        )
+        assert response.status_code == 400
+
     def test_enroll_is_idempotent_by_external_ref(self, client: TestClient):
         course_id = client.post("/courses", json={"name": "Curso idempotencia"}).json()["id"]
 
@@ -132,6 +531,9 @@ class TestFlujoCompleto:
         )
 
         assert first.json()["id"] == second.json()["id"]
+        assert first.json()["account_username"] == "dup-1"
+        assert first.json()["temporary_password"]
+        assert second.json()["temporary_password"] is None
 
         students = client.get(f"/courses/{course_id}/students").json()
         assert len(students) == 1
@@ -270,6 +672,20 @@ class TestImportacionExcel:
         students = client.get(f"/courses/{course_id}/students").json()
         assert [s["display_name"] for s in students] == ["Ana María"]
 
+    def test_cycle_roster_import_is_rejected_after_first_success(self, client: TestClient):
+        cycle = client.post("/cycles", json={"name": "2026-II"}).json()
+        course = client.post(
+            "/courses", json={"name": "Curso ciclo", "cycle_id": cycle["id"]}
+        ).json()
+        rows = [["codigo", "nombre"], ["A1", "Ana"]]
+
+        first = upload(client, course["id"], rows)
+        second = upload(client, course["id"], rows)
+
+        assert first.status_code == 200
+        assert second.status_code == 409
+        assert client.get(f"/courses/{course['id']}").json()["roster_imported"] is True
+
     def test_imports_contact_fields_and_preserves_them_when_columns_are_absent(self, client: TestClient):
         course_id = new_course(client)
         upload(
@@ -284,6 +700,39 @@ class TestImportacionExcel:
         assert body["updated"] == 1
         assert (student["phone_number"], student["email"]) == ("987654321", "ana@example.com")
         assert student["display_name"] == "Ana María"
+
+    def test_imports_all_roster_metadata_and_returns_new_account_once(self, client: TestClient):
+        course_id = new_course(client)
+        response = upload(
+            client,
+            course_id,
+            [
+                ["NRO", "CÓDIGO", "ALUMNO", "ESP", "CONDICION", "CORREO UNI", "VECES REPETIDAS"],
+                [5, "A1", "Ana Torres", "I2", "Regular", "ANA@UNI.EDU.PE", 1],
+            ],
+        )
+        body = response.json()
+        student = client.get(f"/courses/{course_id}/students").json()[0]
+
+        assert response.headers["cache-control"] == "no-store"
+        assert body["created"] == 1
+        assert len(body["created_accounts"]) == 1
+        account = body["created_accounts"][0]
+        assert account["email"] == "ana@uni.edu.pe"
+        assert len(account["temporary_password"]) >= 12
+        assert (student["roster_number"], student["specialty"]) == ("5", "I2")
+        assert (student["student_condition"], student["times_repeated"]) == ("Regular", "1")
+        assert student["user_id"] is not None
+
+        second_course = new_course(client, "Otro curso")
+        second = upload(
+            client,
+            second_course,
+            [["CODIGO", "ALUMNO", "CORREO UNI"], ["B1", "Ana Torres", "ana@uni.edu.pe"]],
+        ).json()
+        second_student = client.get(f"/courses/{second_course}/students").json()[0]
+        assert second["created_accounts"] == []
+        assert second_student["user_id"] == student["user_id"]
 
     def test_wrong_structure_returns_400_and_saves_nothing(self, client: TestClient):
         course_id = new_course(client)
@@ -320,6 +769,42 @@ class TestEdicionDeLista:
         resp = client.patch(f"/students/{students[0]['id']}", json={"display_name": "Ana María"})
         assert resp.status_code == 200
         assert resp.json()["display_name"] == "Ana María"
+
+    def test_teacher_can_reset_password_from_course_student_record(self, client: TestClient):
+        course_id = new_course(client)
+        upload(
+            client,
+            course_id,
+            [["codigo", "nombre", "CORREO UNI"], ["A1", "Ana", "ana@example.edu"]],
+        )
+        student = client.get(f"/courses/{course_id}/students").json()[0]
+        teachers = client.get("/admin/teachers").json()
+        assigned = client.put(
+            f"/admin/teachers/{teachers[0]['id']}/courses",
+            json={"course_ids": [course_id]},
+        )
+        assert assigned.status_code == 200
+
+        client.cookies.clear()
+        login = client.post(
+            "/auth/login",
+            json={"username": "teacher", "password": "test-teacher-password-123"},
+        )
+        assert login.status_code == 200
+        reset = client.post(f"/students/{student['id']}/reset-password")
+        assert reset.status_code == 200
+        assert reset.headers["cache-control"] == "no-store"
+
+        client.cookies.clear()
+        student_login = client.post(
+            "/auth/login",
+            json={
+                "username": "ANA@example.edu",
+                "password": reset.json()["temporary_password"],
+            },
+        )
+        assert student_login.status_code == 200
+        assert student_login.json()["must_change_password"] is True
 
     def test_enroll_and_edit_contact_information(self, client: TestClient):
         course_id = new_course(client)
@@ -480,6 +965,133 @@ class TestSesionesYAsistencia:
         assert resp.status_code == 404
 
 
+class TestStudentAccountsAndPortal:
+    def test_admin_can_register_list_and_reset_student_account(self, client: TestClient):
+        created = client.post(
+            "/admin/students",
+            json={"username": "2024001", "full_name": "Ana Torres", "email": " ANA@UNI.EDU.PE "},
+        )
+        assert created.status_code == 201
+        assert created.headers["cache-control"] == "no-store"
+        account = created.json()
+        assert account["username"] == "2024001"
+        assert account["email"] == "ana@uni.edu.pe"
+        assert account["role"] == "estudiante"
+        assert "temporary_password" in account
+        assert "temporary_password" not in client.get("/admin/students").text
+        duplicate_username = client.post(
+            "/admin/students",
+            json={"username": "2024001", "full_name": "Otra Ana", "email": "otra@uni.edu.pe"},
+        )
+        assert duplicate_username.status_code == 400
+
+        reset = client.post(f"/admin/students/{account['id']}/reset-password")
+        assert reset.status_code == 200
+        assert reset.headers["cache-control"] == "no-store"
+        client.cookies.clear()
+        login = client.post(
+            "/auth/login",
+            json={
+                "username": account["username"],
+                "password": reset.json()["temporary_password"],
+            },
+        )
+        assert login.status_code == 200
+        assert login.json()["must_change_password"] is True
+        assert client.get("/admin/students").status_code == 403
+
+    def test_student_sees_only_enrolled_courses_and_sessions_in_16_weeks(self, client: TestClient):
+        cycle = client.post(
+            "/cycles", json={"name": "2030-I", "starts_on": "2030-03-01"}
+        ).json()
+        course = client.post(
+            "/courses", json={"name": "Biología", "cycle_id": cycle["id"]}
+        ).json()
+        other_course = new_course(client, "Curso ajeno")
+        imported = upload(
+            client,
+            course["id"],
+            [["codigo", "nombre", "CORREO UNI"], ["A1", "Ana Torres", "ana@example.edu"]],
+        ).json()
+        credential = imported["created_accounts"][0]
+
+        for session_date in ("2030-03-01", "2030-03-08", "2030-06-14", "2030-06-21"):
+            response = client.post(
+                f"/courses/{course['id']}/class-sessions",
+                json={"session_date": session_date, "topic": f"Clase {session_date}"},
+            )
+            assert response.status_code == 201
+
+        client.cookies.clear()
+        login = client.post(
+            "/auth/login",
+            json={"username": credential["username"], "password": credential["temporary_password"]},
+        )
+        assert login.status_code == 200
+        assert login.json()["must_change_password"] is True
+        changed = client.post(
+            "/auth/change-password", json={"new_password": "ana-student-password-123"}
+        )
+        assert changed.status_code == 200
+        assert changed.json()["role"] == "estudiante"
+
+        courses = client.get("/student/courses")
+        assert courses.status_code == 200
+        assert [item["course_id"] for item in courses.json()] == [course["id"]]
+        assert client.get("/courses").status_code == 403
+        assert client.get(f"/courses/{course['id']}/students").status_code == 403
+        assert client.get(f"/student/courses/{other_course}/weeks").status_code == 404
+        weeks = client.get(f"/student/courses/{course['id']}/weeks")
+        assert weeks.status_code == 200
+        body = weeks.json()
+        assert len(body["weeks"]) == 16
+        assert body["weeks"][0]["sessions"][0]["topic"] == "Clase 2030-03-01"
+        assert body["weeks"][1]["sessions"][0]["topic"] == "Clase 2030-03-08"
+        assert body["weeks"][15]["sessions"][0]["topic"] == "Clase 2030-06-14"
+        assert [item["topic"] for item in body["unassigned_sessions"]] == [
+            "Clase 2030-06-21"
+        ]
+        assert client.post(f"/courses/{course['id']}/class-sessions", json={}).status_code == 403
+
+    def test_import_creates_code_login_even_without_roster_email(self, client: TestClient):
+        course_id = new_course(client, "Curso sin correos")
+        imported = upload(
+            client, course_id, [["CODIGO", "ALUMNO"], ["000123", "Ana Torres"]]
+        )
+
+        assert imported.status_code == 200
+        assert imported.headers["cache-control"] == "no-store"
+        credential = imported.json()["created_accounts"][0]
+        assert credential["username"] == "000123"
+        assert credential["email"] is None
+        assert credential["temporary_password"]
+        client.cookies.clear()
+        login = client.post(
+            "/auth/login",
+            json={"username": "000123", "password": credential["temporary_password"]},
+        )
+        assert login.status_code == 200
+
+    def test_import_reuses_email_account_and_sets_roster_code_as_username(self, client: TestClient):
+        created = client.post(
+            "/admin/students",
+            json={"username": "old-random-user", "full_name": "Ana Torres", "email": "ana@uni.edu"},
+        ).json()
+        course_id = new_course(client, "Curso de cuenta existente")
+        imported = upload(
+            client,
+            course_id,
+            [["CODIGO", "ALUMNO", "CORREO UNI"], ["2024001", "Ana Torres", "ANA@UNI.EDU"]],
+        )
+
+        assert imported.status_code == 200
+        assert imported.json()["created_accounts"] == []
+        assert imported.json()["updated_accounts"][0]["username"] == "2024001"
+        students = client.get("/admin/students").json()
+        linked_account = next(item for item in students if item["id"] == created["id"])
+        assert linked_account["username"] == "2024001"
+
+
 class TestMigracionDeBaseAnterior:
     def test_database_created_before_sprint_1_is_upgraded_in_place(self, monkeypatch, tmp_path):
         """Una base SQLite creada con el esquema anterior (sin `students.active`,
@@ -505,10 +1117,32 @@ class TestMigracionDeBaseAnterior:
         conn.commit()
         conn.close()
         monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+        monkeypatch.delenv("ADMIN_USERNAME", raising=False)
+        monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
 
         from src.api.main import app
 
         with TestClient(app) as client:
+            auth_service = app.state.app_context.auth_service
+            with auth_service._session_factory() as session:
+                administrator_role_id = session.execute(
+                    select(RoleORM.id).where(RoleORM.name == "administrador")
+                ).scalar_one()
+                session.add(
+                    UserORM(
+                        username="migration-admin",
+                        full_name="Migration Admin",
+                        password_hash=hash_password("migration-admin-password-123"),
+                        role_id=administrator_role_id,
+                    )
+                )
+                session.commit()
+            login = client.post(
+                "/auth/login",
+                json={"username": "migration-admin", "password": "migration-admin-password-123"},
+            )
+            assert login.status_code == 200
+
             students = client.get("/courses/1/students").json()
             assert [(s["display_name"], s["active"]) for s in students] == [("Estudiante previo", True)]
             created = client.post("/courses/1/class-sessions", json={"topic": "Tema nuevo"})

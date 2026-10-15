@@ -14,22 +14,164 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class CourseCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, examples=["Cálculo II - Sección 4"])
+    cycle_id: Optional[int] = Field(None, gt=0)
 
 
 class CourseResponse(BaseModel):
     id: int
     name: str
     created_at: datetime
+    cycle_id: Optional[int] = None
+    roster_imported: bool = False
+
+
+class AcademicCycleCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255, examples=["2026-II"])
+    starts_on: Optional[date] = None
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("El nombre del ciclo no puede estar vacío.")
+        return value
+
+
+class AcademicCycleResponse(BaseModel):
+    id: int
+    name: str
+    created_at: datetime
+    starts_on: Optional[date] = None
+
+
+class AcademicCycleStartDateRequest(BaseModel):
+    starts_on: date
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=120)
+    password: str = Field(..., min_length=1, max_length=1024)
+
+
+class PasswordChangeRequest(BaseModel):
+    new_password: str = Field(..., min_length=12, max_length=1024)
+
+
+class AuthenticatedUserResponse(BaseModel):
+    id: int
+    username: str
+    full_name: str
+    role: str
+    must_change_password: bool = False
+
+
+class TeacherAssignmentResponse(AuthenticatedUserResponse):
+    phone_number: Optional[str] = None
+    email: Optional[str] = None
+    course_ids: List[int]
+
+
+class TeacherCreatedResponse(TeacherAssignmentResponse):
+    temporary_password: str
+
+
+class TemporaryPasswordResponse(BaseModel):
+    temporary_password: str
+
+
+class TeacherCreateRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=120)
+    full_name: str = Field(..., min_length=1, max_length=255)
+    phone_number: Optional[str] = Field(None, max_length=32)
+    email: str = Field(..., min_length=3, max_length=255)
+    course_ids: List[int] = Field(..., min_length=1)
+
+    @field_validator("username", "full_name", "email")
+    @classmethod
+    def _strip_required_values(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Este campo no puede estar vacío.")
+        return cleaned
+
+    @field_validator("email")
+    @classmethod
+    def _validate_email_shape(cls, value: str) -> str:
+        if (
+            any(character.isspace() for character in value)
+            or value.count("@") != 1
+            or "." not in value.rsplit("@", 1)[1]
+        ):
+            raise ValueError("Ingresa un correo electrónico válido.")
+        return value
+
+
+class StudentAccountCreateRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=120)
+    full_name: str = Field(..., min_length=1, max_length=255)
+    email: str = Field(..., min_length=3, max_length=255)
+
+    @field_validator("full_name", "email")
+    @classmethod
+    def _strip_required_values(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Este campo no puede estar vacío.")
+        return cleaned
+
+    @field_validator("email")
+    @classmethod
+    def _validate_email_shape(cls, value: str) -> str:
+        if (
+            any(character.isspace() for character in value)
+            or value.count("@") != 1
+            or "." not in value.rsplit("@", 1)[1]
+        ):
+            raise ValueError("Ingresa un correo electrónico válido.")
+        return value.lower()
+
+
+    @field_validator("username")
+    @classmethod
+    def _strip_username(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("El código del estudiante no puede estar vacío.")
+        return cleaned
+
+class StudentAccountResponse(BaseModel):
+    id: int
+    username: str
+    full_name: str
+    email: Optional[str] = None
+    role: str = "estudiante"
+    course_ids: List[int] = Field(default_factory=list)
+
+
+class StudentAccountCreatedResponse(StudentAccountResponse):
+    temporary_password: str
+
+
+class TeacherCourseAssignmentRequest(BaseModel):
+    course_ids: List[int]
+
+    @field_validator("course_ids")
+    @classmethod
+    def _unique_course_ids(cls, value: List[int]) -> List[int]:
+        if len(value) != len(set(value)) or any(course_id <= 0 for course_id in value):
+            raise ValueError("Los cursos deben ser IDs positivos y no repetidos.")
+        return value
 
 
 class StudentEnrollRequest(BaseModel):
     external_ref: str = Field(
-        ..., min_length=1, max_length=255,
+        ..., min_length=1, max_length=120,
         description="Identificador estable del estudiante (código de matrícula, DNI, etc.)",
         examples=["2024-0001"],
     )
@@ -39,6 +181,14 @@ class StudentEnrollRequest(BaseModel):
     alpha_init: float = Field(1.0, gt=0, description="Prior alpha si el estudiante es nuevo.")
     beta_init: float = Field(1.0, gt=0, description="Prior beta si el estudiante es nuevo.")
 
+    @field_validator("external_ref", "display_name")
+    @classmethod
+    def _strip_required_values(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("El código y nombre del estudiante son obligatorios.")
+        return cleaned
+
 
 class StudentResponse(BaseModel):
     id: int
@@ -47,8 +197,18 @@ class StudentResponse(BaseModel):
     display_name: str
     phone_number: Optional[str] = None
     email: Optional[str] = None
+    user_id: Optional[int] = None
+    roster_number: Optional[str] = None
+    specialty: Optional[str] = None
+    student_condition: Optional[str] = None
+    times_repeated: Optional[str] = None
     created_at: datetime
     active: bool = True
+
+
+class StudentEnrollmentResponse(StudentResponse):
+    account_username: str
+    temporary_password: Optional[str] = None
 
 
 class StudentUpdateRequest(BaseModel):
@@ -78,12 +238,30 @@ class RosterRowErrorResponse(BaseModel):
     message: str
 
 
+class ImportedStudentAccountResponse(BaseModel):
+    row_number: int
+    username: str
+    full_name: str
+    email: Optional[str] = None
+    temporary_password: str
+
+
+class UpdatedStudentAccountResponse(BaseModel):
+    row_number: int
+    username: str
+    full_name: str
+    email: Optional[str] = None
+
+
 class RosterImportResponse(BaseModel):
     total_rows: int
     created: int
     updated: int
     unchanged: int
     errors: List[RosterRowErrorResponse]
+    warnings: List[RosterRowErrorResponse] = Field(default_factory=list)
+    created_accounts: List[ImportedStudentAccountResponse] = Field(default_factory=list)
+    updated_accounts: List[UpdatedStudentAccountResponse] = Field(default_factory=list)
 
 
 class SyllabusEntryRequest(BaseModel):
@@ -143,6 +321,26 @@ class SessionSummaryResponse(BaseModel):
     topic: Optional[str]
     label: Optional[str]
     created_at: datetime
+
+
+class StudentCourseResponse(BaseModel):
+    course_id: int
+    course_name: str
+    cycle_id: Optional[int] = None
+    cycle_name: Optional[str] = None
+    cycle_starts_on: Optional[date] = None
+
+
+class StudentWeekResponse(BaseModel):
+    week_number: int = Field(..., ge=1, le=16)
+    sessions: List[SessionSummaryResponse]
+
+
+class StudentWeeksResponse(BaseModel):
+    course_id: int
+    cycle_starts_on: date
+    weeks: List[StudentWeekResponse]
+    unassigned_sessions: List[SessionSummaryResponse] = Field(default_factory=list)
 
 
 class AttendanceMark(BaseModel):
@@ -237,6 +435,41 @@ class ParticipationResponse(BaseModel):
     display_name: str
     score: float
     present: bool
+    created_at: datetime
+
+
+class StudentGroupRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    student_ids: List[int] = Field(default_factory=list)
+
+
+class GroupPlanGenerateRequest(BaseModel):
+    max_group_size: int = Field(..., ge=1, le=1000)
+    name: Optional[str] = Field(None, max_length=255)
+
+
+class ManualGroupPlanRequest(BaseModel):
+    group_count: int = Field(..., ge=1, le=100)
+    name: Optional[str] = Field(None, max_length=255)
+
+
+class GroupPlanUpdateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    max_group_size: int = Field(..., ge=1, le=1000)
+    groups: List[StudentGroupRequest] = Field(..., min_length=1, max_length=100)
+
+
+class StudentGroupResponse(BaseModel):
+    name: str
+    student_ids: List[int]
+
+
+class GroupPlanResponse(BaseModel):
+    id: int
+    course_id: int
+    name: str
+    max_group_size: int
+    groups: List[StudentGroupResponse]
     created_at: datetime
 
 

@@ -79,16 +79,36 @@ un servidor HTTP o dentro de una simulación en memoria.
 ### Esquema de base de datos (producción)
 
 ```
-courses (1) ──< students (1) ── (1) student\_state
+roles (1) ──< users (1) ──< auth\_sessions
+users (1) ──< teacher\_courses >── courses
+academic\_cycles (1) ──< courses (1) ──< students (1) ── (1) student\_state
 courses (1) ──< class\_sessions (1) ──< decision\_runs (1) ──< selection\_events >── students
 decision\_runs (1) ──< student\_participations >── students
 courses (1) ──< syllabus\_entries
 class\_sessions (1) ──< session\_attendance >── students
 ```
 
+* **`academic\_cycles`**: periodo académico que agrupa cursos.
 * **`courses`**: contenedor de estudiantes (permite correr varios cursos
-en paralelo sobre la misma base de datos).
+en paralelo sobre la misma base de datos); puede asociarse a un ciclo.
+La importación inicial de estudiantes se permite una sola vez por curso
+asociado al ciclo; la matrícula y edición individual siguen disponibles.
 * **`students`**: identidad del estudiante (casi no cambia).
+  La matrícula conserva los campos del Excel (NRO, código, alumno, ESP,
+  condición, correo UNI y veces repetidas) y se vincula a una cuenta global.
+* **Cuentas de estudiante**: cada cuenta usa como nombre de usuario el código
+  del alumno (`CODIGO` del Excel o el código solicitado en el registro manual).
+  La importación reutiliza la cuenta por correo cuando existe, o por código
+  cuando el correo falta; al reutilizar una cuenta actualiza su usuario al
+  código del Excel sin cambiar su contraseña. Si no encuentra ninguna, crea
+  una cuenta y genera una contraseña temporal de un solo vistazo. Las
+  credenciales se comparten manualmente por un canal privado; el alumno debe
+  cambiar la contraseña al primer ingreso. La vista de administrador permite
+  registrar cuentas y restablecer accesos.
+* **Portal de estudiante**: muestra únicamente los cursos donde la cuenta
+  tiene matrícula activa. El administrador define la fecha inicial del ciclo;
+  las sesiones se ordenan en 16 semanas consecutivas de siete días desde esa
+  fecha. Las sesiones sin fecha o fuera del periodo aparecen aparte.
 * **`student\_state`**: el estado bayesiano mutable — `alpha`, `beta`,
 `n\_present`, `n\_selected`. Es la tabla que sufre escrituras
 concurrentes; por eso está separada de `students`.
@@ -150,12 +170,61 @@ plantilla: el proyecto no carga `.env` automáticamente. Si ya tienes una base
 y un usuario de PostgreSQL, omite la creación y configura `DATABASE_URL` con
 los datos que te proporcionó el administrador.
 
-Con el servidor corriendo, abrir `http://127.0.0.1:8000/docs` para la
-documentación interactiva (Swagger UI), o `http://127.0.0.1:8000/` para
-el panel web. Desde el panel puedes crear o cargar un curso. En
-**Administrar estudiantes** se carga la lista una vez, se matriculan
-estudiantes y se editan sus datos de contacto; en **Asistencia** solo se
-muestran los estudiantes activos para la clase. Después de ejecutar una
+La aplicación crea las tablas `roles`, `users`, `auth_sessions` y
+`teacher_courses`, y registra los roles `administrador` y `docente` al
+arrancar. No hay registro público.
+
+Para crear el primer Administrador, configura `ADMIN_USERNAME` y
+`ADMIN_PASSWORD` en el entorno del despliegue (idealmente mediante su gestor
+de secretos) antes de ejecutar `init_db.py` o iniciar la API:
+
+```bash
+export ADMIN_USERNAME=admin
+read -s ADMIN_PASSWORD
+export ADMIN_PASSWORD
+python scripts/init_db.py
+```
+
+Ingresa una contraseña de al menos 12 caracteres cuando `read` la solicite.
+La aplicación guarda un hash y nunca registra la contraseña. Si ya existe
+cualquier cuenta Administrador, las variables se ignoran y los reinicios no
+cambian ni restablecen sus credenciales. Ambas variables deben configurarse
+juntas. Si no hay Administrador y falta alguna variable, no se crea ninguna
+cuenta; si el usuario configurado ya existe con otro rol, el arranque falla
+con un error explícito. Cada compañero debe configurar sus propios secretos
+en el entorno donde despliega la aplicación.
+
+Con la cuenta inicial creada, inicia la API y abre `http://127.0.0.1:8000/`.
+El acceso al panel requiere iniciar sesión con `ADMIN_USERNAME` y la contraseña
+ingresada durante el aprovisionamiento. El Administrador registra docentes
+desde **Ciclos académicos → Gestión de docentes**, con nombre, usuario,
+teléfono, correo y cursos asignados.
+
+Al registrar un docente o restablecer su contraseña, la contraseña temporal
+se muestra una sola vez al Administrador en la pantalla para copiarla y
+compartirla por un canal privado. No se guarda en texto claro ni se registra
+en logs. Si se cierra la ventana, debe generarse otra contraseña temporal. El
+docente debe cambiarla al iniciar sesión; hasta hacerlo, el servidor bloquea
+el resto de sus endpoints.
+
+Al desplegar detrás de HTTPS, configura `AUTH_COOKIE_SECURE=true`. La sesión
+se entrega en una cookie HTTP-only, SameSite Strict, con vencimiento de 12
+horas; en la base solo se guarda el hash del token de sesión.
+El administrador tiene acceso completo; el docente solo puede consultar y
+gestionar los cursos asignados. El administrador administra esas asignaciones
+en **Ciclos académicos → Cursos asignados**. El selector inferior permite
+previsualizar la interfaz de Docente, pero no cambia la identidad ni sustituye
+la autorización del servidor.
+
+En el panel, **Ciclos académicos** es la sección para crear y consultar los
+ciclos. En **Sesiones y asistencia** y **Matrícula de estudiantes** se puede
+seleccionar el ciclo y el curso de trabajo; la selección se sincroniza con
+**Curso activo** en la barra lateral. **Matrícula de estudiantes** está
+separada de la configuración de ciclos: allí se puede crear el curso y luego
+cargar la lista inicial (una
+sola vez por curso asociado a un ciclo); la matrícula y edición individual
+también están disponibles allí. En **Sesiones y asistencia** se muestran
+los estudiantes activos para la clase. Después de ejecutar una
 selección, el docente captura la nota (el campo oculta visualmente el valor)
 y confirma la asistencia de cada seleccionado. La pestaña **Historial de
 participación** muestra código del estudiante, nombre, nota, fecha/hora y asistencia.
@@ -166,9 +235,26 @@ botón **Reposición** permite incluir o excluir de rondas futuras a los último
 seleccionados, también sin modificar la asistencia. Los cursos recientes se
 recuerdan en el navegador; los datos del sistema quedan en la base PostgreSQL
 configurada.
-El selector de rol de la esquina inferior izquierda permite alternar entre
-Profesor y Administrador; ambos pueden administrar la matrícula en esta
-versión del MVP.
+La pestaña **Trabajo en grupos**, junto a asistencia e historial de
+participación, permite generar propuestas aleatorias indicando el máximo de
+estudiantes por grupo, como un flujo separado de la configuración manual.
+Primero se elige un método y solo se muestra su configuración. Las propuestas
+se guardan por curso y se muestran en modo de solo lectura; las acciones
+separadas permiten editar o eliminar. La edición permite renombrar grupos,
+mover estudiantes y agregar grupos. Los estudiantes matriculados después de
+guardar aparecen en un carril **Alumnos sin grupo** hasta que se asignen. Para
+una distribución manual se elige la
+cantidad de grupos; la pantalla muestra en vivo el reparto equilibrado y luego
+permite reorganizar estudiantes arrastrándolos o mediante selectores, sin
+limitar cuántos estudiantes se asignan a cada grupo. Antes de crear, guardar
+cambios o eliminar una propuesta o grupo, el sistema solicita confirmación.
+Los estudiantes pueden permanecer sin grupo; el servidor valida que cada
+asignación pertenezca al curso y no se repita. El tamaño máximo solo se usa
+para la generación aleatoria. Docentes solo acceden a grupos de sus cursos
+asignados.
+El selector de la esquina inferior izquierda permite previsualizar la interfaz
+de Administrador o Docente; no cambia la identidad ni los permisos que valida
+el servidor.
 
 También se pueden probar los endpoints directamente:
 
@@ -203,12 +289,27 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |Método|Ruta|Qué hace|
 |-|-|-|
 |GET|`/health`|Chequeo de salud|
+|POST|`/auth/login`|Iniciar sesión|
+|GET|`/auth/me`|Consultar la cuenta autenticada|
+|POST|`/auth/change-password`|Configurar una contraseña nueva, requerida después de un reset|
+|POST|`/auth/logout`|Cerrar sesión|
 |GET|`/methods`|Estrategias de selección disponibles|
-|POST|`/courses`|Crear un curso|
+|GET|`/admin/teachers`|Administrador: listar docentes y cursos asignados|
+|POST|`/admin/teachers`|Administrador: registrar docente, asignar cursos y devolver una contraseña temporal de un solo vistazo|
+|PUT|`/admin/teachers/{id}/courses`|Administrador: reemplazar cursos asignados al docente|
+|POST|`/admin/teachers/{id}/reset-password`|Administrador: generar una contraseña temporal de un solo vistazo|
+|POST|`/cycles`|Crear un ciclo académico|
+|GET|`/cycles`|Listar ciclos académicos|
+|POST|`/courses`|Crear un curso (opcionalmente asociado a `cycle_id`)|
 |GET|`/courses`|Listar cursos (HU-S1)|
+|GET|`/courses/{course_id}/group-plans`|Listar propuestas de grupos guardadas|
+|POST|`/courses/{course_id}/group-plans`|Generar y guardar una distribución aleatoria|
+|POST|`/courses/{course_id}/group-plans/manual`|Crear una distribución equilibrada con `group_count` grupos|
+|PUT|`/courses/{course_id}/group-plans/{plan_id}`|Editar y guardar una distribución manual|
+|DELETE|`/courses/{course_id}/group-plans/{plan_id}`|Eliminar una propuesta de grupos|
 |GET|`/courses/{id}`|Obtener un curso|
-|POST|`/courses/{id}/students`|Matricular estudiante (teléfono y correo opcionales)|
-|POST|`/courses/{id}/students/import`|**HU-C1**: cargar/recargar la lista desde un Excel `.xlsx`|
+|POST|`/courses/{id}/students`|Matricular estudiante y crear cuenta con usuario igual al código (teléfono y correo opcionales)|
+|POST|`/courses/{id}/students/import`|**HU-C1**: cargar la lista desde un Excel `.xlsx` (una vez por curso asociado a ciclo); crea o reutiliza las cuentas usando código y correo|
 |GET|`/courses/{id}/students`|Listar estudiantes activos (`?include_inactive=true` incluye retirados)|
 |PATCH|`/students/{id}`|**HU-C1**: editar datos, retirar o reincorporar|
 |GET|`/students/{id}/state`|Estado bayesiano actual (alpha, beta, contadores)|
@@ -224,6 +325,16 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |POST|`/courses/{id}/decision-runs/{run_id}/participations`|Guardar nota (0–5) y asistencia de los estudiantes seleccionados|
 |GET|`/courses/{id}/participations`|Consultar el historial de notas y asistencia del curso|
 |GET|`/courses/{id}/fairness-metrics`|Gini / CV / std / cobertura del curso|
+
+Las rutas funcionales requieren sesión autenticada. Para probar la API con
+`curl`, conserva la cookie recibida al iniciar sesión:
+
+```bash
+curl -c cookies.txt -X POST http://127.0.0.1:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"<CONTRASENA>"}'
+curl -b cookies.txt http://127.0.0.1:8000/courses
+```
 
 #### Sprint 1: lista por Excel, sesiones y asistencia
 
@@ -249,8 +360,8 @@ curl -X POST http://127.0.0.1:8000/courses/1/sessions/select \
 Reglas del Excel: el sistema busca el encabezado en las filas, sin asumir
 un número fijo, y reconoce `codigo`/`matricula` y `nombre`/`alumno`/
 `apellidos y nombres` (sin importar mayúsculas ni tildes). Las columnas
-`telefono`/`celular` y `correo`/`email` son opcionales; si una reimportación
-no trae esos campos, conserva el contacto que ya estaba registrado. Antes del
+`telefono`/`celular` y `correo`/`email` son opcionales; si una importación
+de un curso histórico no trae esos campos, conserva el contacto que ya estaba registrado. Antes del
 encabezado debe aparecer el código o el nombre del curso, por ejemplo en el
 título del archivo; el código/nombre se valida como contexto y el `course_id`
 de la ruta HTTP determina a qué curso se asocian los estudiantes. Así se
@@ -258,8 +369,11 @@ pueden importar listas de distintos cursos usando el mismo endpoint. Si falta
 una columna obligatoria, el contexto del curso o el archivo no es `.xlsx`, se responde
 400 y no se guarda nada. Si solo algunas filas son inválidas (sin nombre,
 código repetido…), las válidas se guardan y las inválidas se devuelven con
-su número de fila original. Volver a cargar el archivo es seguro: actualiza
-nombres y contactos presentes, reactiva retirados y no duplica. La edición
+su número de fila original. En cursos históricos sin ciclo, volver a cargar
+el archivo sigue siendo idempotente: actualiza nombres y contactos presentes,
+reactiva retirados y no duplica. En cursos asociados a un ciclo, una importación
+con filas válidas bloquea otra carga Excel para ese curso; el resto de cambios
+de matrícula se hace individualmente. La edición
 manual permite corregir nombre, código, teléfono y correo; los campos de
 contacto pueden dejarse vacíos.
 

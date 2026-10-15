@@ -13,13 +13,16 @@ from __future__ import annotations
 
 from src.repositories.in_memory.repository_impl import (
     InMemoryAttendanceRepository,
+    InMemoryAcademicCycleRepository,
     InMemoryClassSessionRepository,
     InMemoryCourseRepository,
     InMemoryDatabase,
     InMemoryDecisionRunRepository,
     InMemoryEventRepository,
+    InMemoryGroupPlanRepository,
     InMemoryParticipationRepository,
     InMemoryStudentRepository,
+    InMemoryStudentAccountRepository,
     InMemoryStudentStateRepository,
     InMemorySyllabusRepository,
 )
@@ -35,7 +38,9 @@ class InMemoryUnitOfWork(UnitOfWork):
 
     def __enter__(self) -> "InMemoryUnitOfWork":
         self.courses = InMemoryCourseRepository(self._db)
+        self.cycles = InMemoryAcademicCycleRepository(self._db)
         self.students = InMemoryStudentRepository(self._db)
+        self.student_accounts = InMemoryStudentAccountRepository(self._db)
         self.student_states = InMemoryStudentStateRepository(self._db)
         self.class_sessions = InMemoryClassSessionRepository(self._db)
         self.syllabus = InMemorySyllabusRepository(self._db)
@@ -43,6 +48,7 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.decision_runs = InMemoryDecisionRunRepository(self._db)
         self.events = InMemoryEventRepository(self._db)
         self.participations = InMemoryParticipationRepository(self._db)
+        self.group_plans = InMemoryGroupPlanRepository(self._db)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:

@@ -10,7 +10,7 @@ from src.repositories.in_memory.unit_of_work import InMemoryUnitOfWork
 from src.repositories.interfaces import DuplicateStudentError
 from src.services.errors import CourseNotFoundError, StudentNotFoundError
 from src.services.roster_import import RosterFormatError
-from src.services.roster_service import RosterService
+from src.services.roster_service import RosterAlreadyImportedError, RosterService
 
 
 def make_xlsx(rows) -> bytes:
@@ -68,6 +68,29 @@ class TestImport:
         names = {s.external_ref: s.display_name for s in roster(uow_factory, course_id)}
         assert names == {"A1": "Ana", "A2": "Luis Pérez", "A3": "Eva"}
 
+    def test_cycle_course_roster_can_only_be_imported_once(self):
+        uow_factory, service, _ = setup()
+        with uow_factory() as uow:
+            cycle = uow.cycles.create("2026-II")
+            course = uow.courses.create("Curso ciclo", cycle_id=cycle.id)
+            uow.commit()
+
+        data = make_xlsx([["codigo", "nombre"], ["A1", "Ana"]])
+        service.import_roster(course.id, data)
+        with pytest.raises(RosterAlreadyImportedError):
+            service.import_roster(course.id, data)
+
+        with uow_factory() as uow:
+            assert uow.courses.get(course.id).roster_imported_at is not None
+            assert len(uow.students.list_by_course(course.id)) == 1
+
+    def test_course_without_cycle_keeps_legacy_reimport_behavior(self):
+        uow_factory, service, course_id = setup()
+        data = make_xlsx([["codigo", "nombre"], ["A1", "Ana"]])
+        service.import_roster(course_id, data)
+        result = service.import_roster(course_id, data)
+        assert result.unchanged == 1
+
     def test_reimport_updates_contacts_and_preserves_them_without_contact_columns(self):
         uow_factory, service, course_id = setup()
         service.import_roster(
@@ -82,6 +105,42 @@ class TestImport:
         assert result.updated == 1
         assert (student.phone_number, student.email) == ("987654321", "ana@example.com")
         assert student.display_name == "Ana María"
+
+    def test_import_creates_and_reuses_student_account_by_normalized_email(self):
+        uow_factory, service, course_a = setup()
+        with uow_factory() as uow:
+            course_b = uow.courses.create("Otro curso").id
+            uow.commit()
+        headers = [["NRO", "CODIGO", "ALUMNO", "ESP", "CONDICION", "CORREO UNI", "VECES REPETIDAS"]]
+        first = service.import_roster(
+            course_a,
+            make_xlsx(headers + [[1, "A1", "Ana", "I2", "Regular", "Ana@uni.edu.pe", 0]]),
+        )
+        second = service.import_roster(
+            course_b,
+            make_xlsx(headers + [[1, "A1", "Ana", "I2", "Regular", "ana@uni.edu.pe", 0]]),
+        )
+
+        assert len(first.created_accounts) == 1
+        assert first.created_accounts[0]["username"] == "A1"
+        assert len(first.created_accounts[0]["temporary_password"]) >= 12
+        assert second.created_accounts == []
+        assert roster(uow_factory, course_a)[0].user_id == roster(uow_factory, course_b)[0].user_id
+        assert roster(uow_factory, course_a)[0].times_repeated == "0"
+
+    def test_import_creates_account_without_email_using_roster_code(self):
+        uow_factory, service, course_id = setup()
+        result = service.import_roster(
+            course_id, make_xlsx([["CODIGO", "ALUMNO"], ["000123", "Ana Torres"]])
+        )
+
+        assert result.warnings == []
+        assert result.created_accounts[0]["username"] == "000123"
+        with uow_factory() as uow:
+            account = uow.student_accounts.get_by_username("000123")
+            student = uow.students.list_by_course(course_id)[0]
+        assert account.email is None
+        assert student.user_id == account.id
 
     def test_students_missing_from_new_file_are_not_removed(self):
         uow_factory, service, course_id = setup()

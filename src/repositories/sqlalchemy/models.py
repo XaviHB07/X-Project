@@ -29,8 +29,10 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    JSON,
     String,
     UniqueConstraint,
+    false,
     true,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -51,16 +53,103 @@ class Base(DeclarativeBase):
     """Clase base declarativa de la que heredan todos los modelos ORM."""
 
 
+class AcademicCycleORM(Base):
+    __tablename__ = "academic_cycles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    starts_on: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    courses: Mapped[List["CourseORM"]] = relationship(back_populates="cycle")
+
+
+class RoleORM(Base):
+    __tablename__ = "roles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+
+    users: Mapped[List["UserORM"]] = relationship(back_populates="role")
+
+
+class UserORM(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    phone_number: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
+    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    role: Mapped["RoleORM"] = relationship(back_populates="users")
+    course_assignments: Mapped[List["TeacherCourseORM"]] = relationship(
+        back_populates="teacher", cascade="all, delete-orphan"
+    )
+    sessions: Mapped[List["AuthSessionORM"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class TeacherCourseORM(Base):
+    __tablename__ = "teacher_courses"
+
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), primary_key=True)
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    teacher: Mapped["UserORM"] = relationship(back_populates="course_assignments")
+    course: Mapped["CourseORM"] = relationship()
+
+
+class AuthSessionORM(Base):
+    __tablename__ = "auth_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    user: Mapped["UserORM"] = relationship(back_populates="sessions")
+
+
 class CourseORM(Base):
     __tablename__ = "courses"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    cycle_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("academic_cycles.id"), nullable=True
+    )
+    roster_imported_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
+    cycle: Mapped[Optional["AcademicCycleORM"]] = relationship(back_populates="courses")
     students: Mapped[List["StudentORM"]] = relationship(back_populates="course")
     class_sessions: Mapped[List["ClassSessionORM"]] = relationship(back_populates="course")
     syllabus_entries: Mapped[List["SyllabusEntryORM"]] = relationship(back_populates="course")
+
+
+class CourseGroupPlanORM(Base):
+    __tablename__ = "course_group_plans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    max_group_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    groups: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    course: Mapped["CourseORM"] = relationship()
 
 
 class StudentORM(Base):
@@ -78,6 +167,11 @@ class StudentORM(Base):
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     phone_number: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    roster_number: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    specialty: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    student_condition: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    times_repeated: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     # server_default: las filas que ya existían antes de esta columna
     # quedan activas (ver `_ensure_columns` en services/bootstrap.py).
@@ -86,6 +180,7 @@ class StudentORM(Base):
     )
 
     course: Mapped["CourseORM"] = relationship(back_populates="students")
+    user: Mapped[Optional["UserORM"]] = relationship()
     state: Mapped[Optional["StudentStateORM"]] = relationship(
         back_populates="student", uselist=False, cascade="all, delete-orphan"
     )

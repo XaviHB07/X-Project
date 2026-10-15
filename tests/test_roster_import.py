@@ -87,6 +87,26 @@ class TestEstructura:
             "ana@example.com",
         )
 
+    def test_reads_all_real_roster_headers(self):
+        result = parse_roster_xlsx(
+            make_xlsx(
+                [
+                    ["NRO", "CÓDIGO", "ALUMNO", "ESP", "CONDICION", "CORREO UNI", "VECES REPETIDAS"],
+                    [12, "20212532K", "Ana Torres", "I2", "Regular", "ANA@UNI.EDU.PE", 2],
+                ]
+            )
+        )
+
+        assert result.rows[0].external_ref == "20212532K"
+        assert result.rows[0].display_name == "Ana Torres"
+        assert result.rows[0].email == "ANA@UNI.EDU.PE"
+        assert (
+            result.rows[0].roster_number,
+            result.rows[0].specialty,
+            result.rows[0].student_condition,
+            result.rows[0].times_repeated,
+        ) == ("12", "I2", "Regular", "2")
+
     def test_leading_blank_rows_before_header_are_skipped(self):
         data = make_xlsx([[None, None], ["codigo", "nombre"], ["A1", "Ana"]])
         result = parse_roster_xlsx(data)
@@ -147,6 +167,13 @@ class TestRegistrosInvalidos:
         result = parse_roster_xlsx(data)
         assert [r.external_ref for r in result.rows] == ["A2"]
         assert result.errors[0].row_number == 3
+
+    def test_code_longer_than_username_limit_is_rejected(self):
+        result = parse_roster_xlsx(
+            make_xlsx([["codigo", "nombre"], ["A" * 121, "Ana"]])
+        )
+        assert result.rows == []
+        assert "hasta 120 caracteres" in result.errors[0].message
 
     def test_whitespace_is_normalized(self):
         data = make_xlsx([["codigo", "nombre"], ["  A1 ", "  Ana   María  Torres "]])

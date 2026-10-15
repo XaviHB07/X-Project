@@ -14,15 +14,19 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from src.domain.entities import (
+    AcademicCycle,
     AttendanceRecord,
     ClassSession,
     Course,
+    CourseGroupPlan,
     DecisionRun,
     Student,
+    StudentAccount,
+    StudentGroup,
     StudentParticipation,
     SyllabusEntry,
 )
@@ -33,28 +37,36 @@ from src.domain.value_objects import (
     SelectionEventRecord,
 )
 from src.repositories.interfaces import (
+    AcademicCycleRepository,
     AttendanceRepository,
     ClassSessionRepository,
     CourseRepository,
     DecisionRunRepository,
+    DuplicateAcademicCycleError,
     DuplicateStudentError,
     EventRepository,
+    GroupPlanRepository,
     InvalidParticipationStudentError,
     ParticipationDecisionNotFoundError,
     ParticipationRepository,
     StudentRepository,
+    StudentAccountRepository,
     StudentStateRepository,
     SyllabusRepository,
 )
 from src.repositories.sqlalchemy.models import (
+    AcademicCycleORM,
     ClassSessionORM,
     CourseORM,
+    CourseGroupPlanORM,
     DecisionRunORM,
     SelectionEventORM,
     SessionAttendanceORM,
     StudentORM,
     StudentStateORM,
     StudentParticipationORM,
+    RoleORM,
+    UserORM,
     SyllabusEntryORM,
 )
 
@@ -78,6 +90,11 @@ def _to_student(row: StudentORM) -> Student:
         created_at=row.created_at,
         phone_number=row.phone_number,
         email=row.email,
+        user_id=row.user_id,
+        roster_number=row.roster_number,
+        specialty=row.specialty,
+        student_condition=row.student_condition,
+        times_repeated=row.times_repeated,
         active=row.active,
     )
 
@@ -97,21 +114,184 @@ class SqlAlchemyCourseRepository(CourseRepository):
     def __init__(self, session: Session):
         self._session = session
 
-    def create(self, name: str) -> Course:
-        row = CourseORM(name=name)
+    def create(self, name: str, cycle_id: Optional[int] = None) -> Course:
+        row = CourseORM(name=name, cycle_id=cycle_id)
         self._session.add(row)
         self._session.flush()  # asigna row.id sin necesidad de commit
-        return Course(id=row.id, name=row.name, created_at=row.created_at)
+        return self._to_course(row)
 
     def get(self, course_id: int) -> Optional[Course]:
         row = self._session.get(CourseORM, course_id)
         if row is None:
             return None
-        return Course(id=row.id, name=row.name, created_at=row.created_at)
+        return self._to_course(row)
 
     def list_all(self) -> List[Course]:
         rows = self._session.execute(select(CourseORM).order_by(CourseORM.id)).scalars().all()
-        return [Course(id=r.id, name=r.name, created_at=r.created_at) for r in rows]
+        return [self._to_course(row) for row in rows]
+
+    def claim_roster_import(self, course_id: int) -> bool:
+        result = self._session.execute(
+            update(CourseORM)
+            .where(
+                CourseORM.id == course_id,
+                CourseORM.cycle_id.is_not(None),
+                CourseORM.roster_imported_at.is_(None),
+            )
+            .values(roster_imported_at=datetime.now(timezone.utc))
+        )
+        return result.rowcount == 1
+
+    @staticmethod
+    def _to_course(row: CourseORM) -> Course:
+        return Course(
+            id=row.id,
+            name=row.name,
+            created_at=row.created_at,
+            cycle_id=row.cycle_id,
+            roster_imported_at=row.roster_imported_at,
+        )
+
+
+class SqlAlchemyAcademicCycleRepository(AcademicCycleRepository):
+    def __init__(self, session: Session):
+        self._session = session
+
+    def create(self, name: str, starts_on: Optional[date] = None) -> AcademicCycle:
+        existing = self._session.execute(
+            select(AcademicCycleORM.id).where(AcademicCycleORM.name == name)
+        ).scalar_one_or_none()
+        if existing is not None:
+            raise DuplicateAcademicCycleError(f"El ciclo “{name}” ya existe.")
+        row = AcademicCycleORM(name=name, starts_on=starts_on)
+        self._session.add(row)
+        self._session.flush()
+        return AcademicCycle(
+            id=row.id, name=row.name, created_at=row.created_at, starts_on=row.starts_on
+        )
+
+    def get(self, cycle_id: int) -> Optional[AcademicCycle]:
+        row = self._session.get(AcademicCycleORM, cycle_id)
+        if row is None:
+            return None
+        return AcademicCycle(
+            id=row.id,
+            name=row.name,
+            created_at=self._utc(row.created_at),
+            starts_on=row.starts_on,
+        )
+
+    def list_all(self) -> List[AcademicCycle]:
+        rows = self._session.execute(
+            select(AcademicCycleORM).order_by(AcademicCycleORM.id)
+        ).scalars().all()
+        return [
+            AcademicCycle(
+                id=row.id,
+                name=row.name,
+                created_at=self._utc(row.created_at),
+                starts_on=row.starts_on,
+            )
+            for row in rows
+        ]
+
+    def set_starts_on(self, cycle_id: int, starts_on: date) -> Optional[AcademicCycle]:
+        row = self._session.get(AcademicCycleORM, cycle_id)
+        if row is None:
+            return None
+        row.starts_on = starts_on
+        self._session.flush()
+        return AcademicCycle(
+            id=row.id,
+            name=row.name,
+            created_at=self._utc(row.created_at),
+            starts_on=row.starts_on,
+        )
+
+    @staticmethod
+    def _utc(value: datetime) -> datetime:
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+class SqlAlchemyStudentAccountRepository(StudentAccountRepository):
+    def __init__(self, session: Session):
+        self._session = session
+
+    def get_by_email(self, email: str) -> Optional[StudentAccount]:
+        row = self._session.execute(
+            select(UserORM).where(func.lower(UserORM.email) == email.lower())
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        return StudentAccount(
+            id=row.id,
+            username=row.username,
+            full_name=row.full_name,
+            email=row.email,
+            role=row.role.name,
+            active=row.active,
+        )
+
+    def get_by_username(self, username: str) -> Optional[StudentAccount]:
+        row = self._session.execute(
+            select(UserORM).where(UserORM.username == username)
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        return StudentAccount(
+            id=row.id,
+            username=row.username,
+            full_name=row.full_name,
+            email=row.email,
+            role=row.role.name,
+            active=row.active,
+        )
+
+    def update_username(self, account_id: int, username: str) -> StudentAccount:
+        row = self._session.get(UserORM, account_id)
+        if row is None:
+            raise LookupError(f"Cuenta de estudiante {account_id} no encontrada.")
+        row.username = username
+        self._session.flush()
+        return StudentAccount(
+            id=row.id,
+            username=row.username,
+            full_name=row.full_name,
+            email=row.email,
+            role=row.role.name,
+            active=row.active,
+        )
+
+    def create_student(
+        self, username: str, full_name: str, email: Optional[str], password_hash: str
+    ) -> StudentAccount:
+        role_id = self._session.execute(
+            select(RoleORM.id).where(RoleORM.name == "estudiante")
+        ).scalar_one()
+        row = UserORM(
+            username=username,
+            full_name=full_name,
+            email=email,
+            password_hash=password_hash,
+            must_change_password=True,
+            role_id=role_id,
+        )
+        self._session.add(row)
+        self._session.flush()
+        if email:
+            self._session.execute(
+                update(StudentORM)
+                .where(func.lower(StudentORM.email) == email.lower())
+                .values(user_id=row.id)
+            )
+        return StudentAccount(
+            id=row.id,
+            username=row.username,
+            full_name=row.full_name,
+            email=row.email,
+            role="estudiante",
+            active=row.active,
+        )
 
 
 class SqlAlchemyStudentRepository(StudentRepository):
@@ -127,6 +307,11 @@ class SqlAlchemyStudentRepository(StudentRepository):
         beta_init: float,
         phone_number: Optional[str] = None,
         email: Optional[str] = None,
+        user_id: Optional[int] = None,
+        roster_number: Optional[str] = None,
+        specialty: Optional[str] = None,
+        student_condition: Optional[str] = None,
+        times_repeated: Optional[str] = None,
     ) -> Student:
         existing = self._session.execute(
             select(StudentORM).where(
@@ -143,6 +328,11 @@ class SqlAlchemyStudentRepository(StudentRepository):
             display_name=display_name,
             phone_number=phone_number,
             email=email,
+            user_id=user_id,
+            roster_number=roster_number,
+            specialty=specialty,
+            student_condition=student_condition,
+            times_repeated=times_repeated,
         )
         self._session.add(row)
         self._session.flush()  # necesitamos row.id antes de crear el estado
@@ -162,6 +352,11 @@ class SqlAlchemyStudentRepository(StudentRepository):
         beta_init: float,
         phone_number: Optional[str] = None,
         email: Optional[str] = None,
+        user_id: Optional[int] = None,
+        roster_number: Optional[str] = None,
+        specialty: Optional[str] = None,
+        student_condition: Optional[str] = None,
+        times_repeated: Optional[str] = None,
     ) -> Tuple[Student, str]:
         existing = self._session.execute(
             select(StudentORM).where(
@@ -171,14 +366,23 @@ class SqlAlchemyStudentRepository(StudentRepository):
         ).scalar_one_or_none()
         if existing is None:
             return self.get_or_create(
-                course_id, external_ref, display_name, alpha_init, beta_init, phone_number, email
+                course_id, external_ref, display_name, alpha_init, beta_init,
+                phone_number, email, user_id, roster_number, specialty,
+                student_condition, times_repeated,
             ), "created"
-        if (
-            existing.display_name == display_name
-            and existing.active
-            and (phone_number is None or existing.phone_number == phone_number)
-            and (email is None or existing.email == email)
-        ):
+        changed = (
+            existing.display_name != display_name
+            or not existing.active
+            or any(
+                value is not None and getattr(existing, field) != value
+                for field, value in (
+                    ("phone_number", phone_number), ("email", email), ("user_id", user_id),
+                    ("roster_number", roster_number), ("specialty", specialty),
+                    ("student_condition", student_condition), ("times_repeated", times_repeated),
+                )
+            )
+        )
+        if not changed:
             return _to_student(existing), "unchanged"
         existing.display_name = display_name
         existing.active = True
@@ -186,6 +390,12 @@ class SqlAlchemyStudentRepository(StudentRepository):
             existing.phone_number = phone_number
         if email is not None:
             existing.email = email
+        for field, value in (
+            ("user_id", user_id), ("roster_number", roster_number), ("specialty", specialty),
+            ("student_condition", student_condition), ("times_repeated", times_repeated),
+        ):
+            if value is not None:
+                setattr(existing, field, value)
         self._session.flush()
         return _to_student(existing), "updated"
 
@@ -642,3 +852,74 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
             .limit(limit)
         ).all()
         return [self._to_participation(participation, student) for participation, student in rows]
+
+
+class SqlAlchemyGroupPlanRepository(GroupPlanRepository):
+    def __init__(self, session: Session):
+        self._session = session
+
+    @staticmethod
+    def _to_plan(row: CourseGroupPlanORM) -> CourseGroupPlan:
+        return CourseGroupPlan(
+            id=row.id,
+            course_id=row.course_id,
+            name=row.name,
+            max_group_size=row.max_group_size,
+            groups=[
+                StudentGroup(name=group["name"], student_ids=list(group["student_ids"]))
+                for group in row.groups
+            ],
+            created_at=row.created_at,
+        )
+
+    def create(
+        self,
+        course_id: int,
+        name: str,
+        max_group_size: int,
+        groups: List[StudentGroup],
+    ) -> CourseGroupPlan:
+        row = CourseGroupPlanORM(
+            course_id=course_id,
+            name=name,
+            max_group_size=max_group_size,
+            groups=[{"name": group.name, "student_ids": group.student_ids} for group in groups],
+        )
+        self._session.add(row)
+        self._session.flush()
+        return self._to_plan(row)
+
+    def get(self, plan_id: int) -> Optional[CourseGroupPlan]:
+        row = self._session.get(CourseGroupPlanORM, plan_id)
+        return self._to_plan(row) if row is not None else None
+
+    def list_by_course(self, course_id: int) -> List[CourseGroupPlan]:
+        rows = self._session.execute(
+            select(CourseGroupPlanORM)
+            .where(CourseGroupPlanORM.course_id == course_id)
+            .order_by(CourseGroupPlanORM.created_at.desc(), CourseGroupPlanORM.id.desc())
+        ).scalars().all()
+        return [self._to_plan(row) for row in rows]
+
+    def update(
+        self,
+        plan_id: int,
+        name: str,
+        max_group_size: int,
+        groups: List[StudentGroup],
+    ) -> Optional[CourseGroupPlan]:
+        row = self._session.get(CourseGroupPlanORM, plan_id)
+        if row is None:
+            return None
+        row.name = name
+        row.max_group_size = max_group_size
+        row.groups = [{"name": group.name, "student_ids": group.student_ids} for group in groups]
+        self._session.flush()
+        return self._to_plan(row)
+
+    def delete(self, plan_id: int) -> bool:
+        row = self._session.get(CourseGroupPlanORM, plan_id)
+        if row is None:
+            return False
+        self._session.delete(row)
+        return True

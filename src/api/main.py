@@ -21,21 +21,34 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
+import os
 from pathlib import Path
+import secrets
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from src.domain.entities import StudentGroup
 from src.api.dependencies import (
+    current_user,
     get_fairness_service,
+    get_group_planning_service,
     get_roster_service,
     get_selection_service,
     get_session_service,
     new_unit_of_work,
+    require_admin,
+    require_class_session_access,
+    require_course_access,
+    require_student_access,
 )
 from src.api.schemas import (
+    AcademicCycleCreateRequest,
+    AcademicCycleResponse,
+    AcademicCycleStartDateRequest,
+    AuthenticatedUserResponse,
     AttendanceEntryResponse,
     AttendanceUpdateRequest,
     AvailableMethodsResponse,
@@ -43,6 +56,11 @@ from src.api.schemas import (
     CourseResponse,
     DecisionResultResponse,
     FairnessMetricsResponse,
+    GroupPlanGenerateRequest,
+    GroupPlanResponse,
+    GroupPlanUpdateRequest,
+    ManualGroupPlanRequest,
+    LoginRequest,
     ParticipationBatchRequest,
     ParticipationResponse,
     RosterImportResponse,
@@ -53,27 +71,55 @@ from src.api.schemas import (
     SessionProposalResponse,
     SessionStartRequest,
     SessionSummaryResponse,
+    StudentGroupResponse,
     StudentEnrollRequest,
+    StudentEnrollmentResponse,
     StudentResponse,
+    StudentAccountCreateRequest,
+    StudentAccountCreatedResponse,
+    StudentAccountResponse,
+    StudentCourseResponse,
+    StudentWeekResponse,
+    StudentWeeksResponse,
     StudentStateResponse,
     StudentUpdateRequest,
+    TeacherAssignmentResponse,
+    TeacherCreatedResponse,
+    TeacherCreateRequest,
+    TeacherCourseAssignmentRequest,
+    PasswordChangeRequest,
+    TemporaryPasswordResponse,
     SyllabusEntryRequest,
     SyllabusEntryResponse,
 )
 from src.repositories.interfaces import (
+    DuplicateAcademicCycleError,
     DuplicateStudentError,
     InvalidParticipationStudentError,
     ParticipationDecisionNotFoundError,
     UnitOfWork,
 )
 from src.services.bootstrap import build_app_context
+from src.services.auth_service import AuthenticatedUser
+from src.services.auth_service import (
+    ROLE_ADMIN,
+    ROLE_STUDENT,
+    ROLE_TEACHER,
+    hash_password,
+)
 from src.services.errors import (
     CourseNotFoundError,
     InvalidAttendanceError,
     SessionNotFoundError,
     StudentNotFoundError,
 )
+from src.services.group_planning_service import (
+    GroupPlanNotFoundError,
+    GroupPlanningService,
+    InvalidGroupPlanError,
+)
 from src.services.roster_import import MAX_FILE_BYTES, RosterFormatError
+from src.services.roster_service import RosterAlreadyImportedError
 from src.services.session_service import SessionDetail
 from src.services.selection_service import NoEligibleStudentsError, NoClassSessionError
 from src.strategies.registry import (
@@ -123,9 +169,102 @@ async def prevent_frontend_cache(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def authenticate_requests(request: Request, call_next):
+    public_paths = {"/", "/health", "/auth/login", "/auth/logout"}
+    if (
+        request.url.path not in public_paths
+        and not request.url.path.startswith("/assets/")
+        and hasattr(request.app.state, "app_context")
+    ):
+        user = request.app.state.app_context.auth_service.user_for_token(
+            request.cookies.get("aula_session")
+        )
+        if user is None:
+            return JSONResponse(
+                {"detail": "Inicia sesión para continuar."},
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+        request.state.authenticated_user = user
+        if (
+            user.must_change_password
+            and request.url.path not in {"/auth/me", "/auth/change-password", "/auth/logout"}
+        ):
+            return JSONResponse(
+                {"detail": "Debes configurar una contraseña nueva antes de continuar."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+    response = await call_next(request)
+    if (
+        request.url.path.startswith("/auth/")
+        or request.url.path.startswith("/admin/teachers")
+        or request.url.path.startswith("/admin/students")
+        or request.url.path.endswith("/students/import")
+        or request.url.path.endswith("/students")
+        or request.url.path.endswith("/reset-password")
+    ) and request.method != "GET":
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/health", tags=["infraestructura"])
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.post("/auth/login", response_model=AuthenticatedUserResponse, tags=["autenticación"])
+def login(payload: LoginRequest, request: Request, response: Response) -> AuthenticatedUserResponse:
+    result = request.app.state.app_context.auth_service.login(
+        payload.username.strip(), payload.password
+    )
+    if result is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Usuario o contraseña incorrectos.")
+    token, user = result
+    response.set_cookie(
+        "aula_session",
+        token,
+        max_age=12 * 60 * 60,
+        httponly=True,
+        secure=os.environ.get("AUTH_COOKIE_SECURE", "false").lower() == "true",
+        samesite="strict",
+        path="/",
+    )
+    return AuthenticatedUserResponse(**user.__dict__)
+
+
+@app.get("/auth/me", response_model=AuthenticatedUserResponse, tags=["autenticación"])
+def who_am_i(user: AuthenticatedUser = Depends(current_user)) -> AuthenticatedUserResponse:
+    return AuthenticatedUserResponse(**user.__dict__)
+
+
+@app.post(
+    "/auth/change-password",
+    response_model=AuthenticatedUserResponse,
+    tags=["autenticación"],
+)
+def change_password(
+    payload: PasswordChangeRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(current_user),
+) -> AuthenticatedUserResponse:
+    updated = request.app.state.app_context.auth_service.change_password(
+        user.id,
+        payload.new_password,
+        request.cookies.get("aula_session"),
+    )
+    return AuthenticatedUserResponse(**updated.__dict__)
+
+
+@app.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT, tags=["autenticación"])
+def logout(request: Request, response: Response) -> None:
+    request.app.state.app_context.auth_service.logout(request.cookies.get("aula_session"))
+    response.delete_cookie(
+        "aula_session",
+        path="/",
+        httponly=True,
+        secure=os.environ.get("AUTH_COOKIE_SECURE", "false").lower() == "true",
+        samesite="strict",
+    )
 
 
 # Fecha de reserva para `created_at` en filas heredadas de una base anterior
@@ -133,7 +272,10 @@ def health() -> dict:
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
-@app.get("/methods", response_model=AvailableMethodsResponse, tags=["infraestructura"])
+@app.get(
+    "/methods", response_model=AvailableMethodsResponse, tags=["infraestructura"],
+    dependencies=[Depends(current_user)],
+)
 def list_methods() -> AvailableMethodsResponse:
     """Estrategias de selección registradas y disponibles para usar en
     `POST /courses/{course_id}/sessions/select`.
@@ -161,6 +303,21 @@ display_name=s.display_name,
         # opcionales: un estudiante importado antes de que existieran esas
         # columnas los tiene en None, y eso tiene que ser valido.
         phone_number=s.phone_number, email=s.email,
+        user_id=s.user_id,
+        roster_number=s.roster_number,
+        specialty=s.specialty,
+        student_condition=s.student_condition,
+        times_repeated=s.times_repeated,
+    )
+
+
+def _course_response(course) -> CourseResponse:
+    return CourseResponse(
+        id=course.id,
+        name=course.name,
+        created_at=course.created_at,
+        cycle_id=course.cycle_id,
+        roster_imported=course.roster_imported_at is not None,
     )
 
 
@@ -191,30 +348,312 @@ def _session_detail_response(detail: SessionDetail) -> SessionDetailResponse:
 
 
 @app.post(
-    "/courses", response_model=CourseResponse, status_code=status.HTTP_201_CREATED, tags=["cursos"]
+    "/cycles",
+    response_model=AcademicCycleResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["ciclos"],
+    dependencies=[Depends(require_admin)],
+)
+def create_cycle(
+    payload: AcademicCycleCreateRequest, uow: UnitOfWork = Depends(new_unit_of_work)
+) -> AcademicCycleResponse:
+    try:
+        with uow:
+            cycle = uow.cycles.create(payload.name, starts_on=payload.starts_on)
+            uow.commit()
+    except DuplicateAcademicCycleError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return AcademicCycleResponse(
+        id=cycle.id, name=cycle.name, created_at=cycle.created_at, starts_on=cycle.starts_on
+    )
+
+
+@app.patch(
+    "/cycles/{cycle_id}",
+    response_model=AcademicCycleResponse,
+    tags=["ciclos"],
+    dependencies=[Depends(require_admin)],
+)
+def update_cycle_start_date(
+    cycle_id: int,
+    payload: AcademicCycleStartDateRequest,
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> AcademicCycleResponse:
+    with uow:
+        cycle = uow.cycles.set_starts_on(cycle_id, payload.starts_on)
+        if cycle is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"Ciclo {cycle_id} no encontrado.")
+        uow.commit()
+    return AcademicCycleResponse(
+        id=cycle.id, name=cycle.name, created_at=cycle.created_at, starts_on=cycle.starts_on
+    )
+
+
+@app.get(
+    "/cycles", response_model=List[AcademicCycleResponse], tags=["ciclos"],
+    dependencies=[Depends(current_user)],
+)
+def list_cycles(
+    request: Request,
+    user: AuthenticatedUser = Depends(current_user),
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> List[AcademicCycleResponse]:
+    with uow:
+        cycles = uow.cycles.list_all()
+    allowed_ids = set(request.app.state.app_context.auth_service.cycle_ids_for_user(user))
+    if user.role != "administrador":
+        cycles = [cycle for cycle in cycles if cycle.id in allowed_ids]
+    return [
+        AcademicCycleResponse(
+            id=cycle.id, name=cycle.name, created_at=cycle.created_at, starts_on=cycle.starts_on
+        )
+        for cycle in cycles
+    ]
+
+
+@app.get(
+    "/student/courses",
+    response_model=List[StudentCourseResponse],
+    tags=["estudiantes"],
+    dependencies=[Depends(current_user)],
+)
+def list_student_courses(
+    request: Request, user: AuthenticatedUser = Depends(current_user)
+) -> List[StudentCourseResponse]:
+    if user.role != ROLE_STUDENT:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Este recurso es exclusivo para estudiantes.")
+    courses = request.app.state.app_context.auth_service.student_courses(user.id)
+    return [StudentCourseResponse(**course) for course in courses]
+
+
+@app.get(
+    "/student/courses/{course_id}/weeks",
+    response_model=StudentWeeksResponse,
+    tags=["estudiantes"],
+    dependencies=[Depends(current_user)],
+)
+def list_student_course_weeks(
+    course_id: int,
+    request: Request,
+    user: AuthenticatedUser = Depends(current_user),
+    uow: UnitOfWork = Depends(new_unit_of_work),
+    session_service=Depends(get_session_service),
+) -> StudentWeeksResponse:
+    if user.role != ROLE_STUDENT:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Este recurso es exclusivo para estudiantes.")
+    if not request.app.state.app_context.auth_service.has_course_access(user, course_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No se encontró el curso matriculado.")
+    with uow:
+        course = uow.courses.get(course_id)
+        cycle = uow.cycles.get(course.cycle_id) if course and course.cycle_id else None
+    if course is None or cycle is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "El curso no está asociado a un ciclo académico.")
+    if cycle.starts_on is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "El administrador debe configurar la fecha de inicio del ciclo para mostrar las semanas.",
+        )
+    sessions = session_service.list_sessions(course_id)
+    grouped: list[list[SessionSummaryResponse]] = [[] for _ in range(16)]
+    unassigned: list[SessionSummaryResponse] = []
+    for item in sessions:
+        session = SessionSummaryResponse(
+            id=item.id,
+            course_id=item.course_id,
+            session_date=item.session_date,
+            topic=item.topic,
+            label=item.label,
+            created_at=item.created_at,
+        )
+        if item.session_date is None:
+            unassigned.append(session)
+            continue
+        day_offset = (item.session_date - cycle.starts_on).days
+        week_number = day_offset // 7 + 1
+        if 1 <= week_number <= 16:
+            grouped[week_number - 1].append(session)
+        else:
+            unassigned.append(session)
+    return StudentWeeksResponse(
+        course_id=course_id,
+        cycle_starts_on=cycle.starts_on,
+        weeks=[
+            StudentWeekResponse(week_number=index + 1, sessions=week_sessions)
+            for index, week_sessions in enumerate(grouped)
+        ],
+        unassigned_sessions=unassigned,
+    )
+
+
+@app.get(
+    "/admin/teachers",
+    response_model=List[TeacherAssignmentResponse],
+    tags=["administración"],
+    dependencies=[Depends(require_admin)],
+)
+def list_teachers(request: Request) -> List[TeacherAssignmentResponse]:
+    teachers = request.app.state.app_context.auth_service.teachers()
+    return [TeacherAssignmentResponse(**teacher) for teacher in teachers]
+
+
+@app.get(
+    "/admin/students",
+    response_model=List[StudentAccountResponse],
+    tags=["administración"],
+    dependencies=[Depends(require_admin)],
+)
+def list_student_accounts(request: Request) -> List[StudentAccountResponse]:
+    accounts = request.app.state.app_context.auth_service.students()
+    return [StudentAccountResponse(**account) for account in accounts]
+
+
+@app.post(
+    "/admin/students",
+    response_model=StudentAccountCreatedResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["administración"],
+    dependencies=[Depends(require_admin)],
+)
+def create_student_account(
+    payload: StudentAccountCreateRequest, request: Request
+) -> StudentAccountCreatedResponse:
+    try:
+        account, temporary_password = request.app.state.app_context.auth_service.create_student(
+            payload.username, payload.full_name, payload.email
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return StudentAccountCreatedResponse(**account, temporary_password=temporary_password)
+
+
+@app.post(
+    "/admin/students/{student_id}/reset-password",
+    response_model=TemporaryPasswordResponse,
+    tags=["administración"],
+    dependencies=[Depends(require_admin)],
+)
+def reset_student_account_password(student_id: int, request: Request) -> TemporaryPasswordResponse:
+    try:
+        temporary_password = request.app.state.app_context.auth_service.reset_student_password(
+            student_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return TemporaryPasswordResponse(temporary_password=temporary_password)
+
+
+@app.post(
+    "/admin/teachers",
+    response_model=TeacherCreatedResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["administración"],
+    dependencies=[Depends(require_admin)],
+)
+def create_teacher(
+    payload: TeacherCreateRequest, request: Request
+) -> TeacherCreatedResponse:
+    try:
+        teacher, temporary_password = request.app.state.app_context.auth_service.create_teacher(
+            username=payload.username,
+            full_name=payload.full_name,
+            email=payload.email,
+            phone_number=payload.phone_number,
+            course_ids=payload.course_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return TeacherCreatedResponse(**teacher, temporary_password=temporary_password)
+
+
+@app.post(
+    "/admin/teachers/{teacher_id}/reset-password",
+    response_model=TemporaryPasswordResponse,
+    tags=["administración"],
+    dependencies=[Depends(require_admin)],
+)
+def reset_teacher_password(teacher_id: int, request: Request) -> TemporaryPasswordResponse:
+    try:
+        temporary_password = request.app.state.app_context.auth_service.reset_teacher_password(
+            teacher_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return TemporaryPasswordResponse(temporary_password=temporary_password)
+
+
+@app.put(
+    "/admin/teachers/{teacher_id}/courses",
+    response_model=TeacherAssignmentResponse,
+    tags=["administración"],
+    dependencies=[Depends(require_admin)],
+)
+def assign_teacher_courses(
+    teacher_id: int,
+    payload: TeacherCourseAssignmentRequest,
+    request: Request,
+) -> TeacherAssignmentResponse:
+    auth_service = request.app.state.app_context.auth_service
+    try:
+        updated = auth_service.assign_courses(teacher_id, payload.course_ids)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    if not updated:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Docente {teacher_id} no encontrado.")
+    teacher = next(
+        (item for item in auth_service.teachers() if item["id"] == teacher_id), None
+    )
+    if teacher is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Docente {teacher_id} no encontrado.")
+    return TeacherAssignmentResponse(**teacher)
+
+
+@app.post(
+    "/courses", response_model=CourseResponse, status_code=status.HTTP_201_CREATED, tags=["cursos"],
+    dependencies=[Depends(require_admin)],
 )
 def create_course(payload: CourseCreateRequest, uow: UnitOfWork = Depends(new_unit_of_work)) -> CourseResponse:
     with uow:
-        course = uow.courses.create(payload.name)
+        if payload.cycle_id is not None and uow.cycles.get(payload.cycle_id) is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, f"Ciclo {payload.cycle_id} no encontrado."
+            )
+        course = uow.courses.create(payload.name, cycle_id=payload.cycle_id)
         uow.commit()
-    return CourseResponse(id=course.id, name=course.name, created_at=course.created_at)
+    return _course_response(course)
 
 
-@app.get("/courses", response_model=List[CourseResponse], tags=["cursos"])
-def list_courses(uow: UnitOfWork = Depends(new_unit_of_work)) -> List[CourseResponse]:
+@app.get(
+    "/courses", response_model=List[CourseResponse], tags=["cursos"],
+    dependencies=[Depends(current_user)],
+)
+def list_courses(
+    request: Request,
+    user: AuthenticatedUser = Depends(current_user),
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> List[CourseResponse]:
     """Todos los cursos (HU-S1: el docente elige el curso de la sesión)."""
+    if user.role == ROLE_STUDENT:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Consulta los cursos y sesiones desde el portal de estudiante.",
+        )
     with uow:
         courses = uow.courses.list_all()
-    return [CourseResponse(id=c.id, name=c.name, created_at=c.created_at) for c in courses]
+    allowed_ids = set(request.app.state.app_context.auth_service.course_ids_for_user(user))
+    courses = [course for course in courses if course.id in allowed_ids]
+    return [_course_response(course) for course in courses]
 
 
-@app.get("/courses/{course_id}", response_model=CourseResponse, tags=["cursos"])
+@app.get(
+    "/courses/{course_id}", response_model=CourseResponse, tags=["cursos"],
+    dependencies=[Depends(require_course_access)],
+)
 def get_course(course_id: int, uow: UnitOfWork = Depends(new_unit_of_work)) -> CourseResponse:
     with uow:
         course = uow.courses.get(course_id)
     if course is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Curso {course_id} no encontrado.")
-    return CourseResponse(id=course.id, name=course.name, created_at=course.created_at)
+    return _course_response(course)
 
 
 # --------------------------------------------------------------------------
@@ -224,15 +663,16 @@ def get_course(course_id: int, uow: UnitOfWork = Depends(new_unit_of_work)) -> C
 
 @app.post(
     "/courses/{course_id}/students",
-    response_model=StudentResponse,
+    response_model=StudentEnrollmentResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["estudiantes"],
+    dependencies=[Depends(require_course_access)],
 )
 def enroll_student(
     course_id: int,
     payload: StudentEnrollRequest,
     uow: UnitOfWork = Depends(new_unit_of_work),
-) -> StudentResponse:
+) -> StudentEnrollmentResponse:
     """Matricula un estudiante en el curso (idempotente por `external_ref`).
 
     Es el equivalente en producción a `Student(student_id=i, ...)` en la
@@ -241,6 +681,54 @@ def enroll_student(
     en vez de un objeto que muere al terminar la corrida.
     """
     with uow:
+        normalized_email = payload.email.strip().lower() if payload.email else None
+        username_account = uow.student_accounts.get_by_username(payload.external_ref)
+        email_account = (
+            uow.student_accounts.get_by_email(normalized_email)
+            if normalized_email
+            else None
+        )
+        if (
+            username_account is not None
+            and email_account is not None
+            and username_account.id != email_account.id
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "El código y el correo ya pertenecen a cuentas diferentes.",
+            )
+        account = email_account or username_account
+        if account is not None and account.role != ROLE_STUDENT:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "El código o correo ya pertenece a una cuenta que no es de estudiante.",
+            )
+        if account is not None and not account.active:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "La cuenta de estudiante asociada está inactiva.",
+            )
+        if (
+            account is not None
+            and account.email
+            and normalized_email
+            and account.email.strip().lower() != normalized_email
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "El código ya pertenece a una cuenta asociada a otro correo.",
+            )
+        temporary_password = None
+        if account is None:
+            temporary_password = secrets.token_urlsafe(18)
+            account = uow.student_accounts.create_student(
+                username=payload.external_ref,
+                full_name=payload.display_name,
+                email=normalized_email,
+                password_hash=hash_password(temporary_password),
+            )
+        elif account.username != payload.external_ref:
+            account = uow.student_accounts.update_username(account.id, payload.external_ref)
         student = uow.students.get_or_create(
             course_id=course_id,
             external_ref=payload.external_ref,
@@ -248,29 +736,37 @@ def enroll_student(
             alpha_init=payload.alpha_init,
             beta_init=payload.beta_init,
             phone_number=payload.phone_number,
-            email=payload.email,
+            email=normalized_email,
+            user_id=account.id,
         )
         uow.commit()
-    return _student_response(student)
+    return StudentEnrollmentResponse(
+        **_student_response(student).model_dump(),
+        account_username=account.username,
+        temporary_password=temporary_password,
+    )
 
 
 @app.post(
     "/courses/{course_id}/students/import",
     response_model=RosterImportResponse,
     tags=["estudiantes"],
+    dependencies=[Depends(require_course_access)],
 )
 def import_students_from_excel(
     course_id: int,
+    response: Response,
     file: UploadFile = File(..., description="Excel .xlsx con columnas de código y nombre."),
     roster_service=Depends(get_roster_service),
 ) -> RosterImportResponse:
-    """HU-C1: carga (o re-carga) la lista de estudiantes desde un Excel.
+    """HU-C1: carga la lista de estudiantes desde un Excel.
 
     Encabezados aceptados: `codigo` (o matrícula) y `nombre` (o apellidos y
     nombres). Las filas válidas se guardan; las inválidas se devuelven en
     `errors` con su número de fila. Si el archivo no tiene la estructura
-    esperada, responde 400 y no se guarda nada. Es idempotente: volver a
-    cargar el archivo actualiza nombres y no duplica estudiantes.
+    esperada, responde 400 y no se guarda nada. Para cursos asociados a un
+    ciclo, solo se permite una carga con filas válidas; los cursos históricos
+    sin ciclo conservan su comportamiento idempotente.
     """
     if not (file.filename or "").lower().endswith(".xlsx"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "El archivo debe ser un Excel en formato .xlsx.")
@@ -281,17 +777,27 @@ def import_students_from_excel(
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except RosterFormatError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except RosterAlreadyImportedError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    response.headers["Cache-Control"] = "no-store"
     return RosterImportResponse(
         total_rows=result.total_rows,
         created=result.created,
         updated=result.updated,
         unchanged=result.unchanged,
         errors=[RosterRowErrorResponse(row=e.row_number, message=e.message) for e in result.errors],
+        warnings=[
+            RosterRowErrorResponse(row=warning.row_number, message=warning.message)
+            for warning in result.warnings
+        ],
+        created_accounts=result.created_accounts,
+        updated_accounts=result.updated_accounts,
     )
 
 
 @app.get(
-    "/courses/{course_id}/students", response_model=List[StudentResponse], tags=["estudiantes"]
+    "/courses/{course_id}/students", response_model=List[StudentResponse], tags=["estudiantes"],
+    dependencies=[Depends(require_course_access)],
 )
 def list_students(
     course_id: int, include_inactive: bool = False, uow: UnitOfWork = Depends(new_unit_of_work)
@@ -303,7 +809,10 @@ def list_students(
     return [_student_response(s) for s in students]
 
 
-@app.patch("/students/{student_id}", response_model=StudentResponse, tags=["estudiantes"])
+@app.patch(
+    "/students/{student_id}", response_model=StudentResponse, tags=["estudiantes"],
+    dependencies=[Depends(require_student_access)],
+)
 def update_student(
     student_id: int,
     payload: StudentUpdateRequest,
@@ -326,8 +835,38 @@ def update_student(
     return _student_response(student)
 
 
+@app.post(
+    "/students/{student_id}/reset-password",
+    response_model=TemporaryPasswordResponse,
+    tags=["estudiantes"],
+    dependencies=[Depends(require_student_access)],
+)
+def reset_student_password(
+    student_id: int,
+    request: Request,
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> TemporaryPasswordResponse:
+    user: AuthenticatedUser = request.state.authenticated_user
+    if user.role not in {ROLE_ADMIN, ROLE_TEACHER}:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Solo un docente o administrador puede restablecer la contraseña.")
+    with uow:
+        student = uow.students.get(student_id)
+    if student is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Estudiante {student_id} no encontrado.")
+    if student.user_id is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Este estudiante aún no tiene una cuenta asociada.")
+    try:
+        temporary_password = request.app.state.app_context.auth_service.reset_student_password(
+            student.user_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return TemporaryPasswordResponse(temporary_password=temporary_password)
+
+
 @app.get(
-    "/students/{student_id}/state", response_model=StudentStateResponse, tags=["estudiantes"]
+    "/students/{student_id}/state", response_model=StudentStateResponse, tags=["estudiantes"],
+    dependencies=[Depends(require_student_access)],
 )
 def get_student_state(student_id: int, uow: UnitOfWork = Depends(new_unit_of_work)) -> StudentStateResponse:
     with uow:
@@ -349,6 +888,7 @@ def get_student_state(student_id: int, uow: UnitOfWork = Depends(new_unit_of_wor
     "/students/{student_id}/history",
     response_model=List[SelectionEventResponse],
     tags=["estudiantes"],
+    dependencies=[Depends(require_student_access)],
 )
 def get_student_history(
     student_id: int, limit: int = 50, uow: UnitOfWork = Depends(new_unit_of_work)
@@ -380,6 +920,7 @@ def get_student_history(
     response_model=SyllabusEntryResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["sesiones"],
+    dependencies=[Depends(require_course_access)],
 )
 def set_syllabus_entry(
     course_id: int, payload: SyllabusEntryRequest, session_service=Depends(get_session_service)
@@ -398,7 +939,8 @@ def set_syllabus_entry(
 
 
 @app.get(
-    "/courses/{course_id}/syllabus", response_model=List[SyllabusEntryResponse], tags=["sesiones"]
+    "/courses/{course_id}/syllabus", response_model=List[SyllabusEntryResponse], tags=["sesiones"],
+    dependencies=[Depends(require_course_access)],
 )
 def list_syllabus(
     course_id: int, session_service=Depends(get_session_service)
@@ -417,6 +959,7 @@ def list_syllabus(
     "/courses/{course_id}/class-sessions/proposal",
     response_model=SessionProposalResponse,
     tags=["sesiones"],
+    dependencies=[Depends(require_course_access)],
 )
 def propose_session(
     course_id: int,
@@ -439,6 +982,7 @@ def propose_session(
     response_model=SessionDetailResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["sesiones"],
+    dependencies=[Depends(require_course_access)],
 )
 def start_class_session(
     course_id: int, payload: SessionStartRequest, session_service=Depends(get_session_service)
@@ -465,6 +1009,7 @@ def start_class_session(
     "/courses/{course_id}/class-sessions",
     response_model=List[SessionSummaryResponse],
     tags=["sesiones"],
+    dependencies=[Depends(require_course_access)],
 )
 def list_class_sessions(
     course_id: int, session_service=Depends(get_session_service)
@@ -483,7 +1028,8 @@ def list_class_sessions(
 
 
 @app.get(
-    "/class-sessions/{class_session_id}", response_model=SessionDetailResponse, tags=["sesiones"]
+    "/class-sessions/{class_session_id}", response_model=SessionDetailResponse, tags=["sesiones"],
+    dependencies=[Depends(require_class_session_access)],
 )
 def get_class_session(
     class_session_id: int, session_service=Depends(get_session_service)
@@ -499,6 +1045,7 @@ def get_class_session(
     "/class-sessions/{class_session_id}/attendance",
     response_model=SessionDetailResponse,
     tags=["sesiones"],
+    dependencies=[Depends(require_class_session_access)],
 )
 def update_attendance(
     class_session_id: int,
@@ -528,6 +1075,7 @@ def update_attendance(
     response_model=DecisionResultResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["selección"],
+    dependencies=[Depends(require_course_access)],
 )
 def run_selection(
     course_id: int,
@@ -579,6 +1127,7 @@ def run_selection(
     response_model=List[ParticipationResponse],
     status_code=status.HTTP_201_CREATED,
     tags=["participación"],
+    dependencies=[Depends(require_course_access)],
 )
 def record_participations(
     course_id: int,
@@ -615,6 +1164,7 @@ def record_participations(
     "/courses/{course_id}/participations",
     response_model=List[ParticipationResponse],
     tags=["participación"],
+    dependencies=[Depends(require_admin)],
 )
 def list_course_participations(
     course_id: int,
@@ -631,6 +1181,139 @@ def list_course_participations(
     return [ParticipationResponse(**record.__dict__) for record in records]
 
 
+def _group_plan_response(plan) -> GroupPlanResponse:
+    return GroupPlanResponse(
+        id=plan.id,
+        course_id=plan.course_id,
+        name=plan.name,
+        max_group_size=plan.max_group_size,
+        groups=[
+            StudentGroupResponse(name=group.name, student_ids=group.student_ids)
+            for group in plan.groups
+        ],
+        created_at=plan.created_at,
+    )
+
+
+@app.get(
+    "/courses/{course_id}/group-plans",
+    response_model=List[GroupPlanResponse],
+    tags=["grupos"],
+    dependencies=[Depends(require_course_access)],
+)
+def list_group_plans(
+    course_id: int,
+    group_service: GroupPlanningService = Depends(get_group_planning_service),
+) -> List[GroupPlanResponse]:
+    try:
+        plans = group_service.list_plans(course_id)
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return [_group_plan_response(plan) for plan in plans]
+
+
+@app.post(
+    "/courses/{course_id}/group-plans",
+    response_model=GroupPlanResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["grupos"],
+    dependencies=[Depends(require_course_access)],
+)
+def generate_group_plan(
+    course_id: int,
+    payload: GroupPlanGenerateRequest,
+    group_service: GroupPlanningService = Depends(get_group_planning_service),
+) -> GroupPlanResponse:
+    try:
+        plan = group_service.generate(
+            course_id,
+            max_group_size=payload.max_group_size,
+            name=payload.name,
+        )
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except InvalidGroupPlanError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _group_plan_response(plan)
+
+
+@app.post(
+    "/courses/{course_id}/group-plans/manual",
+    response_model=GroupPlanResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["grupos"],
+    dependencies=[Depends(require_course_access)],
+)
+def create_manual_group_plan(
+    course_id: int,
+    payload: ManualGroupPlanRequest,
+    group_service: GroupPlanningService = Depends(get_group_planning_service),
+) -> GroupPlanResponse:
+    try:
+        plan = group_service.create_manual(
+            course_id,
+            group_count=payload.group_count,
+            name=payload.name,
+        )
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except InvalidGroupPlanError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _group_plan_response(plan)
+
+
+@app.put(
+    "/courses/{course_id}/group-plans/{plan_id}",
+    response_model=GroupPlanResponse,
+    tags=["grupos"],
+    dependencies=[Depends(require_course_access)],
+)
+def update_group_plan(
+    course_id: int,
+    plan_id: int,
+    payload: GroupPlanUpdateRequest,
+    group_service: GroupPlanningService = Depends(get_group_planning_service),
+) -> GroupPlanResponse:
+    try:
+        plan = group_service.update(
+            course_id,
+            plan_id,
+            name=payload.name,
+            max_group_size=payload.max_group_size,
+            groups=[
+                StudentGroup(name=group.name, student_ids=group.student_ids)
+                for group in payload.groups
+            ],
+        )
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except GroupPlanNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except InvalidGroupPlanError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _group_plan_response(plan)
+
+
+@app.delete(
+    "/courses/{course_id}/group-plans/{plan_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["grupos"],
+    dependencies=[Depends(require_course_access)],
+)
+def delete_group_plan(
+    course_id: int,
+    plan_id: int,
+    group_service: GroupPlanningService = Depends(get_group_planning_service),
+) -> Response:
+    try:
+        group_service.delete(course_id, plan_id)
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except GroupPlanNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 # --------------------------------------------------------------------------
 # Métricas de equidad
 # --------------------------------------------------------------------------
@@ -640,6 +1323,7 @@ def list_course_participations(
     "/courses/{course_id}/fairness-metrics",
     response_model=FairnessMetricsResponse,
     tags=["métricas"],
+    dependencies=[Depends(require_course_access)],
 )
 def fairness_metrics(
     course_id: int, fairness_service=Depends(get_fairness_service)
