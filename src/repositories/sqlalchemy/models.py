@@ -31,6 +31,7 @@ from sqlalchemy import (
     Integer,
     JSON,
     String,
+    Text,
     UniqueConstraint,
     false,
     true,
@@ -322,6 +323,8 @@ class StudentParticipationORM(Base):
     student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), nullable=False)
     score: Mapped[float] = mapped_column(Float, nullable=False)
     present: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    question: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     decision_run: Mapped["DecisionRunORM"] = relationship(back_populates="participations")

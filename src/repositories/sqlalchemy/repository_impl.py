@@ -766,6 +766,8 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
             created_at=row.created_at,
             external_ref=student.external_ref,
             display_name=student.display_name,
+            question=row.question,
+            comment=row.comment,
         )
 
     def record_many(
@@ -773,7 +775,9 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
         course_id: int,
         decision_run_id: int,
         score_and_presence_by_student: Dict[int, Tuple[float, bool]],
+        details_by_student: Optional[Dict[int, Tuple[Optional[str], Optional[str]]]] = None,
     ) -> List[StudentParticipation]:
+        details_by_student = details_by_student or {}
         decision_exists = self._session.execute(
             select(DecisionRunORM.id)
             .join(ClassSessionORM, DecisionRunORM.class_session_id == ClassSessionORM.id)
@@ -811,6 +815,7 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
             ).scalars()
         }
         for student_id, (score, present) in score_and_presence_by_student.items():
+            question, comment = details_by_student.get(student_id, (None, None))
             row = existing_rows.get(student_id)
             if row is None:
                 row = StudentParticipationORM(
@@ -818,11 +823,15 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
                     student_id=student_id,
                     score=score,
                     present=present,
+                    question=question,
+                    comment=comment,
                 )
                 self._session.add(row)
             else:
                 row.score = score
                 row.present = present
+                row.question = question
+                row.comment = comment
 
         self._session.flush()
         return self._rows_for_decision(decision_run_id, list(score_and_presence_by_student))

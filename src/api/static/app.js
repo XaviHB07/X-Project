@@ -37,6 +37,7 @@ const state = {
   toastTimer: null,
   visualTimer: null,
   ballMachine: null,
+  stageFlow: null,
 };
 
 const selectionAnimationDuration = 5500;
@@ -1114,7 +1115,9 @@ async function loadParticipationHistory() {
       <tr>
         <td>${escapeHtml(record.external_ref)}</td>
         <td>${escapeHtml(record.display_name)}</td>
+        <td class="participation-note">${escapeHtml(record.question || "—")}</td>
         <td>${Number(record.score).toLocaleString("es", { maximumFractionDigits: 2 })}</td>
+        <td class="participation-note">${escapeHtml(record.comment || "—")}</td>
         <td>${escapeHtml(formatDate(record.created_at))}</td>
         <td><span class="attendance-badge ${record.present ? "is-present" : "is-absent"}">${record.present ? "Presente" : "Ausente"}</span></td>
       </tr>`).join("");
@@ -1954,18 +1957,19 @@ function renderRouletteWheel(candidates) {
   }).join("");
 }
 
-function prepareSelectionStage() {
+function prepareSelectionStage(candidates = roundEligibleStudents()) {
   const mode = document.querySelector('input[name="selection-visual"]:checked').value;
-  const candidates = roundEligibleStudents();
   $("#stage-status").textContent = "SELECCIÓN EN CURSO";
   $("#stage-heading").textContent = mode === "roulette" ? "La ruleta está en marcha" : "Las bolillas se están mezclando";
   $("#stage-footnote").textContent = "El resultado se calcula con el método seleccionado.";
   $("#stage-result").hidden = true;
+  $("#stage-pick-form").hidden = true;
+  elements.selectionStage.querySelector(".selection-stage-frame").classList.remove("has-pick");
   elements.stageClose.hidden = true;
   $("#stage-done").hidden = true;
   $("#roulette-visual").hidden = mode !== "roulette";
   $("#balls-visual").hidden = mode !== "balls";
-  elements.selectionStage.showModal();
+  if (!elements.selectionStage.open) elements.selectionStage.showModal();
   $("#roulette-hub-label").textContent = "EN JUEGO";
   $("#roulette-winner").textContent = "Ruleta";
   const wheel = $("#roulette-wheel");
@@ -2050,7 +2054,8 @@ function finishSelectionStage(result, stage, error = null) {
       ? winners.map((student, index) => `<div class="stage-winner" style="animation-delay:${index * 90}ms"><span>${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(student.name)}</strong><small>ID ${student.id}</small></div>`).join("")
       : '<p class="stage-empty-result">No hubo estudiantes seleccionados.</p>';
     $("#stage-result-meta").textContent = `Sesión #${result.class_session_id} · Decisión #${result.decision_run_id}`;
-    $("#stage-footnote").textContent = "Esta decisión ya quedó guardada en el curso.";
+    $("#stage-footnote").textContent = "La selección quedó registrada. Completa los datos o quita al estudiante.";
+    showStagePick(result, winners);
   };
   if (stage.mode === "roulette") {
     revealResult();
@@ -2578,16 +2583,30 @@ elements.toggleAll.addEventListener("click", async () => {
 elements.methodSelect.addEventListener("change", updateMethodFields);
 $("#slots-input").addEventListener("change", updateSelectionControls);
 
-$("#selection-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const eligibleStudents = roundEligibleStudents();
-  if (!state.course || !eligibleStudents.length) return;
+/* ==========================================================================
+   Flujo continuo dentro del menú de la ruleta/bolillero.
+   Cada giro elige UN estudiante (k = 1). El docente completa pregunta, nota y
+   comentario en el mismo menú, o lo quita; luego se elige otro al azar hasta
+   que pulse "Salir". Los ya atendidos (guardados o quitados) no se repiten
+   dentro de esta tanda. Todos los giros reutilizan la misma sesión de clase.
+   ========================================================================== */
+function stageCandidates() {
+  const flow = state.stageFlow;
+  return roundEligibleStudents().filter((student) => !flow.excluded.has(Number(student.id)));
+}
+
+async function runStageSpin() {
+  const flow = state.stageFlow;
+  const candidates = stageCandidates();
+  if (!state.course || !candidates.length) return;
   const payload = {
-    k: Number($("#slots-input").value),
+    k: 1,
     method: elements.methodSelect.value,
-    present_student_ids: eligibleStudents.map((student) => Number(student.id)),
+    present_student_ids: candidates.map((student) => Number(student.id)),
   };
-  if (state.session) {
+  if (flow.classSessionId) {
+    payload.class_session_id = flow.classSessionId;
+  } else if (state.session) {
     // Se envía el subconjunto elegible; la asistencia de la sesión no se modifica.
     payload.class_session_id = state.session.id;
   } else {
@@ -2595,32 +2614,148 @@ $("#selection-form").addEventListener("submit", async (event) => {
     if (sessionLabel) payload.session_label = sessionLabel;
   }
   if (payload.method === "weighted_softmax") payload.method_params = { tau: Number($("#tau-input").value) };
-  const stageStartedAt = prepareSelectionStage();
-  setBusy(elements.runButton, true, "Seleccionando...");
+  const stage = prepareSelectionStage(candidates);
   try {
     const result = await api(`/courses/${state.course.id}/sessions/select`, {
       method: "POST", body: JSON.stringify(payload),
     });
-    renderSelectionResult(result);
-    const remainingAnimation = Math.max(0, selectionAnimationDuration - (performance.now() - stageStartedAt.startedAt));
+    flow.classSessionId = result.class_session_id;
+    $("#metric-last-run").textContent = `#${result.decision_run_id}`;
+    const remainingAnimation = Math.max(0, selectionAnimationDuration - (performance.now() - stage.startedAt));
     if (remainingAnimation) await new Promise((resolve) => setTimeout(resolve, remainingAnimation));
-    finishSelectionStage(result, stageStartedAt);
-    try {
-      await refreshCourse();
-      notify("Decisión guardada correctamente.");
-    } catch (error) {
-      notify(`Decisión guardada, pero no se pudo actualizar el curso: ${error.message}`, true);
-    }
+    finishSelectionStage(result, stage);
   } catch (error) {
-    finishSelectionStage(null, stageStartedAt, error);
+    finishSelectionStage(null, stage, error);
     notify(error.message, true);
+  }
+}
+
+function showStagePick(result, winners) {
+  const flow = state.stageFlow;
+  const form = $("#stage-pick-form");
+  const winner = winners[0];
+  if (!flow || !winner) { form.hidden = true; return; }
+  flow.pick = { decisionRunId: result.decision_run_id, studentId: Number(winner.id) };
+  form.reset();
+  $("#stage-score").dataset.lastValid = "";
+  $("#stage-present").checked = state.present.has(Number(winner.id));
+  elements.selectionStage.querySelector(".selection-stage-frame").classList.add("has-pick");
+  form.hidden = false;
+  $("#stage-footnote").textContent =
+    `Guardados: ${flow.saved} · Quitados: ${flow.removed} · Quedan ${Math.max(0, stageCandidates().length - 1)} por elegir.`;
+  $("#stage-score").focus({ preventScroll: true });
+  form.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+async function advanceStage() {
+  const flow = state.stageFlow;
+  flow.pick = null;
+  $("#stage-pick-form").hidden = true;
+  if (!stageCandidates().length) {
+    $("#stage-status").textContent = "RONDA COMPLETADA";
+    $("#stage-heading").textContent = "Ya no quedan estudiantes por elegir";
+    $("#stage-winners").innerHTML = "";
+    $("#stage-result-meta").textContent = `Guardados: ${flow.saved} · Quitados: ${flow.removed}`;
+    $("#stage-footnote").textContent = "Pulsa Salir para volver a la pantalla principal.";
+    return;
+  }
+  await runStageSpin();
+}
+
+function requestStageExit() {
+  const flow = state.stageFlow;
+  if (flow?.pick && !window.confirm("El estudiante elegido aún no tiene su participación guardada. ¿Salir sin guardarla?")) return;
+  closeSelectionStage();
+}
+
+$("#selection-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.course || !roundEligibleStudents().length) return;
+  state.stageFlow = { classSessionId: null, excluded: new Set(), pick: null, saved: 0, removed: 0, busy: false };
+  setBusy(elements.runButton, true, "Seleccionando...");
+  try {
+    await runStageSpin();
   } finally {
     setBusy(elements.runButton, false);
   }
 });
 
-elements.stageClose.addEventListener("click", closeSelectionStage);
-$("#stage-done").addEventListener("click", closeSelectionStage);
+$("#stage-score").addEventListener("input", (event) => {
+  const input = event.currentTarget;
+  const normalized = input.value.replace(",", ".");
+  const validFormat = /^\d*(?:\.\d*)?$/.test(normalized);
+  const validRange = normalized === "" || Number(normalized) <= 5;
+  if (!validFormat || !validRange) {
+    input.value = input.dataset.lastValid || "";
+    return;
+  }
+  input.dataset.lastValid = input.value;
+});
+
+$("#stage-pick-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const flow = state.stageFlow;
+  if (!state.course || !flow?.pick || flow.busy) return;
+  const rawScore = $("#stage-score").value.trim().replace(",", ".");
+  const score = Number(rawScore);
+  if (rawScore === "" || !Number.isFinite(score) || score < 0 || score > 5) {
+    notify("La nota debe ser un número entre 0 y 5.", true);
+    return;
+  }
+  const { decisionRunId, studentId } = flow.pick;
+  const button = $("#stage-save");
+  flow.busy = true;
+  setBusy(button, true, "Guardando...");
+  try {
+    await api(`/courses/${state.course.id}/decision-runs/${decisionRunId}/participations`, {
+      method: "POST",
+      body: JSON.stringify({
+        participations: [{
+          student_id: studentId,
+          score,
+          present: $("#stage-present").checked,
+          question: $("#stage-question").value.trim() || null,
+          comment: $("#stage-comment").value.trim() || null,
+        }],
+      }),
+    });
+    flow.saved += 1;
+    flow.excluded.add(studentId);
+    notify("Participación guardada.");
+    loadParticipationHistory();
+    refreshCourse().catch(() => {});
+  } catch (error) {
+    notify(error.message, true);
+    flow.busy = false;
+    setBusy(button, false);
+    return;
+  }
+  flow.busy = false;
+  setBusy(button, false);
+  await advanceStage();
+});
+
+$("#stage-remove").addEventListener("click", async () => {
+  const flow = state.stageFlow;
+  if (!flow?.pick || flow.busy) return;
+  flow.excluded.add(flow.pick.studentId);
+  flow.removed += 1;
+  notify("Estudiante quitado de esta ronda.");
+  await advanceStage();
+});
+
+elements.stageClose.addEventListener("click", requestStageExit);
+$("#stage-done").addEventListener("click", requestStageExit);
+elements.selectionStage.addEventListener("cancel", (event) => {
+  // Esc solo funciona cuando el botón de salida está disponible (no durante un giro).
+  event.preventDefault();
+  if (!elements.stageClose.hidden) requestStageExit();
+});
+elements.selectionStage.addEventListener("close", () => {
+  const hadFlow = Boolean(state.stageFlow);
+  state.stageFlow = null;
+  if (hadFlow) refreshCourse().catch(() => {});
+});
 
 $("#participation-form").addEventListener("submit", async (event) => {
   event.preventDefault();

@@ -274,11 +274,8 @@
                     <input id="tau-input" class="field" type="number" min="0.01" step="0.01" value="0.5" />
                   </div>
 
-                  <div class="form-row">
-                    <div class="form-field">
-                      <label class="form-label" for="slots-input">Cupos</label>
-                      <input id="slots-input" class="field" type="number" min="1" value="1" required />
-                    </div>
+                  <div class="form-row form-row-single">
+                    <input id="slots-input" type="hidden" value="1" />
                     <div class="form-field form-field-wide">
                       <label class="form-label" for="session-label">Nombre de sesión <span class="optional">OPCIONAL</span></label>
                       <input id="session-label" class="field" type="text" maxlength="255" placeholder="Ej. Semana 4" />
@@ -325,7 +322,7 @@
             </div>
             <div class="participation-table-wrap">
               <table class="participation-table">
-                <thead><tr><th>Código</th><th>Estudiante</th><th>Nota</th><th>Fecha y hora</th><th>Asistencia</th></tr></thead>
+                <thead><tr><th>Código</th><th>Estudiante</th><th>Pregunta</th><th>Nota</th><th>Comentario</th><th>Fecha y hora</th><th>Asistencia</th></tr></thead>
                 <tbody id="participation-history-body"></tbody>
               </table>
             </div>
@@ -730,7 +727,29 @@
           <p class="stage-result-label"><span aria-hidden="true">✓</span> RESULTADO FINAL</p>
           <div class="stage-winners" id="stage-winners"></div>
           <p class="stage-result-meta" id="stage-result-meta"></p>
-          <button class="button button-run stage-done" id="stage-done" type="button">Continuar <span aria-hidden="true">↗</span></button>
+          <form class="stage-pick-form" id="stage-pick-form" hidden>
+            <div class="stage-pick-grid">
+              <div class="stage-pick-field">
+                <label class="form-label" for="stage-question">Pregunta <span class="optional">OPCIONAL</span></label>
+                <input id="stage-question" class="field" type="text" maxlength="1000" autocomplete="off" placeholder="Pregunta realizada" />
+              </div>
+              <div class="stage-pick-field stage-pick-score">
+                <label class="form-label" for="stage-score">Nota (0 al 5)</label>
+                <input id="stage-score" class="field participation-score" type="password" inputmode="decimal"
+                  autocomplete="new-password" maxlength="6" pattern="[0-9]+([.,][0-9]+)?" aria-label="Nota de 0 a 5" required />
+              </div>
+            </div>
+            <div class="stage-pick-field">
+              <label class="form-label" for="stage-comment">Comentario <span class="optional">OPCIONAL</span></label>
+              <textarea id="stage-comment" class="field stage-comment" rows="2" maxlength="1000" placeholder="Anotaciones sobre la participación"></textarea>
+            </div>
+            <label class="participation-attendance" for="stage-present"><input id="stage-present" type="checkbox" /> Presente</label>
+            <div class="stage-pick-actions">
+              <button class="button button-add" id="stage-save" type="submit">Guardar y elegir otro</button>
+              <button class="button button-quiet" id="stage-remove" type="button">Quitar estudiante</button>
+            </div>
+          </form>
+          <button class="button button-quiet stage-done" id="stage-done" type="button">Salir</button>
         </section>
         <p class="stage-footnote" id="stage-footnote">El resultado se calcula con el método seleccionado.</p>
       </div>

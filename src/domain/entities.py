@@ -208,3 +208,5 @@ class StudentParticipation:
     created_at: datetime
     external_ref: str
     display_name: str
+    question: Optional[str] = None
+    comment: Optional[str] = None

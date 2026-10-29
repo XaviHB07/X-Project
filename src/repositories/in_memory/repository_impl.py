@@ -575,7 +575,9 @@ class InMemoryParticipationRepository(ParticipationRepository):
         course_id: int,
         decision_run_id: int,
         score_and_presence_by_student: Dict[int, Tuple[float, bool]],
+        details_by_student: Optional[Dict[int, Tuple[Optional[str], Optional[str]]]] = None,
     ) -> List[StudentParticipation]:
+        details_by_student = details_by_student or {}
         run = self._db.decision_runs.get(decision_run_id)
         session = self._db.class_sessions.get(run.class_session_id) if run else None
         if session is None or session.course_id != course_id:
@@ -595,6 +597,7 @@ class InMemoryParticipationRepository(ParticipationRepository):
         records = []
         for student_id, (score, present) in score_and_presence_by_student.items():
             student = self._db.students[student_id]
+            question, comment = details_by_student.get(student_id, (None, None))
             key = (decision_run_id, student_id)
             record = self._db.participations.get(key)
             if record is None:
@@ -607,9 +610,13 @@ class InMemoryParticipationRepository(ParticipationRepository):
                     created_at=_utcnow(),
                     external_ref=student.external_ref,
                     display_name=student.display_name,
+                    question=question,
+                    comment=comment,
                 )
             else:
-                record = replace(record, score=score, present=present)
+                record = replace(
+                    record, score=score, present=present, question=question, comment=comment
+                )
             self._db.participations[key] = record
             records.append(record)
         return records

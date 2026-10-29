@@ -421,6 +421,8 @@ class ParticipationEntryRequest(BaseModel):
     student_id: int = Field(..., gt=0)
     score: float = Field(..., ge=0, le=5)
     present: bool
+    question: Optional[str] = Field(None, max_length=1000)
+    comment: Optional[str] = Field(None, max_length=1000)
 
 
 class ParticipationBatchRequest(BaseModel):
@@ -436,6 +438,8 @@ class ParticipationResponse(BaseModel):
     score: float
     present: bool
     created_at: datetime
+    question: Optional[str] = None
+    comment: Optional[str] = None
 
 
 class StudentGroupRequest(BaseModel):

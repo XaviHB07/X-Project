@@ -1151,6 +1151,13 @@ def record_participations(
                     item.student_id: (item.score, item.present)
                     for item in payload.participations
                 },
+                {
+                    item.student_id: (
+                        (item.question or "").strip() or None,
+                        (item.comment or "").strip() or None,
+                    )
+                    for item in payload.participations
+                },
             )
             uow.commit()
     except ParticipationDecisionNotFoundError as exc:

@@ -371,8 +371,13 @@ class ParticipationRepository(ABC):
         course_id: int,
         decision_run_id: int,
         score_and_presence_by_student: Dict[int, Tuple[float, bool]],
+        details_by_student: Optional[Dict[int, Tuple[Optional[str], Optional[str]]]] = None,
     ) -> List[StudentParticipation]:
-        """Guarda o actualiza la participación de estudiantes de una decisión."""
+        """Guarda o actualiza la participación de estudiantes de una decisión.
+
+        `details_by_student` mapea student_id -> (pregunta, comentario), ambos
+        opcionales. Si se omite un estudiante, su pregunta/comentario quedan vacíos.
+        """
         ...
 
     @abstractmethod

@@ -109,6 +109,8 @@ _ADDED_COLUMNS = [
     ("users", "must_change_password", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ("class_sessions", "session_date", "DATE"),
     ("class_sessions", "topic", "VARCHAR(255)"),
+    ("student_participations", "question", "TEXT"),
+    ("student_participations", "comment", "TEXT"),
 ]
 
 

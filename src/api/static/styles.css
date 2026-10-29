@@ -433,7 +433,22 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .stage-result-meta { margin: 12px 0 0; color: var(--muted); font-size: 11px; }
 .stage-empty-result { margin: 14px 0; color: var(--muted); }
 .stage-error { color: var(--danger); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
-.stage-done { width: min(260px, 100%); margin: 17px auto 12px; }
+.stage-done { width: min(260px, 100%); margin: 12px auto; }
+.form-row-single { grid-template-columns: 1fr; }
+.selection-stage-frame.has-pick { justify-content: flex-start; }
+.selection-stage-frame.has-pick .roulette-visual { width: min(100%, 290px); }
+.selection-stage-frame.has-pick .balls-visual { min-height: 0; padding: 8px 0; }
+.selection-stage-frame.has-pick .ball-machine { width: min(100%, 340px); }
+.selection-stage-frame.has-pick h2 { font-size: 25px; }
+.stage-pick-form { display: grid; gap: 11px; max-width: 420px; margin: 16px auto 0; padding: 14px; border: 1px solid #d4deec; border-radius: 6px; background: white; text-align: left; animation: rise-in .3s ease both; }
+.stage-pick-grid { display: grid; grid-template-columns: 1fr 112px; gap: 11px; }
+.stage-pick-field { min-width: 0; }
+.stage-pick-field .form-label { margin-bottom: 5px; }
+.stage-comment { height: auto; min-height: 58px; padding: 9px 12px; resize: vertical; font: inherit; }
+.stage-pick-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.stage-pick-actions .button-add { flex: 1 1 auto; min-height: 40px; }
+.stage-pick-actions .button-quiet { border: 1px solid var(--line); }
+.participation-table td.participation-note { max-width: 240px; overflow-wrap: anywhere; white-space: pre-wrap; }
 
 @keyframes rise-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
 /* --- Sprint 1: sesión de clase, importación de Excel y edición --- */
