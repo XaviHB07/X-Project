@@ -1183,7 +1183,7 @@ def list_course_participations(
 
 def _group_plan_response(plan) -> GroupPlanResponse:
     return GroupPlanResponse(
-        id=plan.id,
+        id=getattr(plan, "id", None),
         course_id=plan.course_id,
         name=plan.name,
         max_group_size=plan.max_group_size,
@@ -1254,6 +1254,35 @@ def create_manual_group_plan(
             course_id,
             group_count=payload.group_count,
             name=payload.name,
+        )
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except InvalidGroupPlanError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _group_plan_response(plan)
+
+
+@app.post(
+    "/courses/{course_id}/group-plans/confirm",
+    response_model=GroupPlanResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["grupos"],
+    dependencies=[Depends(require_course_access)],
+)
+def confirm_group_plan(
+    course_id: int,
+    payload: GroupPlanUpdateRequest,
+    group_service: GroupPlanningService = Depends(get_group_planning_service),
+) -> GroupPlanResponse:
+    try:
+        plan = group_service.confirm(
+            course_id,
+            name=payload.name,
+            max_group_size=payload.max_group_size,
+            groups=[
+                StudentGroup(name=group.name, student_ids=group.student_ids)
+                for group in payload.groups
+            ],
         )
     except CourseNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc

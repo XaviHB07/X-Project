@@ -15,6 +15,7 @@ const state = {
   courseView: "attendance",
   groupPlans: [],
   activeGroupPlanId: null,
+  groupPlanDraft: null,
   groupPlanEditing: false,
   draftGroups: [],
   groupMaxSize: 4,
@@ -1224,7 +1225,9 @@ function renderGroupEditor() {
           </div>`).join("")}</div>
       </section>`
     : "");
-  const validation = state.activeGroupPlanId ? groupPlanValidation() : "";
+  const validation = (state.activeGroupPlanId || state.groupPlanDraft)
+    ? groupPlanValidation()
+    : "";
   const unassignedCount = getUnassignedStudents().length;
   elements.groupValidationMessage.textContent = validation
     || (state.activeGroupPlanId
@@ -1236,6 +1239,10 @@ function renderGroupEditor() {
         : "Matricula estudiantes activos para poder crear grupos.");
   elements.saveGroupPlanButton.hidden = !editable;
   elements.saveGroupPlanButton.disabled = !editable || !state.activeGroupPlanId || Boolean(validation);
+  elements.saveGroupPlanButton.textContent = state.groupPlanDraft
+    ? "Confirmar y guardar propuesta"
+    : "Guardar cambios";
+  elements.saveGroupPlanButton.disabled = !editable || Boolean(validation);
   elements.groupPlanName.disabled = !editable;
   elements.groupPlanNameField.hidden = !editable;
   elements.editGroupPlanButton.hidden = editable || !state.activeGroupPlanId;
@@ -1260,7 +1267,8 @@ function nextGroupName() {
 
 function applyGroupPlan(plan) {
   state.activeGroupPlanId = plan?.id ?? null;
-  state.groupPlanEditing = false;
+  state.groupPlanDraft = plan?.id ? null : plan;
+  state.groupPlanEditing = Boolean(plan && !plan.id);
   elements.groupSetupChoices.hidden = Boolean(plan);
   elements.groupGenerationForm.hidden = Boolean(plan);
   elements.manualGroupSetup.hidden = Boolean(plan);
@@ -1283,7 +1291,9 @@ function applyGroupPlan(plan) {
     student_ids: group.student_ids.map(Number),
   }));
   ensureDraftRosterCoverage();
-  elements.groupEditorNote.textContent = `Propuesta guardada el ${formatDate(plan.created_at)}.`;
+  elements.groupEditorNote.textContent = plan.id
+    ? `Propuesta guardada el ${formatDate(plan.created_at)}.`
+    : "Borrador sin guardar: edita la distribución y confírmala cuando estés conforme.";
   renderGroupEditor();
 }
 
@@ -1293,9 +1303,10 @@ function renderGroupPlans() {
   ).join("");
   elements.groupPlanSelect.innerHTML = options || '<option value="">Todavía no hay propuestas</option>';
   elements.groupPlanSelect.disabled = !state.groupPlans.length;
-  elements.groupSetupChoices.hidden = Boolean(state.activeGroupPlanId);
-  elements.groupGenerationForm.hidden = Boolean(state.activeGroupPlanId);
-  elements.manualGroupSetup.hidden = Boolean(state.activeGroupPlanId);
+  const hasActivePlan = Boolean(state.activeGroupPlanId || state.groupPlanDraft);
+  elements.groupSetupChoices.hidden = hasActivePlan;
+  elements.groupGenerationForm.hidden = hasActivePlan;
+  elements.manualGroupSetup.hidden = hasActivePlan;
   elements.deleteGroupPlanButton.disabled = !state.activeGroupPlanId;
   elements.generateGroupsButton.disabled = !state.course || !state.students.length;
   elements.createManualGroupsButton.disabled = !state.course || !state.students.length;
@@ -1349,8 +1360,8 @@ async function createGroupPlan(mode, event) {
     ? elements.manualGroupPlanName.value.trim()
     : elements.autoGroupPlanName.value.trim();
   const confirmation = mode === "manual"
-    ? `Se guardará una propuesta con ${manualGroupCount} grupos. ¿Continuar?`
-    : `Se generará y guardará una propuesta aleatoria con máximo ${maxGroupSize} estudiantes por grupo. ¿Continuar?`;
+    ? `Se preparará un borrador con ${manualGroupCount} grupos para que puedas editarlo. ¿Continuar?`
+    : `Se generará un borrador aleatorio con máximo ${maxGroupSize} estudiantes por grupo para que puedas editarlo. ¿Continuar?`;
   if (!window.confirm(confirmation)) return;
   const button = mode === "manual"
     ? elements.prepareManualGroupsButton
@@ -1374,9 +1385,7 @@ async function createGroupPlan(mode, event) {
     state.groupPlans = [plan, ...state.groupPlans.filter((item) => item.id !== plan.id)];
     renderGroupPlans();
     applyGroupPlan(plan);
-    notify(mode === "manual"
-      ? "Grupos creados. Puedes mover estudiantes para definir tu distribución."
-      : "Propuesta aleatoria generada y guardada.");
+    notify("Borrador generado. Puedes editarlo antes de confirmarlo.");
   } catch (error) {
     notify(error.message, true);
   } finally {
@@ -1419,7 +1428,7 @@ function updateManualGroupSizePreview() {
 }
 
 async function saveGroupPlan() {
-  if (!state.course || !state.activeGroupPlanId || !state.groupPlanEditing) return;
+  if (!state.course || !state.groupPlanEditing) return;
   const validation = groupPlanValidation();
   if (validation) {
     notify(validation, true);
@@ -1433,13 +1442,16 @@ async function saveGroupPlan() {
     ...(unassigned.length ? [`Alumnos sin grupo: ${unassigned.length}`] : []),
   ].join("\n");
   const notice = unbalanced ? "Los grupos tienen tamaños diferentes.\n" : "";
-  if (!window.confirm(`${notice}${details}\n\n¿Guardar los cambios de esta propuesta?`)) return;
+  const isDraft = Boolean(state.groupPlanDraft);
+  if (!window.confirm(`${notice}${details}\n\n¿${isDraft ? "Confirmar y guardar" : "Guardar"} esta propuesta?`)) return;
   setBusy(elements.saveGroupPlanButton, true, "Guardando...");
   try {
     const plan = await api(
-      `/courses/${state.course.id}/group-plans/${state.activeGroupPlanId}`,
+      isDraft
+        ? `/courses/${state.course.id}/group-plans/confirm`
+        : `/courses/${state.course.id}/group-plans/${state.activeGroupPlanId}`,
       {
-        method: "PUT",
+        method: isDraft ? "POST" : "PUT",
         body: JSON.stringify({
           name: elements.groupPlanName.value.trim(),
           max_group_size: Number(elements.groupMaxSize.value),
@@ -1447,10 +1459,10 @@ async function saveGroupPlan() {
         }),
       },
     );
-    state.groupPlans = state.groupPlans.map((item) => item.id === plan.id ? plan : item);
+    state.groupPlans = [plan, ...state.groupPlans.filter((item) => item.id !== plan.id)];
     applyGroupPlan(plan);
     renderGroupPlans();
-    notify("Distribución de grupos guardada.");
+    notify(isDraft ? "Propuesta confirmada y guardada." : "Distribución de grupos guardada.");
   } catch (error) {
     notify(error.message, true);
   } finally {
@@ -1485,8 +1497,15 @@ function startGroupPlanEditing() {
 }
 
 function cancelGroupPlanEditing() {
-  if (!state.activeGroupPlanId || !state.groupPlanEditing) return;
+  if (!state.groupPlanEditing) return;
   if (!window.confirm("¿Descartar los cambios que todavía no guardaste?")) return;
+  if (state.groupPlanDraft) {
+    applyGroupPlan(null);
+    renderGroupPlans();
+    notify("Borrador descartado.");
+    return;
+  }
+  if (!state.activeGroupPlanId) return;
   const plan = state.groupPlans.find((item) => item.id === state.activeGroupPlanId);
   applyGroupPlan(plan || null);
 }

@@ -75,6 +75,17 @@ class CourseGroupPlan:
 
 
 @dataclass(frozen=True)
+class CourseGroupPlanDraft:
+    """Propuesta de grupos todavía no confirmada ni persistida."""
+
+    course_id: int
+    name: str
+    max_group_size: int
+    groups: list[StudentGroup]
+    created_at: datetime
+
+
+@dataclass(frozen=True)
 class Student:
     """Identidad de un estudiante dentro de un curso.
 

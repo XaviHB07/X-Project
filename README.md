@@ -303,8 +303,9 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |POST|`/courses`|Crear un curso (opcionalmente asociado a `cycle_id`)|
 |GET|`/courses`|Listar cursos (HU-S1)|
 |GET|`/courses/{course_id}/group-plans`|Listar propuestas de grupos guardadas|
-|POST|`/courses/{course_id}/group-plans`|Generar y guardar una distribución aleatoria|
-|POST|`/courses/{course_id}/group-plans/manual`|Crear una distribución equilibrada con `group_count` grupos|
+|POST|`/courses/{course_id}/group-plans`|Generar un borrador aleatorio por tamaño máximo de grupo (no persiste)|
+|POST|`/courses/{course_id}/group-plans/manual`|Generar un borrador equilibrado por cantidad de grupos (no persiste)|
+|POST|`/courses/{course_id}/group-plans/confirm`|Confirmar y guardar el borrador después de editarlo|
 |PUT|`/courses/{course_id}/group-plans/{plan_id}`|Editar y guardar una distribución manual|
 |DELETE|`/courses/{course_id}/group-plans/{plan_id}`|Eliminar una propuesta de grupos|
 |GET|`/courses/{id}`|Obtener un curso|

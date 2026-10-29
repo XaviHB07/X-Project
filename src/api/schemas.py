@@ -465,7 +465,7 @@ class StudentGroupResponse(BaseModel):
 
 
 class GroupPlanResponse(BaseModel):
-    id: int
+    id: Optional[int] = None
     course_id: int
     name: str
     max_group_size: int

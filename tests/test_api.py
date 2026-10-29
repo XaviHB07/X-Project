@@ -373,11 +373,13 @@ class TestPropuestasDeGrupos:
         )
         assert generated.status_code == 201
         original = generated.json()
+        assert original["id"] is None
         assert original["name"] == "Proyecto inicial"
         assert sorted(len(group["student_ids"]) for group in original["groups"]) == [2, 2, 3]
         assert sorted(
             student_id for group in original["groups"] for student_id in group["student_ids"]
         ) == sorted(student_ids)
+        assert client.get(f"/courses/{course_id}/group-plans").json() == []
 
         groups = original["groups"]
         moved_students = groups[0]["student_ids"][:2]
@@ -385,22 +387,23 @@ class TestPropuestasDeGrupos:
         groups[1]["student_ids"].extend(moved_students)
         groups[0]["name"] = "Equipo A"
         groups[1]["name"] = "Equipo B"
-        updated = client.put(
-            f"/courses/{course_id}/group-plans/{original['id']}",
+        confirmed = client.post(
+            f"/courses/{course_id}/group-plans/confirm",
             json={
                 "name": "Proyecto revisado",
                 "max_group_size": 3,
                 "groups": groups,
             },
         )
-        assert updated.status_code == 200
+        assert confirmed.status_code == 201
+        updated = confirmed
         assert updated.json()["name"] == "Proyecto revisado"
         assert updated.json()["groups"][0]["name"] == "Equipo A"
         assert max(len(group["student_ids"]) for group in updated.json()["groups"]) > 3
 
         reloaded = client.get(f"/courses/{course_id}/group-plans")
         assert reloaded.status_code == 200
-        assert reloaded.json()[0]["id"] == original["id"]
+        assert reloaded.json()[0]["id"] == updated.json()["id"]
         assert reloaded.json()[0]["groups"] == updated.json()["groups"]
 
     def test_edit_rejects_duplicates_and_allows_unassigned_students(
@@ -420,8 +423,8 @@ class TestPropuestasDeGrupos:
         groups = plan["groups"]
         groups[1]["student_ids"].append(groups[0]["student_ids"][0])
 
-        duplicate = client.put(
-            f"/courses/{course_id}/group-plans/{plan['id']}",
+        duplicate = client.post(
+            f"/courses/{course_id}/group-plans/confirm",
             json={
                 "name": "Distribución inválida",
                 "max_group_size": 2,
@@ -430,8 +433,8 @@ class TestPropuestasDeGrupos:
         )
         assert duplicate.status_code == 400
 
-        missing = client.put(
-            f"/courses/{course_id}/group-plans/{plan['id']}",
+        missing = client.post(
+            f"/courses/{course_id}/group-plans/confirm",
             json={
                 "name": "Distribución incompleta",
                 "max_group_size": 2,
@@ -441,15 +444,15 @@ class TestPropuestasDeGrupos:
                 ],
             },
         )
-        assert missing.status_code == 200
+        assert missing.status_code == 201
         assert student_ids[2] not in [
             student_id
             for group in missing.json()["groups"]
             for student_id in group["student_ids"]
         ]
 
-        unknown = client.put(
-            f"/courses/{course_id}/group-plans/{plan['id']}",
+        unknown = client.post(
+            f"/courses/{course_id}/group-plans/confirm",
             json={
                 "name": "Estudiante externo",
                 "max_group_size": 2,
@@ -475,7 +478,15 @@ class TestPropuestasDeGrupos:
         plan = client.post(
             f"/courses/{course_id}/group-plans", json={"max_group_size": 3}
         ).json()
-        deleted = client.delete(f"/courses/{course_id}/group-plans/{plan['id']}")
+        saved = client.post(
+            f"/courses/{course_id}/group-plans/confirm",
+            json={
+                "name": plan["name"],
+                "max_group_size": plan["max_group_size"],
+                "groups": plan["groups"],
+            },
+        ).json()
+        deleted = client.delete(f"/courses/{course_id}/group-plans/{saved['id']}")
         assert deleted.status_code == 204
         assert client.get(f"/courses/{course_id}/group-plans").json() == []
 
@@ -495,15 +506,24 @@ class TestPropuestasDeGrupos:
         )
         assert response.status_code == 201
         plan = response.json()
+        assert plan["id"] is None
         assert plan["name"] == "Grupos elegidos"
-        assert [group["student_ids"] for group in plan["groups"]] == [
-            student_ids[:2], student_ids[2:4], student_ids[4:]
-        ]
+        assert sorted(
+            student_id for group in plan["groups"] for student_id in group["student_ids"]
+        ) == sorted(student_ids)
+        assert sorted(len(group["student_ids"]) for group in plan["groups"]) == [1, 2, 2]
         assert plan["max_group_size"] == 2
-        saved = client.get(f"/courses/{course_id}/group-plans").json()
-        assert len(saved) == 1
-        assert saved[0]["name"] == plan["name"]
-        assert saved[0]["groups"] == plan["groups"]
+        assert client.get(f"/courses/{course_id}/group-plans").json() == []
+        saved = client.post(
+            f"/courses/{course_id}/group-plans/confirm",
+            json={
+                "name": plan["name"],
+                "max_group_size": plan["max_group_size"],
+                "groups": plan["groups"],
+            },
+        ).json()
+        assert saved["name"] == plan["name"]
+        assert saved["groups"] == plan["groups"]
 
     def test_manual_group_plan_rejects_more_groups_than_students(self, client: TestClient):
         course_id = new_course(client, "Curso con pocos estudiantes")
