@@ -1212,6 +1212,28 @@ class TestRegistroParticipaciones:
             f"P{student_ids.index(item['student_id'])}" for item in history.json()
         }
 
+    def test_records_question_and_comment_and_they_are_optional(self, client: TestClient):
+        course_id, _, decision = self._decision(client)
+        selected = decision["selected_student_ids"]
+        saved = client.post(
+            f"/courses/{course_id}/decision-runs/{decision['decision_run_id']}/participations",
+            json={
+                "participations": [
+                    {"student_id": selected[0], "score": 4, "present": True,
+                     "question": "  ¿Qué es una derivada?  ", "comment": "Respondió con seguridad"},
+                    {"student_id": selected[1], "score": 2, "present": True},
+                ]
+            },
+        )
+        history = client.get(f"/courses/{course_id}/participations").json()
+        by_student = {item["student_id"]: item for item in history}
+
+        assert saved.status_code == 201
+        assert by_student[selected[0]]["question"] == "¿Qué es una derivada?"
+        assert by_student[selected[0]]["comment"] == "Respondió con seguridad"
+        assert by_student[selected[1]]["question"] is None
+        assert by_student[selected[1]]["comment"] is None
+
     def test_requires_all_and_only_selected_students_for_decision(self, client: TestClient):
         course_id, student_ids, decision = self._decision(client)
         selected = decision["selected_student_ids"]
