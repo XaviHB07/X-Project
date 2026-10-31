@@ -200,6 +200,10 @@ ingresada durante el aprovisionamiento. El Administrador registra docentes
 desde **Ciclos académicos → Gestión de docentes**, con nombre, usuario,
 teléfono, correo y cursos asignados.
 
+Las secciones **Sesión y asistencia** y **Análisis de notas** aparecen en la
+vista Docente. La vista Administrador se concentra en ciclos, cursos,
+matrícula, cuentas y gestión de docentes.
+
 Al registrar un docente o restablecer su contraseña, la contraseña temporal
 se muestra una sola vez al Administrador en la pantalla para copiarla y
 compartirla por un canal privado. No se guarda en texto claro ni se registra
@@ -303,6 +307,7 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |POST|`/courses`|Crear un curso (opcionalmente asociado a `cycle_id`)|
 |GET|`/courses`|Listar cursos (HU-S1)|
 |GET|`/courses/{course_id}/group-plans`|Listar propuestas de grupos guardadas|
+|GET|`/courses/{course_id}/weekly-grades?cycle_id={cycle_id}`|Matriz semanal de promedios de notas para las 15 semanas del ciclo|
 |POST|`/courses/{course_id}/group-plans`|Generar un borrador aleatorio por tamaño máximo de grupo (no persiste)|
 |POST|`/courses/{course_id}/group-plans/manual`|Generar un borrador equilibrado por cantidad de grupos (no persiste)|
 |POST|`/courses/{course_id}/group-plans/confirm`|Confirmar y guardar el borrador después de editarlo|

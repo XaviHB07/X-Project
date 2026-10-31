@@ -87,7 +87,7 @@ class TestInfraestructura:
         assert 'id="create-cycle-form"' in page.text
         assert 'id="create-cycle-form"' in page.text[:page.text.index('id="academic-setup-page"')]
         assert page.text.index('id="create-course-form"') > page.text.index('id="academic-setup-page"')
-        assert 'elements.dailyViewButton.hidden = isAdminView' in script.text
+        assert "elements.dailyViewButton.hidden = !teacherView" in script.text
         assert 'id="management-tab"' not in page.text
         assert 'id="groups-tab"' in page.text
         assert 'id="groups-view"' in page.text
@@ -1211,6 +1211,75 @@ class TestRegistroParticipaciones:
         assert {item["external_ref"] for item in history.json()} == {
             f"P{student_ids.index(item['student_id'])}" for item in history.json()
         }
+
+    def test_weekly_grades_aggregate_by_cycle_week_and_keep_missing_cells(self, client: TestClient):
+        cycle = client.post(
+            "/cycles", json={"name": "2031-I", "starts_on": "2031-03-03"}
+        ).json()
+        course = client.post(
+            "/courses", json={"name": "Notas semanales", "cycle_id": cycle["id"]}
+        ).json()
+        student_ids = [
+            client.post(
+                f"/courses/{course['id']}/students",
+                json={"external_ref": f"W{i}", "display_name": f"Alumno {i}"},
+            ).json()["id"]
+            for i in range(2)
+        ]
+        inactive = client.post(
+            f"/courses/{course['id']}/students",
+            json={"external_ref": "INACTIVE", "display_name": "Retirado"},
+        ).json()["id"]
+        assert client.patch(
+            f"/students/{inactive}", json={"active": False}
+        ).status_code == 200
+
+        scores_by_date = [
+            ("2031-03-03", [4, 2]),
+            ("2031-03-06", [2, 4]),
+            ("2031-03-12", [5, 0]),
+        ]
+        for session_date, scores in scores_by_date:
+            session = client.post(
+                f"/courses/{course['id']}/class-sessions",
+                json={"session_date": session_date},
+            ).json()
+            decision = client.post(
+                f"/courses/{course['id']}/sessions/select",
+                json={
+                    "class_session_id": session["id"],
+                    "present_student_ids": student_ids,
+                    "k": 2,
+                    "method": "roulette",
+                },
+            ).json()
+            saved = client.post(
+                f"/courses/{course['id']}/decision-runs/{decision['decision_run_id']}/participations",
+                json={
+                    "participations": [
+                        {"student_id": student_ids[0], "score": scores[0], "present": True},
+                        {"student_id": student_ids[1], "score": scores[1], "present": True},
+                    ]
+                },
+            )
+            assert saved.status_code == 201
+
+        result = client.get(
+            f"/courses/{course['id']}/weekly-grades",
+            params={"cycle_id": cycle["id"]},
+        )
+        assert result.status_code == 200
+        body = result.json()
+        assert len(body["weeks"]) == 15
+        assert body["weeks"][0]["start_on"] == "2031-03-03"
+        assert body["weeks"][0]["end_on"] == "2031-03-09"
+        assert [row["display_name"] for row in body["students"]] == [
+            "Alumno 0", "Alumno 1"
+        ]
+        assert body["students"][0]["averages"][0] == 3
+        assert body["students"][1]["averages"][0] == 3
+        assert body["students"][0]["averages"][1] == 5
+        assert body["students"][0]["averages"][2:] == [None] * 13
 
     def test_records_question_and_comment_and_they_are_optional(self, client: TestClient):
         course_id, _, decision = self._decision(client)

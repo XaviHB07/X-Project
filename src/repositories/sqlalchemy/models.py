@@ -28,6 +28,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     String,
@@ -218,6 +219,9 @@ class StudentStateORM(Base):
 
 class ClassSessionORM(Base):
     __tablename__ = "class_sessions"
+    __table_args__ = (
+        Index("ix_class_sessions_course_session_date", "course_id", "session_date"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), nullable=False)

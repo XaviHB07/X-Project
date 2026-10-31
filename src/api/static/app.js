@@ -14,6 +14,9 @@ const state = {
   appView: "daily",
   courseView: "attendance",
   groupPlans: [],
+  gradeCycleId: null,
+  gradeCourseId: null,
+  gradeMatrix: null,
   activeGroupPlanId: null,
   groupPlanDraft: null,
   groupPlanEditing: false,
@@ -69,6 +72,7 @@ const elements = {
   studentPortal: $("#student-portal"),
   studentCoursesViewButton: $("#student-courses-view-button"),
   dailyViewButton: $("#daily-view-button"),
+  gradesViewButton: $("#grades-view-button"),
   cyclesViewButton: $("#cycles-view-button"),
   teachersViewButton: $("#teachers-view-button"),
   studentAccountsViewButton: $("#student-accounts-view-button"),
@@ -109,6 +113,19 @@ const elements = {
   attendanceTab: $("#attendance-tab"),
   participationsTab: $("#participations-tab"),
   groupsTab: $("#groups-tab"),
+  gradesView: $("#grades-view"),
+  gradeCycle: $("#grade-cycle"),
+  gradeCourse: $("#grade-course"),
+  gradeAnalysisNote: $("#grade-analysis-note"),
+  gradeMatrixScroll: $("#grade-matrix-scroll"),
+  gradeMatrixHead: $("#grade-matrix-head"),
+  gradeMatrixBody: $("#grade-matrix-body"),
+  gradeLegend: $("#grade-legend"),
+  gradeDetailDialog: $("#grade-detail-dialog"),
+  gradeDetailTitle: $("#grade-detail-title"),
+  gradeDetailSubtitle: $("#grade-detail-subtitle"),
+  gradeDetailSummary: $("#grade-detail-summary"),
+  gradeDetailList: $("#grade-detail-list"),
   adminStudentList: $("#admin-student-list"),
   participationsView: $("#participations-view"),
   participationHistoryBody: $("#participation-history-body"),
@@ -779,6 +796,118 @@ function renderWorkCourseSelectors() {
     : "";
   elements.dailyCourse.value = selectedCourseId;
   elements.enrollmentCourse.value = selectedCourseId;
+  renderGradeSelectors();
+}
+
+function renderGradeSelectors() {
+  elements.gradeCycle.innerHTML = `<option value="">Selecciona un ciclo</option>${state.cycles
+    .map((cycle) => `<option value="${cycle.id}">${escapeHtml(cycle.name)}</option>`).join("")}`;
+  elements.gradeCycle.value = state.gradeCycleId ? String(state.gradeCycleId) : "";
+  const courses = state.gradeCycleId
+    ? state.availableCourses.filter((course) => course.cycle_id === state.gradeCycleId)
+    : [];
+  elements.gradeCourse.innerHTML = `<option value="">Selecciona un curso</option>${courses
+    .map((course) => `<option value="${course.id}">${escapeHtml(course.name)} · #${course.id}</option>`).join("")}`;
+  elements.gradeCourse.value = state.gradeCourseId ? String(state.gradeCourseId) : "";
+}
+
+function formatGradeRange(startOn, endOn) {
+  return `${formatDay(startOn)} - ${formatDay(endOn)}`;
+}
+
+function gradeCellStyle(value) {
+  if (value === null || value === undefined) return "";
+  const ratio = Math.max(0, Math.min(1, Number(value) / 5));
+  const hue = 6 + ratio * 204;
+  return `background: hsl(${hue} 72% ${87 - ratio * 17}%);`;
+}
+
+function renderGradeMatrix(matrix) {
+  elements.gradeMatrixHead.innerHTML = `<tr><th class="grade-student-heading">Estudiante</th>${matrix.weeks
+    .map((week) => `<th><span>${week.label}</span><small>${formatGradeRange(week.start_on, week.end_on)}</small></th>`).join("")}</tr>`;
+  elements.gradeMatrixBody.innerHTML = matrix.students.map((student) => `
+    <tr>
+      <th class="grade-student-name"><span>${escapeHtml(student.display_name)}</span><small>${escapeHtml(student.external_ref)}</small></th>
+      ${student.averages.map((value, index) => value === null
+        ? '<td class="grade-missing" title="Sin participación">-</td>'
+        : `<td class="grade-value" style="${gradeCellStyle(value)}"><button class="grade-cell-button" type="button" data-grade-student="${student.student_id}" data-grade-week="${index + 1}" title="Ver participaciones de la Semana ${index + 1}">${Number(value).toFixed(2)}</button></td>`).join("")}
+    </tr>`).join("");
+  elements.gradeMatrixScroll.hidden = false;
+  elements.gradeLegend.hidden = false;
+}
+
+function renderGradeDetails(details) {
+  elements.gradeDetailTitle.textContent = details.student_name;
+  elements.gradeDetailSubtitle.textContent =
+    `Semana ${details.week} · ${formatGradeRange(details.start_on, details.end_on)}`;
+  elements.gradeDetailSummary.innerHTML =
+    `<strong>${details.total}</strong><span>participación${details.total === 1 ? "" : "es"} registradas</span>`;
+  elements.gradeDetailList.innerHTML = details.participations.map((item, index) => `
+    <article class="grade-detail-card">
+      <div class="grade-detail-card-heading">
+        <h3>Participación ${index + 1}</h3>
+        <time datetime="${item.occurred_at}">${escapeHtml(formatDate(item.occurred_at))}</time>
+      </div>
+      <dl class="grade-detail-fields">
+        <div><dt>Pregunta</dt><dd>${escapeHtml(item.question || "—")}</dd></div>
+        <div><dt>Nota (0 a 5)</dt><dd>${Number(item.score).toLocaleString("es", { maximumFractionDigits: 2 })}</dd></div>
+        <div><dt>Comentario</dt><dd>${escapeHtml(item.comment || "—")}</dd></div>
+        <div><dt>Presente</dt><dd><span class="attendance-badge ${item.present ? "is-present" : "is-absent"}">${item.present ? "Sí" : "No"}</span></dd></div>
+      </dl>
+    </article>`).join("");
+  elements.gradeDetailDialog.showModal();
+}
+
+async function loadGradeDetails(studentId, week) {
+  const cycleId = Number(elements.gradeCycle.value) || state.gradeCycleId;
+  const courseId = state.gradeMatrix?.course_id;
+  if (!cycleId || !courseId) return;
+  elements.gradeDetailTitle.textContent = "Cargando detalle...";
+  elements.gradeDetailSubtitle.textContent = "";
+  elements.gradeDetailSummary.innerHTML = "";
+  elements.gradeDetailList.innerHTML = "";
+  elements.gradeDetailDialog.showModal();
+  try {
+    const details = await api(
+      `/courses/${courseId}/weekly-grades/details?cycle_id=${cycleId}&student_id=${studentId}&week=${week}`,
+    );
+    renderGradeDetails(details);
+  } catch (error) {
+    elements.gradeDetailDialog.close();
+    notify(error.message, true);
+  }
+}
+
+async function loadGradeMatrix() {
+  const cycleId = Number(elements.gradeCycle.value) || state.gradeCycleId || null;
+  const selectedCourseId = Number(elements.gradeCourse.value) || null;
+  const activeCourseId = Number(elements.recentCourses.value)
+    || Number(elements.dailyCourse.value)
+    || state.course?.id
+    || null;
+  const activeCourse = state.availableCourses.find(
+    (course) => course.id === activeCourseId && course.cycle_id === cycleId,
+  );
+  const courseId = selectedCourseId || activeCourse?.id || null;
+  state.gradeCycleId = cycleId;
+  state.gradeCourseId = selectedCourseId;
+  renderGradeSelectors();
+  elements.gradeMatrixScroll.hidden = true;
+  elements.gradeLegend.hidden = true;
+  if (!cycleId || !courseId) {
+    elements.gradeAnalysisNote.textContent = cycleId
+      ? "Selecciona un curso para mostrar el análisis."
+      : "Selecciona un ciclo y un curso para mostrar el análisis.";
+    return;
+  }
+  elements.gradeAnalysisNote.textContent = "Cargando análisis semanal...";
+  try {
+    state.gradeMatrix = await api(`/courses/${courseId}/weekly-grades?cycle_id=${cycleId}`);
+    renderGradeMatrix(state.gradeMatrix);
+    elements.gradeAnalysisNote.textContent = `${state.gradeMatrix.students.length} estudiantes activos · escala de 0 a 5`;
+  } catch (error) {
+    elements.gradeAnalysisNote.textContent = error.message;
+  }
 }
 
 function setAppView(view) {
@@ -795,6 +924,7 @@ function setAppView(view) {
     elements.studentCoursesViewButton.setAttribute("aria-current", "page");
     [
       elements.dailyViewButton,
+      elements.gradesViewButton,
       elements.cyclesViewButton,
       elements.teachersViewButton,
       elements.studentAccountsViewButton,
@@ -836,7 +966,10 @@ function setAppView(view) {
   $("#refresh-button").hidden = false;
   const isAdminView = state.authenticatedUser?.role === "administrador"
     && state.viewAs === "administrador";
-  if (isAdminView && view === "daily") view = "cycles";
+  const teacherView = state.authenticatedUser?.role === "docente" || state.viewAs === "docente";
+  if (!teacherView && (view === "daily" || view === "grades")) {
+    view = "cycles";
+  }
   if (!isAdminView && ["cycles", "teachers", "studentAccounts", "createCourse"].includes(view)) {
     view = "enrollment";
   }
@@ -848,6 +981,7 @@ function setAppView(view) {
   const createCourse = view === "createCourse";
   const enrollment = view === "enrollment";
   const daily = view === "daily";
+  const grades = view === "grades";
   const course = state.course;
   const cycle = state.cycles.find((item) => item.id === course?.cycle_id);
   elements.cyclesSetupPage.hidden = !cycles;
@@ -858,9 +992,11 @@ function setAppView(view) {
   elements.academicSetupPage.hidden = !enrollment;
   $("#daily-course-picker").hidden = !daily;
   elements.workspace.hidden = !daily || !course;
+  elements.gradesView.hidden = !grades;
   elements.emptyState.hidden = !daily || Boolean(course);
   $("#refresh-button").disabled = !daily || !course;
   elements.dailyViewButton.classList.toggle("active", daily);
+  elements.gradesViewButton.classList.toggle("active", grades);
   elements.cyclesViewButton.classList.toggle("active", cycles);
   elements.teachersViewButton.classList.toggle("active", teachers);
   elements.studentAccountsViewButton.classList.toggle("active", studentAccounts);
@@ -868,6 +1004,7 @@ function setAppView(view) {
   elements.enrollmentViewButton.classList.toggle("active", enrollment);
   [
     elements.dailyViewButton,
+    elements.gradesViewButton,
     elements.cyclesViewButton,
     elements.teachersViewButton,
     elements.studentAccountsViewButton,
@@ -877,6 +1014,8 @@ function setAppView(view) {
     .forEach((button) => button.removeAttribute("aria-current"));
   const activeButton = daily
     ? elements.dailyViewButton
+    : grades
+      ? elements.gradesViewButton
     : cycles
       ? elements.cyclesViewButton
       : teachers
@@ -887,7 +1026,8 @@ function setAppView(view) {
             ? elements.coursesViewButton
             : elements.enrollmentViewButton;
   activeButton.setAttribute("aria-current", "page");
-  elements.dailyViewButton.hidden = isAdminView;
+  elements.dailyViewButton.hidden = !teacherView;
+  elements.gradesViewButton.hidden = !teacherView;
   elements.cyclesViewButton.hidden = !isAdminView;
   elements.teachersViewButton.hidden = !isAdminView;
   elements.studentAccountsViewButton.hidden = !isAdminView;
@@ -897,11 +1037,11 @@ function setAppView(view) {
   $("#create-cycle-form button[type=submit]").disabled = !isAdminView;
   $("#create-course-form button[type=submit]").disabled =
     !isAdminView || !Number(elements.courseCreationCycle.value);
-  const teacherView = state.authenticatedUser?.role === "docente" || state.viewAs === "docente";
   elements.participationsTab.hidden = teacherView;
   elements.sidebarUser.textContent = `${state.authenticatedUser?.full_name || ""} · ${
     state.authenticatedUser?.role === "administrador" ? "Administrador" : "Docente"
   }`;
+  if (grades) loadGradeMatrix();
   if (cycles) {
     elements.courseTitle.textContent = "Ciclos académicos";
     elements.pageEyebrow.firstChild.textContent = "PERIODOS ACADÉMICOS ";
@@ -929,6 +1069,11 @@ function setAppView(view) {
     elements.pageEyebrow.firstChild.textContent = "ADMINISTRACIÓN ";
     elements.courseMeta.textContent = "Crea cursos y asígnalos a un ciclo académico.";
     elements.breadcrumbCourse.textContent = "CURSOS";
+  } else if (grades) {
+    elements.courseTitle.textContent = "Análisis de notas";
+    elements.pageEyebrow.firstChild.textContent = "SEGUIMIENTO ACADÉMICO ";
+    elements.courseMeta.textContent = "Consulta el promedio semanal de los estudiantes por ciclo y curso.";
+    elements.breadcrumbCourse.textContent = "NOTAS";
   } else {
     elements.courseTitle.textContent = course?.name || "Panel de selección";
     elements.pageEyebrow.firstChild.textContent = "SELECCIÓN EQUITATIVA ";
@@ -3013,6 +3158,28 @@ elements.groupsTab.addEventListener("click", () => {
   setCourseView("groups");
   if (state.course && !state.groupPlans.length) loadGroupPlans();
 });
+elements.gradesViewButton.addEventListener("click", () => {
+  state.gradeCycleId = state.course?.cycle_id || state.activeCycleId || null;
+  state.gradeCourseId = null;
+  renderGradeSelectors();
+  setAppView("grades");
+});
+elements.gradeCycle.addEventListener("change", () => {
+  state.gradeCycleId = Number(elements.gradeCycle.value) || null;
+  state.gradeCourseId = null;
+  renderGradeSelectors();
+  loadGradeMatrix();
+});
+elements.gradeCourse.addEventListener("change", loadGradeMatrix);
+elements.gradeMatrixBody.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-grade-student]");
+  if (!button) return;
+  loadGradeDetails(Number(button.dataset.gradeStudent), Number(button.dataset.gradeWeek));
+});
+$("#grade-detail-close").addEventListener("click", () => elements.gradeDetailDialog.close());
+elements.gradeDetailDialog.addEventListener("click", (event) => {
+  if (event.target === elements.gradeDetailDialog) elements.gradeDetailDialog.close();
+});
 elements.groupPlanSelect.addEventListener("change", () => {
   if (state.groupPlanEditing && !window.confirm("¿Descartar los cambios que todavía no guardaste?")) {
     elements.groupPlanSelect.value = String(state.activeGroupPlanId);
@@ -3148,6 +3315,9 @@ $("#refresh-participations").addEventListener("click", loadParticipationHistory)
 elements.activeRole.addEventListener("change", () => {
   if (state.authenticatedUser?.role !== "administrador") return;
   state.viewAs = elements.activeRole.value;
+  if (state.viewAs === "administrador" && ["daily", "grades"].includes(state.appView)) {
+    state.appView = "cycles";
+  }
   if (
     state.viewAs === "docente"
     && ["cycles", "teachers", "studentAccounts", "createCourse"].includes(state.appView)

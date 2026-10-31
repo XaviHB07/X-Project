@@ -17,7 +17,7 @@ tecnología concreta.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import date
+from datetime import date, datetime
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from src.domain.entities import (
@@ -383,6 +383,24 @@ class ParticipationRepository(ABC):
     @abstractmethod
     def list_by_course(self, course_id: int, limit: int = 200) -> List[StudentParticipation]:
         """Historial más reciente primero."""
+        ...
+
+    @abstractmethod
+    def weekly_score_averages(
+        self, course_id: int, start_on: date, end_on: date
+    ) -> List[Tuple[int, date, float, int]]:
+        """Promedios agrupados por estudiante y fecha de sesión."""
+        ...
+
+    @abstractmethod
+    def weekly_details(
+        self, course_id: int, student_id: int, start_on: date, end_on: date
+    ) -> List[Tuple[StudentParticipation, date, datetime]]:
+        """Participaciones individuales de un estudiante en una semana.
+
+        La fecha corresponde a la sesión y la fecha-hora al momento de la
+        selección registrada en la decisión.
+        """
         ...
 
 

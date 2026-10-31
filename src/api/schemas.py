@@ -486,5 +486,48 @@ class FairnessMetricsResponse(BaseModel):
     coverage: float
 
 
+class GradeWeekResponse(BaseModel):
+    number: int
+    label: str
+    start_on: date
+    end_on: date
+
+
+class StudentWeeklyGradesResponse(BaseModel):
+    student_id: int
+    external_ref: str
+    display_name: str
+    averages: List[Optional[float]]
+
+
+class WeeklyGradesResponse(BaseModel):
+    course_id: int
+    cycle_id: int
+    weeks: List[GradeWeekResponse]
+    students: List[StudentWeeklyGradesResponse]
+
+
+class WeeklyParticipationDetailResponse(BaseModel):
+    id: int
+    session_date: date
+    occurred_at: datetime
+    question: Optional[str] = None
+    score: float
+    comment: Optional[str] = None
+    present: bool
+
+
+class WeeklyParticipationDetailsResponse(BaseModel):
+    course_id: int
+    cycle_id: int
+    student_id: int
+    student_name: str
+    week: int
+    start_on: date
+    end_on: date
+    total: int
+    participations: List[WeeklyParticipationDetailResponse]
+
+
 class AvailableMethodsResponse(BaseModel):
     methods: List[str]

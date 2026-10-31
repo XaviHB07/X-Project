@@ -358,6 +358,41 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .participation-table th { color: #829087; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
 .participation-table td { color: var(--ink); }
 .participation-table td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+.grade-analysis-panel { padding: 22px; border: 1px solid var(--line); border-radius: 6px; background: var(--white); }
+.grade-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 20px 0 14px; padding: 15px; border: 1px solid var(--line); border-radius: 6px; background: #f7fbff; }
+.grade-filters .form-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; }
+.grade-analysis-note { min-height: 18px; margin: 12px 0; color: var(--muted); font-size: 12px; }
+.grade-matrix-scroll { max-width: 100%; overflow: auto; border: 1px solid var(--line); border-radius: 5px; -webkit-overflow-scrolling: touch; }
+.grade-matrix { min-width: 1380px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.grade-matrix th, .grade-matrix td { width: 82px; padding: 10px 7px; border-right: 1px solid rgb(255 255 255 / 70%); border-bottom: 1px solid rgb(255 255 255 / 70%); text-align: center; font-size: 11px; }
+.grade-matrix thead th { position: sticky; top: 0; z-index: 1; width: 82px; background: var(--forest); color: white; font-size: 10px; }
+.grade-matrix thead th span, .grade-matrix thead th small, .grade-student-name span, .grade-student-name small { display: block; }
+.grade-matrix thead th small { margin-top: 5px; color: #b7c8df; font-size: 8px; font-weight: 400; line-height: 1.25; }
+.grade-matrix .grade-student-heading, .grade-matrix .grade-student-name { position: sticky; left: 0; z-index: 2; width: 210px; min-width: 210px; text-align: left; }
+.grade-matrix .grade-student-heading { background: var(--forest); }
+.grade-student-name { background: #f4f8fc; color: var(--forest); font-weight: 700; }
+.grade-student-name small { margin-top: 3px; color: var(--muted); font-size: 9px; font-weight: 400; }
+.grade-value { color: #17314f; font-variant-numeric: tabular-nums; }
+.grade-cell-button { width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.grade-cell-button:hover, .grade-cell-button:focus-visible { text-decoration: underline; outline: 2px solid rgb(23 49 79 / 35%); outline-offset: 3px; border-radius: 3px; }
+.grade-missing { background: #e4e8ec !important; color: #7d8790; }
+.grade-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; color: var(--muted); font-size: 11px; }
+.grade-swatch { display: inline-block; width: 13px; height: 13px; margin-right: 5px; vertical-align: -2px; border-radius: 3px; }
+.grade-low { background: hsl(6 72% 87%); }
+.grade-high { background: hsl(210 72% 70%); }
+.grade-detail-dialog { width: min(680px, calc(100% - 28px)); max-height: min(760px, calc(100vh - 28px)); }
+.grade-detail-summary { display: flex; align-items: baseline; gap: 7px; padding: 14px 22px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.grade-detail-summary strong { color: var(--forest); font-size: 26px; }
+.grade-detail-list { max-height: 490px; overflow-y: auto; padding: 16px 22px 22px; }
+.grade-detail-card { padding: 16px 0; border-bottom: 1px solid var(--line); }
+.grade-detail-card:last-child { border-bottom: 0; }
+.grade-detail-card-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.grade-detail-card-heading h3 { margin: 0; color: var(--forest); font-size: 14px; }
+.grade-detail-card-heading time { color: var(--muted); font-size: 11px; }
+.grade-detail-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 14px 0 0; }
+.grade-detail-fields div { min-width: 0; padding: 10px; border-radius: 5px; background: #f7fbff; }
+.grade-detail-fields dt { margin-bottom: 5px; color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.grade-detail-fields dd { margin: 0; color: var(--ink); font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
 .attendance-badge { display: inline-block; padding: 4px 7px; border-radius: 10px; font-size: 10px; font-weight: 700; }
 .attendance-badge.is-present { background: #e6f3e9; color: #32704a; }
 .attendance-badge.is-absent { background: #f8e9e6; color: #a3483f; }
@@ -536,7 +571,9 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 }
 
 @media (max-width: 760px) {
-  .app-shell { display: block; }
+  .app-shell { display: block;     .grade-filters { grid-template-columns: 1fr; }
+    .grade-analysis-panel { padding: 15px; }
+  }
   .sidebar { position: relative; height: auto; min-height: 0; padding: 15px 18px; }
   .brand { margin-bottom: 14px; }
   .brand-mark { width: 30px; height: 30px; font-size: 19px; }

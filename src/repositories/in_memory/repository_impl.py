@@ -632,6 +632,40 @@ class InMemoryParticipationRepository(ParticipationRepository):
         records.sort(key=lambda record: (record.created_at, record.id), reverse=True)
         return records[:limit]
 
+    def weekly_score_averages(
+        self, course_id: int, start_on: date, end_on: date
+    ) -> List[Tuple[int, date, float, int]]:
+        grouped: Dict[Tuple[int, date], List[float]] = {}
+        for record in self._db.participations.values():
+            run = self._db.decision_runs[record.decision_run_id]
+            session = self._db.class_sessions[run.class_session_id]
+            if session.course_id != course_id or session.session_date is None:
+                continue
+            if not start_on <= session.session_date <= end_on:
+                continue
+            grouped.setdefault((record.student_id, session.session_date), []).append(record.score)
+        return [
+            (student_id, session_date, sum(scores) / len(scores), len(scores))
+            for (student_id, session_date), scores in grouped.items()
+        ]
+
+    def weekly_details(
+        self, course_id: int, student_id: int, start_on: date, end_on: date
+    ) -> List[Tuple[StudentParticipation, date, datetime]]:
+        details = []
+        for record in self._db.participations.values():
+            if record.student_id != student_id:
+                continue
+            run = self._db.decision_runs[record.decision_run_id]
+            session = self._db.class_sessions[run.class_session_id]
+            if (
+                session.course_id == course_id
+                and session.session_date is not None
+                and start_on <= session.session_date <= end_on
+            ):
+                details.append((record, session.session_date, run.created_at))
+        return sorted(details, key=lambda item: (item[2], item[0].id))
+
 
 class InMemoryGroupPlanRepository(GroupPlanRepository):
     def __init__(self, db: InMemoryDatabase):

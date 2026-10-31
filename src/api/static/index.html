@@ -48,6 +48,9 @@
           <button class="app-navigation-button active" id="daily-view-button" type="button" aria-current="page">
             <span aria-hidden="true">▦</span> Sesiones y asistencia
           </button>
+          <button class="app-navigation-button" id="grades-view-button" type="button">
+            <span aria-hidden="true">▤</span> Análisis de notas
+          </button>
           <button class="app-navigation-button" id="cycles-view-button" type="button">
             <span aria-hidden="true">◷</span> Ciclos académicos
           </button>
@@ -416,6 +419,38 @@
 
         </div>
 
+        <section class="grade-analysis-panel" id="grades-view" hidden aria-labelledby="grades-title">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">SEGUIMIENTO ACADÉMICO</p>
+              <h2 id="grades-title">Análisis semanal de notas</h2>
+              <p class="form-note">Promedio de todas las participaciones registradas por estudiante en cada semana del ciclo.</p>
+            </div>
+          </div>
+          <div class="grade-filters" aria-label="Filtros del análisis de notas">
+            <div>
+              <label class="form-label" for="grade-cycle">Ciclo académico</label>
+              <select class="field" id="grade-cycle"><option value="">Selecciona un ciclo</option></select>
+            </div>
+            <div>
+              <label class="form-label" for="grade-course">Curso para analizar</label>
+              <select class="field" id="grade-course"><option value="">Selecciona un curso</option></select>
+            </div>
+          </div>
+          <p class="grade-analysis-note" id="grade-analysis-note" aria-live="polite">Selecciona un ciclo y un curso para mostrar el análisis.</p>
+          <div class="grade-matrix-scroll" id="grade-matrix-scroll" hidden>
+            <table class="grade-matrix">
+              <thead id="grade-matrix-head"></thead>
+              <tbody id="grade-matrix-body"></tbody>
+            </table>
+          </div>
+          <div class="grade-legend" id="grade-legend" hidden>
+            <span><i class="grade-swatch grade-missing"></i> Sin participación</span>
+            <span><i class="grade-swatch grade-low"></i> 0</span>
+            <span><i class="grade-swatch grade-high"></i> 5</span>
+          </div>
+        </section>
+
         <section class="cycles-setup-page" id="cycles-setup-page" hidden aria-labelledby="course-title">
           <div class="setup-heading">
             <p class="eyebrow">PERIODOS ACADÉMICOS</p>
@@ -651,6 +686,19 @@
       <div id="dialog-state" class="dialog-state"></div>
       <div class="dialog-history-heading"><h3>Historial de selección</h3><span id="dialog-history-count">0 eventos</span></div>
       <div id="dialog-history" class="dialog-history"></div>
+    </dialog>
+
+    <dialog class="student-dialog grade-detail-dialog" id="grade-detail-dialog" aria-labelledby="grade-detail-title">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">DETALLE SEMANAL</p>
+          <h2 id="grade-detail-title">Participaciones</h2>
+          <p class="dialog-subtitle" id="grade-detail-subtitle"></p>
+        </div>
+        <button class="icon-button dialog-close" id="grade-detail-close" type="button" aria-label="Cerrar">×</button>
+      </div>
+      <div class="grade-detail-summary" id="grade-detail-summary"></div>
+      <div class="grade-detail-list" id="grade-detail-list"></div>
     </dialog>
 
     <dialog class="student-dialog" id="edit-dialog" aria-labelledby="edit-dialog-title">

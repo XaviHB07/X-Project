@@ -862,6 +862,53 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
         ).all()
         return [self._to_participation(participation, student) for participation, student in rows]
 
+    def weekly_score_averages(
+        self, course_id: int, start_on: date, end_on: date
+    ) -> List[Tuple[int, date, float, int]]:
+        rows = self._session.execute(
+            select(
+                StudentParticipationORM.student_id,
+                ClassSessionORM.session_date,
+                func.avg(StudentParticipationORM.score),
+                func.count(StudentParticipationORM.id),
+            )
+            .join(DecisionRunORM, DecisionRunORM.id == StudentParticipationORM.decision_run_id)
+            .join(ClassSessionORM, ClassSessionORM.id == DecisionRunORM.class_session_id)
+            .where(
+                ClassSessionORM.course_id == course_id,
+                ClassSessionORM.session_date >= start_on,
+                ClassSessionORM.session_date <= end_on,
+            )
+            .group_by(StudentParticipationORM.student_id, ClassSessionORM.session_date)
+        ).all()
+        return [
+            (student_id, session_date, float(average), int(count))
+            for student_id, session_date, average, count in rows
+            if session_date is not None
+        ]
+
+    def weekly_details(
+        self, course_id: int, student_id: int, start_on: date, end_on: date
+    ) -> List[Tuple[StudentParticipation, date, datetime]]:
+        rows = self._session.execute(
+            select(StudentParticipationORM, StudentORM, ClassSessionORM, DecisionRunORM)
+            .join(StudentORM, StudentORM.id == StudentParticipationORM.student_id)
+            .join(DecisionRunORM, DecisionRunORM.id == StudentParticipationORM.decision_run_id)
+            .join(ClassSessionORM, ClassSessionORM.id == DecisionRunORM.class_session_id)
+            .where(
+                ClassSessionORM.course_id == course_id,
+                StudentParticipationORM.student_id == student_id,
+                ClassSessionORM.session_date >= start_on,
+                ClassSessionORM.session_date <= end_on,
+            )
+            .order_by(DecisionRunORM.created_at.asc(), StudentParticipationORM.id.asc())
+        ).all()
+        return [
+            (self._to_participation(participation, student), session.session_date, run.created_at)
+            for participation, student, session, run in rows
+            if session.session_date is not None
+        ]
+
 
 class SqlAlchemyGroupPlanRepository(GroupPlanRepository):
     def __init__(self, session: Session):

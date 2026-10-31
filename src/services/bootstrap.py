@@ -33,6 +33,7 @@ from src.services.auth_service import (
     AuthService, ROLE_ADMIN, ROLE_STUDENT, ROLE_TEACHER, hash_password,
 )
 from src.services.group_planning_service import GroupPlanningService
+from src.services.grade_analysis_service import GradeAnalysisService
 from src.services.roster_service import RosterService
 from src.services.selection_service import SelectionService
 from src.services.session_service import SessionService
@@ -80,6 +81,7 @@ class AppContext:
     session_service: SessionService
     auth_service: AuthService
     group_planning_service: GroupPlanningService
+    grade_analysis_service: GradeAnalysisService
 
 
 # Columnas agregadas a tablas que ya existían antes del Sprint 1. `create_all`
@@ -228,4 +230,5 @@ def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bo
         session_service=SessionService(uow_factory),
         auth_service=AuthService(session_factory),
         group_planning_service=GroupPlanningService(uow_factory),
+        grade_analysis_service=GradeAnalysisService(uow_factory),
     )

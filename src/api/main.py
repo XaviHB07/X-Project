@@ -35,6 +35,7 @@ from src.api.dependencies import (
     current_user,
     get_fairness_service,
     get_group_planning_service,
+    get_grade_analysis_service,
     get_roster_service,
     get_selection_service,
     get_session_service,
@@ -56,6 +57,8 @@ from src.api.schemas import (
     CourseResponse,
     DecisionResultResponse,
     FairnessMetricsResponse,
+    WeeklyGradesResponse,
+    WeeklyParticipationDetailsResponse,
     GroupPlanGenerateRequest,
     GroupPlanResponse,
     GroupPlanUpdateRequest,
@@ -118,6 +121,7 @@ from src.services.group_planning_service import (
     GroupPlanningService,
     InvalidGroupPlanError,
 )
+from src.services.grade_analysis_service import GradeAnalysisError, GradeAnalysisService
 from src.services.roster_import import MAX_FILE_BYTES, RosterFormatError
 from src.services.roster_service import RosterAlreadyImportedError
 from src.services.session_service import SessionDetail
@@ -1186,6 +1190,50 @@ def list_course_participations(
     with uow:
         records = uow.participations.list_by_course(course_id, limit=limit)
     return [ParticipationResponse(**record.__dict__) for record in records]
+
+
+@app.get(
+    "/courses/{course_id}/weekly-grades",
+    response_model=WeeklyGradesResponse,
+    tags=["análisis académico"],
+    dependencies=[Depends(require_course_access)],
+)
+def weekly_grades(
+    course_id: int,
+    cycle_id: int,
+    grade_service: GradeAnalysisService = Depends(get_grade_analysis_service),
+) -> WeeklyGradesResponse:
+    try:
+        result = grade_service.weekly_matrix(course_id, cycle_id)
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except GradeAnalysisError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return WeeklyGradesResponse(**result)
+
+
+@app.get(
+    "/courses/{course_id}/weekly-grades/details",
+    response_model=WeeklyParticipationDetailsResponse,
+    tags=["análisis académico"],
+    dependencies=[Depends(require_course_access)],
+)
+def weekly_grade_details(
+    course_id: int,
+    cycle_id: int,
+    student_id: int,
+    week: int,
+    grade_service: GradeAnalysisService = Depends(get_grade_analysis_service),
+) -> WeeklyParticipationDetailsResponse:
+    try:
+        result = grade_service.weekly_participation_details(
+            course_id, cycle_id, student_id, week
+        )
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except GradeAnalysisError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return WeeklyParticipationDetailsResponse(**result)
 
 
 def _group_plan_response(plan) -> GroupPlanResponse:

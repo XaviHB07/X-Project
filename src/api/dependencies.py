@@ -16,6 +16,7 @@ from src.repositories.interfaces import UnitOfWork
 from src.services.bootstrap import AppContext
 from src.services.fairness_service import FairnessMetricsService
 from src.services.group_planning_service import GroupPlanningService
+from src.services.grade_analysis_service import GradeAnalysisService
 from src.services.roster_service import RosterService
 from src.services.selection_service import SelectionService
 from src.services.session_service import SessionService
@@ -44,6 +45,10 @@ def get_session_service(request: Request) -> SessionService:
 
 def get_group_planning_service(request: Request) -> GroupPlanningService:
     return get_app_context(request).group_planning_service
+
+
+def get_grade_analysis_service(request: Request) -> GradeAnalysisService:
+    return get_app_context(request).grade_analysis_service
 
 
 def new_unit_of_work(request: Request) -> UnitOfWork:
