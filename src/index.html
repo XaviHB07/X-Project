@@ -1,0 +1,875 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0d2557" />
+    <title>Aula | Seleccion justa</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <section class="login-screen" id="login-screen" aria-labelledby="login-title">
+      <div class="login-card">
+        <span class="brand-mark login-mark" aria-hidden="true">A</span>
+        <p class="eyebrow">AULA / SELECCIÓN JUSTA</p>
+        <h1 id="login-title">Iniciar sesión</h1>
+        <p class="login-copy">Ingresa con la cuenta que te asignó el administrador.</p>
+        <form id="login-form">
+          <label class="form-label" for="login-username">Usuario o correo</label>
+          <input class="field" id="login-username" name="username" autocomplete="username" required />
+          <label class="form-label" for="login-password">Contraseña</label>
+          <input class="field" id="login-password" name="password" type="password" autocomplete="current-password" required />
+          <p class="login-error" id="login-error" role="alert" hidden></p>
+          <button class="button button-add button-full" id="login-submit" type="submit">Entrar</button>
+        </form>
+        <form id="password-change-form" hidden>
+          <p class="login-copy">Por seguridad, configura una contraseña personal para continuar.</p>
+          <label class="form-label" for="new-password">Nueva contraseña</label>
+          <input class="field" id="new-password" type="password" autocomplete="new-password" minlength="12" required />
+          <label class="form-label" for="confirm-new-password">Confirmar contraseña</label>
+          <input class="field" id="confirm-new-password" type="password" autocomplete="new-password" minlength="12" required />
+          <p class="login-error" id="password-change-error" role="alert" hidden></p>
+          <button class="button button-add button-full" id="password-change-submit" type="submit">Guardar contraseña</button>
+        </form>
+      </div>
+    </section>
+    <div class="app-shell" id="app-shell" hidden>
+      <aside class="sidebar" aria-label="Navegación y curso activo">
+        <a class="brand" href="/" aria-label="Aula, inicio">
+          <span class="brand-mark">A</span>
+          <span class="brand-name">aula<span>/</span>justa</span>
+        </a>
+
+        <nav class="app-navigation" aria-label="Navegación principal">
+          <button class="app-navigation-button" id="student-courses-view-button" type="button" hidden>
+            <span aria-hidden="true">▦</span> Cursos
+          </button>
+          <button class="app-navigation-button active" id="daily-view-button" type="button" aria-current="page">
+            <span aria-hidden="true">▦</span> Sesiones y asistencia
+          </button>
+          <button class="app-navigation-button" id="grades-view-button" type="button">
+            <span aria-hidden="true">▤</span> Análisis de notas
+          </button>
+          <button class="app-navigation-button" id="cycles-view-button" type="button">
+            <span aria-hidden="true">◷</span> Ciclos académicos
+          </button>
+          <button class="app-navigation-button" id="teachers-view-button" type="button" hidden>
+            <span aria-hidden="true">♙</span> Gestión de docentes
+          </button>
+          <button class="app-navigation-button" id="student-accounts-view-button" type="button" hidden>
+            <span aria-hidden="true">♙</span> Cuentas de alumnos
+          </button>
+          <button class="app-navigation-button" id="courses-view-button" type="button" hidden>
+            <span aria-hidden="true">＋</span> Crear cursos
+          </button>
+          <button class="app-navigation-button" id="enrollment-view-button" type="button">
+            <span aria-hidden="true">＋</span> Matrícula de estudiantes
+          </button>
+        </nav>
+
+        <div class="sidebar-section">
+          <div class="section-label">CURSO ACTIVO</div>
+          <label class="sr-only" for="recent-courses">Cursos disponibles</label>
+          <select id="recent-courses" class="field recent-select">
+            <option value="">Selecciona un curso</option>
+          </select>
+          <form id="load-course-form" class="load-course-form">
+            <label for="course-id-input">Cargar por ID</label>
+            <div class="inline-field">
+              <input id="course-id-input" class="field" type="number" min="1" placeholder="ID del curso" required />
+              <button class="icon-button" type="submit" aria-label="Cargar curso" title="Cargar curso">↗</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="sidebar-footer">
+          <div class="sidebar-account">
+            <div class="sidebar-user" id="sidebar-user"></div>
+            <button class="sidebar-logout" id="logout-button" type="button">Cerrar sesión</button>
+          </div>
+          <div class="sidebar-role">
+            <label class="section-label" for="active-role">VISTA DEL SISTEMA</label>
+            <select class="field recent-select role-select" id="active-role">
+              <option value="administrador">Administrador</option>
+              <option value="docente">Docente</option>
+            </select>
+          </div>
+          <div class="sidebar-bottom">
+            <span class="status-dot" id="api-dot"></span>
+            <span id="api-status">Conectando...</span>
+            <a href="/docs" target="_blank" rel="noreferrer">API <span aria-hidden="true">↗</span></a>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div class="breadcrumb"><span>GESTIÓN DOCENTE</span><span class="breadcrumb-slash">/</span><span id="breadcrumb-course">SIN CURSO</span></div>
+          <button class="button button-quiet" id="refresh-button" type="button" disabled>
+            <span aria-hidden="true">⟳</span> Actualizar
+          </button>
+        </header>
+
+        <section class="page-heading">
+          <div>
+            <p class="eyebrow" id="page-eyebrow">SELECCIÓN EQUITATIVA <span class="eyebrow-line"></span></p>
+            <h1 id="course-title">Panel de selección</h1>
+            <p class="heading-meta" id="course-meta">Crea un curso o carga uno existente para comenzar.</p>
+          </div>
+          <div class="heading-date" id="today-label"></div>
+        </section>
+
+        <section class="student-portal" id="student-portal" hidden aria-labelledby="student-portal-title">
+          <div class="student-portal-heading">
+            <p class="eyebrow">PORTAL DEL ESTUDIANTE</p>
+            <h1 id="student-portal-title">Mis cursos</h1>
+            <p class="heading-meta">Tus cursos están organizados por ciclo académico.</p>
+          </div>
+          <div id="student-course-index" class="student-course-index"></div>
+          <section id="student-course-detail" class="student-course-detail" hidden>
+            <button id="student-course-back" class="text-button" type="button">← Volver a mis cursos</button>
+            <div class="student-course-detail-heading">
+              <div>
+                <p class="eyebrow" id="student-detail-cycle"></p>
+                <h2 id="student-detail-title"></h2>
+              </div>
+            </div>
+            <div id="student-weeks" class="student-weeks"></div>
+            <div id="student-unassigned-sessions" class="student-unassigned-sessions" hidden></div>
+          </section>
+          <p id="student-courses-empty" class="setup-empty" hidden>No tienes cursos matriculados en este momento.</p>
+        </section>
+
+        <section class="work-course-picker" id="daily-course-picker" aria-label="Seleccionar ciclo y curso de trabajo">
+          <div>
+            <label class="form-label" for="daily-cycle">Ciclo académico</label>
+            <select id="daily-cycle" class="field"></select>
+          </div>
+          <div>
+            <label class="form-label" for="daily-course">Curso para trabajar</label>
+            <select id="daily-course" class="field"></select>
+          </div>
+        </section>
+
+        <section class="empty-state" id="empty-state">
+          <div class="empty-art" aria-hidden="true"><span>01</span><i></i><b></b></div>
+          <div>
+            <p class="eyebrow">AULA / SELECCIÓN</p>
+            <h2>Empieza con un curso</h2>
+            <p>Selecciona un curso para trabajar con sus sesiones y asistencia. Los ciclos académicos y la matrícula de estudiantes están en secciones independientes del menú.</p>
+          </div>
+        </section>
+
+        <div id="workspace" class="workspace" hidden>
+          <section class="metrics-strip" aria-label="Resumen del curso">
+            <div class="metric metric-primary">
+              <span class="metric-label">MATRICULADOS</span>
+              <strong id="metric-students">0</strong>
+              <span class="metric-foot">estudiantes</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">PRESENTES</span>
+              <strong id="metric-present">0</strong>
+              <span class="metric-foot">en esta sesión</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">COBERTURA</span>
+              <strong id="metric-coverage">—</strong>
+              <span class="metric-foot">estudiantes seleccionados</span>
+            </div>
+            <div class="metric metric-run">
+              <span class="metric-label">ÚLTIMA DECISIÓN</span>
+              <strong id="metric-last-run">—</strong>
+              <span class="metric-foot">sesión registrada</span>
+            </div>
+          </section>
+
+          <nav class="workspace-tabs" aria-label="Secciones del curso">
+            <button class="workspace-tab active" id="attendance-tab" type="button" aria-selected="true">Sesión y asistencia</button>
+            <button class="workspace-tab" id="participations-tab" type="button" aria-selected="false">Historial de participación</button>
+            <button class="workspace-tab" id="groups-tab" type="button" aria-selected="false">Trabajo en grupos</button>
+          </nav>
+
+          <div class="workspace-grid" id="attendance-view">
+            <section class="roster-panel" aria-labelledby="roster-title">
+              <div class="panel-heading roster-heading">
+                <div>
+                  <p class="eyebrow">ASISTENCIA</p>
+                  <h2 id="roster-title">Estudiantes <span id="roster-count" class="count-badge">0</span></h2>
+                </div>
+                <div class="attendance-actions">
+                  <button class="text-button" id="toggle-all-button" type="button" disabled>Marcar todos</button>
+                  <button class="text-button" id="mark-session-present-button" type="button" disabled>Marcar presentes</button>
+                </div>
+              </div>
+
+              <section class="session-box" id="session-box" aria-labelledby="session-title">
+                <div id="session-form-view">
+                  <div class="session-box-head">
+                    <span class="eyebrow" id="session-title">SESIÓN DE CLASE</span>
+                    <span class="session-date" id="session-date-label"></span>
+                  </div>
+                  <form id="session-form" class="session-form">
+                    <label class="sr-only" for="session-topic">Tema de la sesión</label>
+                    <input id="session-topic" class="field" type="text" maxlength="255" placeholder="Tema de la clase (opcional)" />
+                    <button class="button button-add" id="session-start-button" type="submit">Iniciar sesión</button>
+                  </form>
+                  <p class="form-note" id="session-hint"></p>
+                </div>
+                <div id="session-active-view" class="session-active" hidden>
+                  <div>
+                    <strong id="session-active-title">Sesión en curso</strong>
+                    <span id="session-active-meta"></span>
+                  </div>
+                  <button class="text-button" id="session-end-button" type="button">Terminar sesión</button>
+                </div>
+              </section>
+
+              <div class="roster-toolbar">
+                <span>ESTUDIANTE</span>
+                <span>PRESENTE</span>
+              </div>
+              <div class="student-list" id="student-list" aria-live="polite"></div>
+              <div class="list-empty" id="list-empty" hidden>
+                <span class="list-empty-mark">＋</span>
+                <p>Aún no hay estudiantes matriculados.</p>
+              </div>
+            </section>
+
+            <aside class="decision-column">
+              <section class="decision-panel" aria-labelledby="decision-title">
+                <div class="panel-heading decision-heading">
+                  <div>
+                    <p class="eyebrow">NUEVA RONDA</p>
+                    <h2 id="decision-title">Tomar decisión</h2>
+                  </div>
+                  <span class="decision-index">01</span>
+                </div>
+
+                <button class="button button-start-round" id="start-round-button" type="button" disabled>
+                  Iniciar ronda
+                </button>
+                <p class="form-note round-note">Incluye a todos en la selección sin cambiar la asistencia.</p>
+
+                <form id="selection-form">
+                  <label class="form-label" for="method-select">Método</label>
+                  <select id="method-select" class="field" required>
+                    <option value="bayesian_fairness">Bayesian fairness</option>
+                  </select>
+
+                  <fieldset class="visual-choice expo-target-choice">
+                    <legend class="form-label">¿Qué se elige?</legend>
+                    <label class="visual-option">
+                      <input type="radio" name="selection-target" value="student" checked />
+                      <span class="visual-option-art" aria-hidden="true">👤</span>
+                      <span><strong>Estudiante</strong><small>Elección individual</small></span>
+                    </label>
+                    <label class="visual-option">
+                      <input type="radio" name="selection-target" value="group" />
+                      <span class="visual-option-art" aria-hidden="true">👥</span>
+                      <span><strong>Grupo expositor</strong><small>Se elige un solo grupo</small></span>
+                    </label>
+                  </fieldset>
+
+                  <div class="expo-fields" id="expo-fields" hidden>
+                    <div class="form-field">
+                      <label class="form-label" for="expo-plan-select">Propuesta de grupos</label>
+                      <select id="expo-plan-select" class="field"></select>
+                    </div>
+                    <label class="expo-check" for="expo-shuffle-order">
+                      <input id="expo-shuffle-order" type="checkbox" />
+                      <span>Sortear el orden de exposición de los integrantes</span>
+                    </label>
+                    <div class="expo-times">
+                      <div class="form-field">
+                        <label class="form-label" for="expo-min">Tiempo mínimo (min)</label>
+                        <input id="expo-min" class="field" type="number" step="any" inputmode="decimal" value="5" />
+                      </div>
+                      <div class="form-field">
+                        <label class="form-label" for="expo-max">Tiempo máximo (min)</label>
+                        <input id="expo-max" class="field" type="number" step="any" inputmode="decimal" value="10" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <fieldset class="visual-choice">
+                    <legend class="form-label">Visualización</legend>
+                    <label class="visual-option">
+                      <input type="radio" name="selection-visual" value="roulette" checked />
+                      <span class="visual-option-art visual-option-wheel" aria-hidden="true"><i></i></span>
+                      <span><strong>Ruleta</strong><small>Giro de selección</small></span>
+                    </label>
+                    <label class="visual-option">
+                      <input type="radio" name="selection-visual" value="balls" />
+                      <span class="visual-option-art visual-option-balls" aria-hidden="true"><i></i><b></b><em></em></span>
+                      <span><strong>Caja de bolillas</strong><small>Bolillas en movimiento</small></span>
+                    </label>
+                  </fieldset>
+
+                  <div id="tau-field" class="form-field" hidden>
+                    <label class="form-label" for="tau-input">Temperatura (tau)</label>
+                    <input id="tau-input" class="field" type="number" min="0.01" step="0.01" value="0.5" />
+                  </div>
+
+                  <div class="form-row form-row-single">
+                    <input id="slots-input" type="hidden" value="1" />
+                    <div class="form-field form-field-wide">
+                      <label class="form-label" for="session-label">Nombre de sesión <span class="optional">OPCIONAL</span></label>
+                      <input id="session-label" class="field" type="text" maxlength="255" placeholder="Ej. Semana 4" />
+                    </div>
+                  </div>
+                  <button class="button button-run" id="run-button" type="submit" disabled>
+                    <span>Ejecutar selección</span><span aria-hidden="true">↗</span>
+                  </button>
+                </form>
+                <div class="form-note" id="selection-note">Marca estudiantes en la lista para habilitar la selección.</div>
+                <div class="replacement-control">
+                  <button class="button button-quiet" id="replacement-toggle-button" type="button" aria-pressed="true" disabled>
+                    Reposición: Sí
+                  </button>
+                  <span class="form-note" id="replacement-note">Disponible después de una ronda.</span>
+                </div>
+              </section>
+
+              <section class="result-panel" id="result-panel" hidden aria-live="polite">
+                <div class="result-topline"><span class="result-check">✓</span><span>DECISIÓN REGISTRADA</span></div>
+                <h3 id="result-title">Selección completada</h3>
+                <p class="result-meta" id="result-meta"></p>
+                <form id="participation-form">
+                  <div class="selected-list" id="selected-list"></div>
+                  <button class="button button-add participation-save" id="participation-save" type="submit">Guardar participaciones</button>
+                </form>
+              </section>
+
+              <section class="fairness-panel">
+                <div class="fairness-title"><span class="fairness-symbol">◎</span><span>Equidad del curso</span></div>
+                <div class="fairness-bar"><span id="fairness-bar-fill"></span></div>
+                <p id="fairness-caption">Sin datos de cobertura.</p>
+              </section>
+            </aside>
+          </div>
+
+          <section class="participation-history-panel" id="participations-view" hidden aria-labelledby="participations-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">REGISTRO DEL CURSO</p>
+                <h2 id="participations-title">Historial de participación</h2>
+              </div>
+              <button class="button button-quiet" id="refresh-participations" type="button">Actualizar</button>
+            </div>
+            <div class="participation-table-wrap">
+              <table class="participation-table">
+                <thead><tr><th>Código</th><th>Estudiante</th><th>Pregunta</th><th>Nota</th><th>Comentario</th><th>Fecha y hora</th><th>Asistencia</th></tr></thead>
+                <tbody id="participation-history-body"></tbody>
+              </table>
+            </div>
+            <p class="history-none" id="participation-history-empty">Todavía no hay participaciones registradas.</p>
+          </section>
+
+          <section class="group-planning-panel" id="groups-view" hidden aria-labelledby="groups-title">
+            <div class="panel-heading group-planning-heading">
+              <div>
+                <p class="eyebrow">ORGANIZACIÓN DEL CURSO</p>
+                <h2 id="groups-title">Propuesta de grupos</h2>
+                <p class="form-note">Genera un borrador aleatorio o decide cuántos grupos crear, edítalo y confírmalo cuando estés conforme. Solo las propuestas confirmadas quedan guardadas.</p>
+              </div>
+            </div>
+            <div class="group-setup-choices" id="group-setup-choices">
+              <button class="group-setup-choice" id="create-auto-groups-button" type="button">
+                <span class="group-setup-choice-title">Generar grupos automáticamente</span>
+                <span class="group-setup-choice-note">Define un máximo de estudiantes por grupo y deja que el sistema distribuya la lista.</span>
+              </button>
+              <button class="group-setup-choice" id="create-manual-groups-button" type="button">
+                <span class="group-setup-choice-title">Configurar grupos manualmente</span>
+                <span class="group-setup-choice-note">Elige cuántos grupos crear y luego organiza a los estudiantes.</span>
+              </button>
+            </div>
+            <form class="group-mode-panel" id="group-generation-form" hidden>
+              <div class="group-mode-heading">
+                <div>
+                  <h3>Generación automática</h3>
+                  <p class="form-note">El sistema mezclará y distribuirá a los estudiantes respetando este máximo.</p>
+                </div>
+                <button class="text-button" type="button" data-back-to-group-methods>Cambiar método</button>
+              </div>
+              <div class="group-mode-fields">
+                <div class="form-field">
+                  <label class="form-label" for="group-max-size">Máximo de estudiantes por grupo</label>
+                  <input class="field" id="group-max-size" type="number" min="1" max="1000" value="4" required />
+                </div>
+                <div class="form-field">
+                  <label class="form-label" for="auto-group-plan-name">Nombre de la propuesta <span class="optional">OPCIONAL</span></label>
+                  <input class="field" id="auto-group-plan-name" type="text" maxlength="255" placeholder="Ej. Proyecto de ciencias" />
+                </div>
+                <button class="button button-add" id="generate-groups-button" type="submit">Generar aleatoriamente</button>
+              </div>
+            </form>
+            <div class="group-mode-panel manual-group-setup" id="manual-group-setup" hidden>
+              <div class="group-mode-heading">
+                <div>
+                  <h3>Configuración manual</h3>
+                  <p class="form-note">Elige la cantidad de grupos; se propondrá un reparto equilibrado que podrás reorganizar después.</p>
+                </div>
+                <button class="text-button" type="button" data-back-to-group-methods>Cambiar método</button>
+              </div>
+              <div class="manual-group-controls">
+                <div class="form-field">
+                  <label class="form-label" for="manual-group-count">Cantidad de grupos</label>
+                  <input class="field" id="manual-group-count" type="number" min="1" max="100" value="5" />
+                </div>
+                <p class="group-size-preview" id="manual-group-size-preview" aria-live="polite"></p>
+                <button class="button button-run" id="prepare-manual-groups-button" type="button">Aceptar y organizar estudiantes</button>
+              </div>
+              <div class="form-field manual-group-name">
+                <label class="form-label" for="manual-group-plan-name">Nombre de la propuesta <span class="optional">OPCIONAL</span></label>
+                <input class="field" id="manual-group-plan-name" type="text" maxlength="255" placeholder="Ej. Proyecto de ciencias" />
+              </div>
+            </div>
+            <div class="group-saved-toolbar">
+              <label class="form-label" for="group-plan-select">Propuestas guardadas</label>
+              <select class="field" id="group-plan-select" disabled>
+                <option value="">Todavía no hay propuestas</option>
+              </select>
+              <button class="button button-quiet" id="delete-group-plan-button" type="button" disabled>Eliminar</button>
+            </div>
+            <div class="group-editor-toolbar">
+              <p class="form-note" id="group-editor-note">Genera una propuesta para comenzar.</p>
+              <div class="group-editor-actions">
+                <button class="button button-quiet" id="edit-group-plan-button" type="button" hidden disabled>Editar propuesta</button>
+                <button class="button button-quiet" id="cancel-group-edits-button" type="button" hidden>Cancelar edición</button>
+                <button class="text-button" id="add-group-button" type="button" disabled>＋ Agregar grupo</button>
+              </div>
+            </div>
+            <div class="group-plan-name-field" hidden>
+              <label class="form-label" for="group-plan-name">Nombre de esta propuesta</label>
+              <input class="field" id="group-plan-name" type="text" maxlength="255" placeholder="Ej. Proyecto de ciencias" disabled />
+            </div>
+            <div class="group-editor" id="group-editor"></div>
+            <div class="group-save-row">
+              <p class="form-note" id="group-validation-message" aria-live="polite"></p>
+              <button class="button button-run" id="save-group-plan-button" type="button" hidden disabled>Guardar cambios</button>
+            </div>
+          </section>
+
+        </div>
+
+        <section class="grade-analysis-panel" id="grades-view" hidden aria-labelledby="grades-title">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">SEGUIMIENTO ACADÉMICO</p>
+              <h2 id="grades-title">Análisis semanal de notas</h2>
+              <p class="form-note">Promedio de todas las participaciones registradas por estudiante en cada semana del ciclo.</p>
+            </div>
+          </div>
+          <div class="grade-filters" aria-label="Filtros del análisis de notas">
+            <div>
+              <label class="form-label" for="grade-cycle">Ciclo académico</label>
+              <select class="field" id="grade-cycle"><option value="">Selecciona un ciclo</option></select>
+            </div>
+            <div>
+              <label class="form-label" for="grade-course">Curso para analizar</label>
+              <select class="field" id="grade-course"><option value="">Selecciona un curso</option></select>
+            </div>
+          </div>
+          <p class="grade-analysis-note" id="grade-analysis-note" aria-live="polite">Selecciona un ciclo y un curso para mostrar el análisis.</p>
+          <div class="grade-matrix-scroll" id="grade-matrix-scroll" hidden>
+            <table class="grade-matrix">
+              <thead id="grade-matrix-head"></thead>
+              <tbody id="grade-matrix-body"></tbody>
+            </table>
+          </div>
+          <div class="grade-legend" id="grade-legend" hidden>
+            <span><i class="grade-swatch grade-missing"></i> Sin participación</span>
+            <span><i class="grade-swatch grade-low"></i> 0</span>
+            <span><i class="grade-swatch grade-high"></i> 5</span>
+          </div>
+        </section>
+
+        <section class="cycles-setup-page" id="cycles-setup-page" hidden aria-labelledby="course-title">
+          <div class="setup-heading">
+            <p class="eyebrow">PERIODOS ACADÉMICOS</p>
+            <p class="heading-meta">Crea y consulta los ciclos académicos.</p>
+          </div>
+
+          <section class="setup-card cycle-create-card">
+            <h2>Crear ciclo académico</h2>
+            <form id="create-cycle-form" class="cycle-create-form">
+              <label class="form-label" for="cycle-name">Nombre del ciclo</label>
+              <div class="cycle-create-fields">
+                <input id="cycle-name" class="field" type="text" maxlength="255" placeholder="Ej. 2026-II" required />
+                <label class="form-label" for="cycle-starts-on">Fecha de inicio</label>
+                <input id="cycle-starts-on" class="field" type="date" required />
+                <button class="button button-add" type="submit">＋ Crear ciclo</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="setup-card cycle-list-card" aria-labelledby="cycle-list-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">PERIODOS REGISTRADOS</p>
+                <h2 id="cycle-list-title">Ciclos académicos</h2>
+              </div>
+              <span id="cycle-count" class="count-badge">0</span>
+            </div>
+            <div class="cycle-list" id="cycle-list" aria-live="polite"></div>
+            <p class="setup-empty" id="cycle-list-empty">Todavía no hay ciclos creados.</p>
+          </section>
+        </section>
+
+        <section class="teacher-management-page" id="teacher-management-page" hidden aria-labelledby="course-title">
+          <div class="setup-heading">
+            <p class="eyebrow">ADMINISTRACIÓN</p>
+            <p class="heading-meta">Registra docentes, asigna cursos y administra sus accesos.</p>
+          </div>
+          <section class="setup-card teacher-assignment-card" id="teacher-assignment-card" aria-labelledby="teacher-assignment-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">GESTIÓN DE DOCENTES</p>
+                <h2 id="teacher-assignment-title">Gestión de docentes</h2>
+              </div>
+              <button class="button button-add" id="register-teacher-button" type="button">Registrar docente</button>
+            </div>
+            <div id="teacher-management-home">
+              <section class="teacher-directory" aria-labelledby="teacher-directory-title">
+                <h3 id="teacher-directory-title">Docentes registrados</h3>
+                <div id="teacher-directory-list"></div>
+              </section>
+              <div class="teacher-assignment-divider"></div>
+              <h3>Modificar cursos asignados</h3>
+              <label class="form-label" for="assignment-teacher">Docente</label>
+              <select class="field" id="assignment-teacher">
+                <option value="">Selecciona un docente</option>
+              </select>
+              <label class="form-label" for="assignment-course-search">Buscar cursos</label>
+              <input class="field course-search" id="assignment-course-search" type="search" placeholder="Escribe el nombre o ID del curso" autocomplete="off" />
+              <div class="assignment-course-list" id="assignment-course-list"></div>
+              <button class="button button-add" id="save-assignments-button" type="button" disabled>Guardar asignación</button>
+            </div>
+            <form id="create-teacher-form" class="teacher-create-form" hidden>
+              <h3>Registrar docente</h3>
+              <p class="form-note">Completa los datos y elige uno o más cursos para asignar.</p>
+              <div class="teacher-create-fields">
+                <div>
+                  <label class="form-label" for="teacher-full-name">Nombre completo</label>
+                  <input class="field" id="teacher-full-name" maxlength="255" required />
+                </div>
+                <div>
+                  <label class="form-label" for="teacher-username">Usuario</label>
+                  <input class="field" id="teacher-username" maxlength="120" autocomplete="off" required />
+                </div>
+                <div>
+                  <label class="form-label" for="teacher-phone">Teléfono <span class="optional">OPCIONAL</span></label>
+                  <input class="field" id="teacher-phone" type="tel" maxlength="32" />
+                </div>
+                <div>
+                  <label class="form-label" for="teacher-email">Correo</label>
+                  <input class="field" id="teacher-email" type="email" maxlength="255" required />
+                </div>
+              </div>
+              <label class="form-label" for="create-teacher-course-search">Buscar cursos a asignar</label>
+              <input class="field course-search" id="create-teacher-course-search" type="search" placeholder="Escribe el nombre o ID del curso" autocomplete="off" />
+              <div class="assignment-course-list" id="create-teacher-course-list"></div>
+              <p class="form-note">Al registrar, se mostrará una contraseña temporal para compartir con el docente. Deberá cambiarla al iniciar sesión.</p>
+              <div class="teacher-form-actions">
+                <button class="button button-quiet" id="cancel-teacher-registration" type="button">Volver</button>
+                <button class="button button-add" id="create-teacher-submit" type="submit">Registrar docente</button>
+              </div>
+            </form>
+          </section>
+        </section>
+
+        <section class="student-accounts-page" id="student-accounts-page" hidden aria-labelledby="course-title">
+          <div class="setup-heading">
+            <p class="eyebrow">ADMINISTRACIÓN</p>
+            <p class="heading-meta">Crea accesos de estudiantes, consulta las cuentas y genera contraseñas temporales para compartir por un canal privado.</p>
+          </div>
+          <section class="setup-card student-account-create-card">
+            <h2>Registrar cuenta de estudiante</h2>
+            <form id="create-student-account-form" class="student-account-form">
+              <div>
+                <label class="form-label" for="account-student-code">Código de estudiante</label>
+                <input class="field" id="account-student-code" type="text" maxlength="120" required />
+              </div>
+              <div>
+                <label class="form-label" for="account-student-name">Nombre completo</label>
+                <input class="field" id="account-student-name" type="text" maxlength="255" required />
+              </div>
+              <div>
+                <label class="form-label" for="account-student-email">Correo</label>
+                <input class="field" id="account-student-email" type="email" maxlength="255" required />
+              </div>
+              <button class="button button-add" id="create-student-account-submit" type="submit">Registrar alumno</button>
+            </form>
+          </section>
+          <section class="setup-card student-account-directory">
+            <div class="panel-heading">
+              <div><p class="eyebrow">CUENTAS REGISTRADAS</p><h2>Estudiantes</h2></div>
+              <span id="student-account-count" class="count-badge">0</span>
+            </div>
+            <div id="student-account-list" class="student-account-list"></div>
+            <p id="student-account-empty" class="setup-empty" hidden>Todavía no hay cuentas de estudiantes.</p>
+          </section>
+        </section>
+
+        <section class="academic-setup-page" id="academic-setup-page" hidden aria-labelledby="course-title">
+          <div class="setup-heading">
+            <p class="eyebrow">MATRÍCULA INICIAL</p>
+            <p class="heading-meta">Selecciona el ciclo y el curso para cargar la lista inicial o gestionar estudiantes. La carga masiva se realiza una vez por curso y ciclo.</p>
+          </div>
+
+          <section class="setup-card setup-create-card" aria-label="Seleccionar ciclo y crear curso">
+            <div class="setup-field">
+              <label class="form-label" for="active-cycle">Ciclo académico</label>
+              <select id="active-cycle" class="field">
+                <option value="">Selecciona un ciclo</option>
+              </select>
+              <label class="form-label" for="enrollment-course">Curso para trabajar</label>
+              <select id="enrollment-course" class="field"></select>
+              <p class="form-note">Selecciona un curso para gestionar su matrícula. Para crear un periodo nuevo, ve a <strong>Ciclos académicos</strong>.</p>
+            </div>
+          </section>
+
+          <section class="setup-card setup-course-card">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">CURSO SELECCIONADO</p>
+                <h2 id="management-title">Matrícula inicial</h2>
+              </div>
+              <span id="management-count" class="count-badge">0</span>
+            </div>
+            <p class="setup-empty" id="setup-course-empty">Selecciona un ciclo y curso para administrar su matrícula.</p>
+            <div id="management-view" hidden>
+            <div class="management-grid">
+                <section class="management-card" aria-labelledby="import-title">
+                  <h3 id="import-title">Cargar desde Excel</h3>
+                  <div class="import-row">
+                    <input id="roster-file" class="sr-only" type="file" accept=".xlsx" />
+                    <label for="roster-file" class="button button-quiet import-pick" id="roster-file-label">↑ Elegir Excel (.xlsx)</label>
+                    <button class="button button-add" id="import-button" type="button" disabled>Cargar lista</button>
+                  </div>
+                  <p class="form-note" id="roster-import-note">Columnas requeridas: <strong>codigo</strong> y <strong>nombre</strong>. Teléfono y correo son opcionales. La lista del curso se carga una sola vez por ciclo.</p>
+                  <div id="import-result" class="import-result" hidden aria-live="polite"></div>
+                </section>
+
+                <section class="management-card" aria-labelledby="enroll-title">
+                  <h3 id="enroll-title">Matricular estudiante</h3>
+                  <form id="enroll-form" class="management-form">
+                    <label class="form-label" for="student-name">Nombre</label>
+                    <input class="field" id="student-name" type="text" maxlength="255" required />
+                    <label class="form-label" for="student-ref">Código / matrícula</label>
+                    <input class="field" id="student-ref" type="text" maxlength="255" required />
+                    <label class="form-label" for="student-phone">Teléfono <span class="optional">OPCIONAL</span></label>
+                    <input class="field" id="student-phone" type="tel" maxlength="32" />
+                    <label class="form-label" for="student-email">Correo <span class="optional">OPCIONAL</span></label>
+                    <input class="field" id="student-email" type="email" maxlength="255" />
+                    <button class="button button-add" type="submit">＋ Matricular</button>
+                  </form>
+                </section>
+            </div>
+
+            <div class="admin-roster-toolbar">
+              <span>ESTUDIANTE · CONTACTO</span>
+              <span>ACCIONES</span>
+            </div>
+            <div id="admin-student-list" class="student-list" aria-live="polite"></div>
+            <div class="list-empty" id="admin-list-empty" hidden>
+              <span class="list-empty-mark">＋</span>
+              <p>Aún no hay estudiantes matriculados.</p>
+            </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="course-creation-page" id="course-creation-page" hidden aria-labelledby="course-title">
+          <section class="setup-card setup-create-card" aria-label="Crear curso">
+            <form id="create-course-form" class="setup-field">
+              <h3>Datos del curso</h3>
+              <label class="form-label" for="course-creation-cycle">Ciclo académico</label>
+              <select id="course-creation-cycle" class="field"></select>
+              <label class="form-label" for="course-name">Nombre del curso</label>
+              <input id="course-name" class="field" type="text" maxlength="255" placeholder="Ej. Ciencias 8A" required />
+              <button class="button button-add button-full" type="submit" disabled>
+                <span aria-hidden="true">＋</span> Crear curso
+              </button>
+              <p class="form-note" id="course-cycle-hint">Selecciona o crea un ciclo primero.</p>
+            </form>
+            <section class="course-creation-directory" aria-labelledby="course-creation-list-title">
+              <div class="panel-heading">
+                <h3 id="course-creation-list-title">Cursos existentes</h3>
+                <span class="count-badge" id="course-creation-count">0</span>
+              </div>
+              <div id="course-creation-list"></div>
+            </section>
+          </section>
+        </section>
+
+        <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      </main>
+    </div>
+
+    <dialog class="student-dialog" id="student-dialog">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">PERFIL DEL ESTUDIANTE</p>
+          <h2 id="dialog-student-name">Estudiante</h2>
+          <p class="dialog-subtitle" id="dialog-student-ref"></p>
+        </div>
+        <button class="icon-button dialog-close" id="dialog-close" type="button" aria-label="Cerrar">×</button>
+      </div>
+      <div id="dialog-state" class="dialog-state"></div>
+      <div class="dialog-history-heading"><h3>Historial de selección</h3><span id="dialog-history-count">0 eventos</span></div>
+      <div id="dialog-history" class="dialog-history"></div>
+    </dialog>
+
+    <dialog class="student-dialog grade-detail-dialog" id="grade-detail-dialog" aria-labelledby="grade-detail-title">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">DETALLE SEMANAL</p>
+          <h2 id="grade-detail-title">Participaciones</h2>
+          <p class="dialog-subtitle" id="grade-detail-subtitle"></p>
+        </div>
+        <button class="icon-button dialog-close" id="grade-detail-close" type="button" aria-label="Cerrar">×</button>
+      </div>
+      <div class="grade-detail-summary" id="grade-detail-summary"></div>
+      <div class="grade-detail-list" id="grade-detail-list"></div>
+    </dialog>
+
+    <dialog class="student-dialog" id="edit-dialog" aria-labelledby="edit-dialog-title">
+      <form id="edit-form">
+        <div class="dialog-head">
+          <div>
+            <p class="eyebrow">EDITAR ESTUDIANTE</p>
+            <h2 id="edit-dialog-title">Datos del estudiante</h2>
+          </div>
+          <button class="icon-button dialog-close" id="edit-close" type="button" aria-label="Cerrar">×</button>
+        </div>
+        <div class="edit-body">
+          <label class="form-label" for="edit-name">Nombre</label>
+          <input id="edit-name" class="field" type="text" maxlength="255" required />
+          <label class="form-label" for="edit-ref">Código / matrícula</label>
+          <input id="edit-ref" class="field" type="text" maxlength="255" required />
+          <label class="form-label" for="edit-phone">Teléfono <span class="optional">OPCIONAL</span></label>
+          <input id="edit-phone" class="field" type="tel" maxlength="32" />
+          <label class="form-label" for="edit-email">Correo <span class="optional">OPCIONAL</span></label>
+          <input id="edit-email" class="field" type="email" maxlength="255" />
+          <div class="edit-actions">
+            <button class="button button-add" id="edit-save" type="submit">Guardar cambios</button>
+            <button class="text-button danger-text" id="edit-withdraw" type="button">Retirar del curso</button>
+            <button class="text-button" id="edit-reset-password" type="button" hidden>Restablecer contraseña</button>
+          </div>
+          <p class="form-note">Retirar no borra al estudiante: conserva su historial y puede volver a cargarse desde el Excel.</p>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="student-dialog temporary-password-dialog" id="temporary-password-dialog" aria-labelledby="temporary-password-title">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">ACCESO TEMPORAL</p>
+          <h2 id="temporary-password-title">Contraseña temporal</h2>
+          <p class="dialog-subtitle" id="temporary-password-description"></p>
+        </div>
+        <button class="icon-button dialog-close" id="temporary-password-close" type="button" aria-label="Cerrar">×</button>
+      </div>
+      <div class="temporary-password-body">
+        <p class="temporary-account-username" id="temporary-account-username" hidden></p>
+        <label class="form-label" for="temporary-password-value">Contraseña temporal</label>
+        <div class="temporary-password-controls">
+          <input class="field" id="temporary-password-value" type="text" readonly autocomplete="off" />
+          <button class="button button-add" id="copy-temporary-password" type="button">Copiar</button>
+        </div>
+        <p class="form-note" id="temporary-password-guidance">Guárdala y compártela por un canal privado. Al cerrar esta ventana ya no podrás consultarla; la persona deberá cambiarla al ingresar.</p>
+      </div>
+      <div class="temporary-password-footer">
+        <button class="button button-quiet" id="temporary-password-done" type="button">Listo</button>
+      </div>
+    </dialog>
+
+    <dialog class="selection-stage" id="selection-stage" aria-labelledby="stage-heading">
+      <div class="selection-stage-frame">
+        <div class="stage-topline">
+          <p class="eyebrow" id="stage-status">SELECCIÓN EN CURSO</p>
+          <button class="icon-button stage-close" id="stage-close" type="button" aria-label="Cerrar resultado" title="Cerrar resultado" hidden>×</button>
+        </div>
+        <h2 id="stage-heading">Buscando el resultado</h2>
+        <div class="stage-visual roulette-visual" id="roulette-visual">
+          <div class="roulette-pointer" aria-hidden="true"></div>
+          <svg class="roulette-wheel" id="roulette-wheel" viewBox="0 0 600 600" role="img" aria-label="Ruleta de estudiantes"></svg>
+          <div class="roulette-hub" aria-hidden="true"><span id="roulette-hub-label">EN JUEGO</span><strong id="roulette-winner">Ruleta</strong></div>
+        </div>
+        <div class="stage-visual balls-visual" id="balls-visual" hidden>
+          <div class="ball-machine" id="ball-machine">
+            <div class="ball-machine-header"><span>BOLILLERO</span><strong id="ball-count">0 BOLILLAS</strong></div>
+            <canvas class="ball-canvas" id="ball-canvas" width="520" height="330" role="img" aria-label="Bolillero con bolillas numeradas y canal de salida"></canvas>
+            <div class="ball-machine-footer" id="ball-machine-footer">Mezclando participantes</div>
+          </div>
+        </div>
+        <section class="stage-result" id="stage-result" hidden aria-live="polite">
+          <p class="stage-result-label"><span aria-hidden="true">✓</span> RESULTADO FINAL</p>
+          <div class="stage-winners" id="stage-winners"></div>
+          <p class="stage-result-meta" id="stage-result-meta"></p>
+          <section class="expo-panel" id="expo-panel" hidden aria-label="Orden de exposición y cronómetro">
+            <div class="expo-order-block">
+              <div class="expo-order-head">
+                <span class="expo-label" id="expo-order-label">INTEGRANTES</span>
+                <button class="text-button" id="expo-reshuffle" type="button" hidden>Volver a sortear</button>
+              </div>
+              <ol class="expo-order" id="expo-order"></ol>
+            </div>
+            <div class="expo-timer" id="expo-timer">
+              <svg class="hourglass" id="hourglass" viewBox="0 0 120 180" role="img" aria-label="Reloj de arena de la exposición">
+                <defs>
+                  <clipPath id="hg-clip-top"><path d="M24 24 H96 L65 88 H55 Z" /></clipPath>
+                  <clipPath id="hg-clip-bottom"><path d="M55 92 H65 L96 156 H24 Z" /></clipPath>
+                </defs>
+                <path class="hg-glass" d="M24 24 H96 L65 88 V92 L96 156 H24 L55 92 V88 Z" />
+                <rect class="hg-sand" id="hg-sand-top" x="24" y="24" width="72" height="64" clip-path="url(#hg-clip-top)" />
+                <rect class="hg-sand" id="hg-sand-bottom" x="24" y="156" width="72" height="0" clip-path="url(#hg-clip-bottom)" />
+                <line class="hg-stream" id="hg-stream" x1="60" y1="88" x2="60" y2="156" />
+                <path class="hg-outline" d="M24 24 H96 L65 88 V92 L96 156 H24 L55 92 V88 Z" />
+                <rect class="hg-cap" x="14" y="12" width="92" height="12" rx="3" />
+                <rect class="hg-cap" x="14" y="156" width="92" height="12" rx="3" />
+              </svg>
+              <div class="expo-timer-side">
+                <div class="expo-clock" id="expo-clock">00:00</div>
+                <div class="expo-bar" aria-hidden="true"><span id="expo-bar-fill"></span><i id="expo-bar-min"></i></div>
+                <p class="expo-status" id="expo-status" aria-live="polite"></p>
+                <div class="expo-timer-actions">
+                  <button class="button button-add" id="expo-toggle" type="button">Iniciar</button>
+                  <button class="button button-quiet" id="expo-reset" type="button">Reiniciar</button>
+                </div>
+              </div>
+            </div>
+            <button class="button button-quiet expo-next" id="expo-next-group" type="button">Elegir otro grupo</button>
+          </section>
+          <form class="stage-pick-form" id="stage-pick-form" hidden>
+            <div class="stage-pick-grid">
+              <div class="stage-pick-field">
+                <label class="form-label" for="stage-question">Pregunta <span class="optional">OPCIONAL</span></label>
+                <input id="stage-question" class="field" type="text" maxlength="1000" autocomplete="off" placeholder="Pregunta realizada" />
+              </div>
+              <div class="stage-pick-field stage-pick-score">
+                <label class="form-label" for="stage-score">Nota (0 al 5)</label>
+                <input id="stage-score" class="field participation-score" type="password" inputmode="decimal"
+                  autocomplete="new-password" maxlength="6" pattern="[0-9]+([.,][0-9]+)?" aria-label="Nota de 0 a 5" required />
+              </div>
+            </div>
+            <div class="stage-pick-field">
+              <label class="form-label" for="stage-comment">Comentario <span class="optional">OPCIONAL</span></label>
+              <textarea id="stage-comment" class="field stage-comment" rows="2" maxlength="1000" placeholder="Anotaciones sobre la participación"></textarea>
+            </div>
+            <label class="participation-attendance" for="stage-present"><input id="stage-present" type="checkbox" /> Presente</label>
+            <div class="stage-pick-actions">
+              <button class="button button-add" id="stage-save" type="submit">Guardar y elegir otro</button>
+              <button class="button button-quiet" id="stage-remove" type="button">Quitar estudiante</button>
+            </div>
+          </form>
+          <button class="button button-quiet stage-done" id="stage-done" type="button">Salir</button>
+        </section>
+        <p class="stage-footnote" id="stage-footnote">El resultado se calcula con el método seleccionado.</p>
+      </div>
+    </dialog>
+  </body>
+</html>
