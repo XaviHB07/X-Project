@@ -23,7 +23,7 @@
 
 body {
   margin: 0;
-  min-width: 320px;
+  min-width: 0;
   min-height: 100vh;
   background: var(--paper);
   color: var(--ink);
@@ -633,12 +633,7 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 }
 
 @media (max-width: 760px) {
-  .app-shell { display: block;     .grade-filters { grid-template-columns: 1fr; }
-    .grade-analysis-panel { padding: 15px; }
-    .exposure-settings-panel { padding: 15px; }
-    .exposure-settings-form { grid-template-columns: 1fr; gap: 8px; }
-    .exposure-settings-form .button { width: 100%; }
-  }
+  .app-shell { display: block; min-height: 100dvh; }
   .sidebar { position: relative; height: auto; min-height: 0; padding: 15px 18px; }
   .brand { margin-bottom: 14px; }
   .brand-mark { width: 30px; height: 30px; font-size: 19px; }
@@ -691,6 +686,11 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
   .metric:nth-child(3), .metric:nth-child(4) { border-bottom: 0; }
   .metric strong { font-size: 25px; }
   .workspace-grid { grid-template-columns: 1fr; }
+  .grade-filters { grid-template-columns: 1fr; }
+  .grade-analysis-panel { padding: 15px; }
+  .exposure-settings-panel { padding: 15px; }
+  .exposure-settings-form { grid-template-columns: 1fr; gap: 8px; }
+  .exposure-settings-form .button { width: 100%; }
   .attendance-actions { gap: 9px; }
   .management-grid { grid-template-columns: 1fr; }
   .setup-create-card { grid-template-columns: 1fr; gap: 18px; }
@@ -731,7 +731,7 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
   .student-mode .app-navigation { grid-template-columns: 1fr; }
   .sidebar { padding-right: 14px; padding-left: 14px; }
   .sidebar-section { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .app-navigation-button { padding: 4px 2px; font-size: 9px; }
+  .app-navigation-button { padding: 5px 3px; font-size: 10px; }
   .main-content { padding-right: 13px; padding-left: 13px; }
   .breadcrumb { gap: 6px; font-size: 9px; }
   .button-quiet { padding: 0 5px; font-size: 11px; }
@@ -777,4 +777,116 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 @media (max-width: 520px) {
   .expo-timer { grid-template-columns: 84px minmax(0, 1fr); gap: 11px; padding: 10px; }
   .expo-clock { font-size: 30px; }
+}
+
+@media (max-width: 760px) {
+  .login-screen { min-height: 100dvh; padding: 16px; }
+  .login-card { padding: 26px 22px; }
+  .sidebar { padding-right: max(16px, env(safe-area-inset-right)); padding-left: max(16px, env(safe-area-inset-left)); }
+  .app-navigation { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .app-navigation-button { min-width: 0; min-height: 56px; font-size: 11px; overflow-wrap: anywhere; }
+  .sidebar-section { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .sidebar-section > .recent-select { min-width: 0; }
+  .sidebar .inline-field .field { font-size: 16px; }
+  .main-content { width: 100%; }
+  .topbar { gap: 8px; }
+  .breadcrumb { min-width: 0; overflow: hidden; }
+  .breadcrumb span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .page-heading { align-items: flex-start; }
+  .heading-meta { line-height: 1.5; }
+  .panel-heading { align-items: flex-start; gap: 10px; }
+  .panel-heading > div { min-width: 0; }
+  .attendance-actions { flex-wrap: wrap; justify-content: flex-start; }
+  .attendance-actions .text-button { min-height: 40px; }
+  .session-active { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .session-active > .text-button { align-self: flex-start; }
+  .form-row { grid-template-columns: 1fr; }
+  .teacher-form-actions { gap: 8px; }
+  .admin-roster-toolbar { gap: 8px; }
+  .student-actions { flex-wrap: wrap; }
+  .student-actions .button, .student-actions .text-button { min-height: 40px; }
+  .cycle-row { min-width: 0; }
+  .course-creation-row { align-items: flex-start; flex-direction: column; }
+  .course-creation-row span { text-align: left; }
+  .assignment-course { align-items: flex-start; padding: 9px 0; }
+  .assignment-course span { min-width: 0; overflow-wrap: anywhere; }
+  .participation-history-panel { min-width: 0; }
+  .participation-table-wrap, .grade-matrix-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
+  .participation-table { min-width: 620px; }
+  .grade-matrix-scroll { scrollbar-width: thin; }
+  .dialog-state { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .student-dialog, .grade-detail-dialog, .selection-stage { max-height: calc(100dvh - 24px); }
+  .selection-stage { width: calc(100vw - 24px); }
+  .selection-stage-frame { min-height: min(490px, calc(100dvh - 24px)); }
+  .stage-visual { max-width: 100%; }
+  .expo-timer { min-width: 0; }
+  .toast { right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); left: max(12px, env(safe-area-inset-left)); max-width: none; }
+}
+
+@media (max-width: 520px) {
+  body { font-size: 14px; }
+  .main-content { padding-right: max(13px, env(safe-area-inset-right)); padding-left: max(13px, env(safe-area-inset-left)); }
+  .topbar { min-height: 50px; }
+  .button-quiet { min-height: 40px; }
+  .work-course-picker { padding: 12px; }
+  .roster-panel, .decision-panel, .result-panel, .fairness-panel, .participation-history-panel { border-radius: 7px; }
+  .roster-panel { padding: 16px 13px 10px; }
+  .decision-panel { padding: 16px 13px; }
+  .student-row, .roster-student-row { grid-template-columns: minmax(0, 1fr); }
+  .student-actions { justify-content: flex-start; padding-left: 0; }
+  .attendance-control { justify-content: flex-start; }
+  .visual-option { min-width: 0; min-height: 54px; }
+  .visual-option > span:last-child { min-width: 0; }
+  .visual-option strong, .visual-option small { overflow-wrap: anywhere; }
+  .selected-list { min-width: 0; }
+  .metrics-strip { margin-bottom: 15px; }
+  .metric { min-width: 0; padding: 12px 10px; }
+  .metric-label, .metric-foot { line-height: 1.4; overflow-wrap: anywhere; }
+  .metric strong { font-size: 23px; }
+  .setup-card, .student-cycle-group { padding: 15px; }
+  .cycle-create-fields { gap: 7px; }
+  .cycle-row > .button { margin-left: 0; }
+  .cycle-start-control { margin-left: 0; }
+  .grade-filters { padding: 12px; }
+  .grade-detail-fields { grid-template-columns: 1fr; }
+  .dialog-head { gap: 10px; padding-top: 18px; padding-bottom: 14px; }
+  .dialog-head > div { min-width: 0; }
+  .dialog-head h2 { overflow-wrap: anywhere; font-size: 22px; }
+  .dialog-history-heading { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .temporary-password-controls { min-width: 0; }
+  .temporary-password-controls .field { font-size: 16px; }
+  .stage-topline { min-height: 40px; padding-right: 35px; }
+  .selection-stage-frame { justify-content: flex-start; overflow-y: auto; }
+  .stage-visual { flex: 0 0 auto; }
+  .ball-canvas { max-width: 100%; height: auto; }
+  .student-course-card { min-height: 68px; }
+  .student-week-card { min-height: 0; padding: 12px; }
+}
+
+@media (max-width: 360px) {
+  .app-navigation { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sidebar-section { grid-template-columns: minmax(0, 1fr); }
+  .sidebar-section .section-label { grid-column: 1; }
+  .sidebar-bottom { right: 14px; }
+  .page-heading { padding-top: 20px; }
+  h1 { font-size: 27px; }
+  .metrics-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .visual-choice { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .visual-option { align-items: flex-start; flex-direction: column; }
+  .visual-option-art { margin: 0 auto; }
+  .dialog-state { gap: 6px; padding: 12px; }
+  .state-stat { min-width: 0; padding: 8px; }
+  .state-stat strong { font-size: 17px; }
+}
+
+@media (min-width: 361px) and (max-width: 460px) {
+  .app-navigation-button { font-size: 11px; }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .button, .icon-button, .text-button, .sidebar-logout, .app-navigation-button,
+  .workspace-tab, .visual-option, .student-course-card, .teacher-directory-summary {
+    min-height: 44px;
+  }
+  .field { font-size: 16px; }
 }
