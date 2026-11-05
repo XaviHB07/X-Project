@@ -490,6 +490,16 @@ La configuración se consulta y actualiza mediante:
 La configuración se guarda por curso en `exposure_time_settings`, por lo que
 cada curso puede utilizar límites diferentes.
 
+Al elegir **Grupo expositor** en una ronda, se puede seleccionar una propuesta
+guardada y, opcionalmente, sortear el orden de sus integrantes. El cronómetro
+usa los límites del curso: el semáforo está en verde mientras la exposición
+está dentro del tiempo, cambia a amarillo al alcanzar el 80 % del máximo y a
+rojo al agotarlo. El tiempo mínimo se informa por separado para no confundirlo
+con una alerta de cierre. Emite un tono prolongado y moderado al 80 % y una
+alarma de tonos alternos, más fuerte y marcada, al llegar al máximo. El reloj
+se puede pausar, reanudar o reiniciar.
+Este flujo aún no guarda la duración real de cada exposición en el historial.
+
 ## 7\. De aquí a producción real: qué falta
 
 Este proyecto es un backend funcionalmente completo y probado, pero

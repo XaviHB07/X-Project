@@ -41,10 +41,15 @@ const state = {
   visualTimer: null,
   ballMachine: null,
   stageFlow: null,
+  expoTimer: null,
+  audioContext: null,
+  exposureTimeSettings: null,
 };
 
 const selectionAnimationDuration = 5500;
 const visualPalette = ["#df795e", "#f3c86a", "#2f6fe0", "#8ec5f5", "#1e3a8a", "#e7a9a0"];
+const EXPO_WARNING_RATIO = 0.2;
+const HOURGLASS = { neckTop: 88, bottomY: 156, bulb: 64 };
 
 const elements = {
   apiDot: $("#api-dot"),
@@ -205,6 +210,7 @@ async function api(path, options = {}) {
 }
 
 function showLogin(message = "") {
+  stopExpoTimer();
   state.authenticatedUser = null;
   state.course = null;
   state.availableCourses = [];
@@ -218,6 +224,7 @@ function showLogin(message = "") {
   state.activeGroupPlanId = null;
   state.groupPlanEditing = false;
   state.draftGroups = [];
+  state.exposureTimeSettings = null;
   state.appView = "daily";
   elements.appShell.classList.remove("student-mode");
   elements.loginScreen.hidden = false;
@@ -724,7 +731,11 @@ function updateSelectionControls() {
   elements.toggleAll.textContent = allSelected ? "Desmarcar todos" : "Marcar todos";
   elements.markSessionPresent.disabled = !state.session || state.students.length === 0;
   elements.startRound.disabled = !state.course || state.students.length === 0;
-  elements.runButton.disabled = !state.course || eligibleCount === 0 || state.students.length === 0 || state.participationPending;
+  const groupMode = selectedTarget() === "group";
+  const groupCandidates = groupMode ? expoGroupCandidates() : [];
+  elements.runButton.disabled = groupMode
+    ? !state.course || groupCandidates.length === 0
+    : !state.course || eligibleCount === 0 || state.students.length === 0 || state.participationPending;
   const replacementButton = $("#replacement-toggle-button");
   replacementButton.disabled = state.lastSelectedStudentIds.size === 0;
   replacementButton.setAttribute("aria-pressed", String(state.replacementEnabled));
@@ -735,6 +746,17 @@ function updateSelectionControls() {
   elements.selectionNote.textContent = eligibleCount
     ? `${eligibleCount} estudiante${eligibleCount === 1 ? "" : "s"} marcado${eligibleCount === 1 ? "" : "s"} para esta ronda. La asistencia se registra por separado.`
     : "Marca estudiantes en la lista para habilitar la selección.";
+  $("#expo-fields").hidden = !groupMode;
+  if (groupMode) {
+    elements.selectionNote.textContent = groupCandidates.length
+      ? `${groupCandidates.length} grupo${groupCandidates.length === 1 ? "" : "s"} con integrantes marcados para esta ronda.`
+      : selectedExpoPlan()
+        ? "Marca estudiantes en la lista para que sus grupos puedan ser elegidos."
+        : "Guarda una propuesta en «Trabajo en grupos» para elegir un grupo expositor.";
+    $("#expo-settings-note").textContent = state.exposureTimeSettings
+      ? `Cronómetro: mínimo ${state.exposureTimeSettings.min_minutes} min · máximo ${state.exposureTimeSettings.max_minutes} min.`
+      : "Cargando los tiempos de exposición del curso...";
+  }
   const slots = $("#slots-input");
   slots.max = String(Math.max(1, eligibleCount));
   if (eligibleCount && Number(slots.value) > eligibleCount) slots.value = String(eligibleCount);
@@ -769,6 +791,7 @@ function renderCourse() {
 }
 
 function clearCourseSelection() {
+  stopExpoTimer();
   state.course = null;
   state.students = [];
   state.managementStudents = [];
@@ -779,6 +802,8 @@ function clearCourseSelection() {
   state.activeGroupPlanId = null;
   state.groupPlanEditing = false;
   state.draftGroups = [];
+  state.exposureTimeSettings = null;
+  renderExpoPlanOptions();
   state.present = new Set();
   state.roundEligibleStudentIds = new Set();
   state.lastSelectedStudentIds = new Set();
@@ -1152,15 +1177,23 @@ async function loadProposal() {
 
 async function loadExposureTimeSettings() {
   if (!state.course) return;
+  const courseId = state.course.id;
   elements.exposureSettingsStatus.textContent = "Cargando configuración...";
   try {
-    const settings = await api(`/courses/${state.course.id}/exposure-time-settings`);
+    const settings = await api(`/courses/${courseId}/exposure-time-settings`);
+    if (state.course?.id !== courseId) return;
+    state.exposureTimeSettings = settings;
     elements.exposureMinMinutes.value = settings.min_minutes;
     elements.exposureMaxMinutes.value = settings.max_minutes;
     elements.exposureSettingsStatus.textContent =
       "Los tiempos se aplicarán a las próximas presentaciones.";
+    updateSelectionControls();
   } catch (error) {
-    elements.exposureSettingsStatus.textContent = error.message;
+    if (state.course?.id === courseId) {
+      state.exposureTimeSettings = null;
+      elements.exposureSettingsStatus.textContent = error.message;
+      updateSelectionControls();
+    }
   }
 }
 
@@ -1178,6 +1211,7 @@ async function loadCourse(courseId, { remember = true } = {}) {
   ]);
   state.course = course;
   state.course = course;
+  state.exposureTimeSettings = null;
   if (course.cycle_id !== null && course.cycle_id !== undefined) {
     renderCycles(course.cycle_id);
   }
@@ -1186,6 +1220,7 @@ async function loadCourse(courseId, { remember = true } = {}) {
   state.activeGroupPlanId = null;
   state.groupPlanEditing = false;
   state.draftGroups = [];
+  renderExpoPlanOptions();
   state.managementStudents = managementStudents;
   state.present = new Set();
   state.roundEligibleStudentIds = new Set(students.map((student) => Number(student.id)));
@@ -1500,6 +1535,7 @@ async function loadGroupPlans() {
       || state.groupPlans[0]
       || null;
     renderGroupPlans();
+    renderExpoPlanOptions();
     if (selected) {
       elements.groupPlanSelect.value = String(selected.id);
       applyGroupPlan(selected);
@@ -1557,6 +1593,7 @@ async function createGroupPlan(mode, event) {
     });
     state.groupPlans = [plan, ...state.groupPlans.filter((item) => item.id !== plan.id)];
     renderGroupPlans();
+    renderExpoPlanOptions();
     applyGroupPlan(plan);
     notify("Borrador generado. Puedes editarlo antes de confirmarlo.");
   } catch (error) {
@@ -1635,6 +1672,7 @@ async function saveGroupPlan() {
     state.groupPlans = [plan, ...state.groupPlans.filter((item) => item.id !== plan.id)];
     applyGroupPlan(plan);
     renderGroupPlans();
+    renderExpoPlanOptions();
     notify(isDraft ? "Propuesta confirmada y guardada." : "Distribución de grupos guardada.");
   } catch (error) {
     notify(error.message, true);
@@ -1655,6 +1693,7 @@ async function deleteGroupPlan() {
     state.groupPlans = state.groupPlans.filter((plan) => plan.id !== state.activeGroupPlanId);
     applyGroupPlan(state.groupPlans[0] || null);
     renderGroupPlans();
+    renderExpoPlanOptions();
     notify("Propuesta eliminada.");
   } catch (error) {
     notify(error.message, true);
@@ -2127,12 +2166,19 @@ function renderRouletteWheel(candidates) {
   }).join("");
 }
 
-function prepareSelectionStage(candidates = roundEligibleStudents()) {
+function prepareSelectionStage(candidates = roundEligibleStudents(), orderMap = null) {
   const mode = document.querySelector('input[name="selection-visual"]:checked').value;
+  const isGroup = state.stageFlow?.kind === "group";
   $("#stage-status").textContent = "SELECCIÓN EN CURSO";
-  $("#stage-heading").textContent = mode === "roulette" ? "La ruleta está en marcha" : "Las bolillas se están mezclando";
-  $("#stage-footnote").textContent = "El resultado se calcula con el método seleccionado.";
+  $("#stage-heading").textContent = isGroup
+    ? (mode === "roulette" ? "La ruleta elige al grupo expositor" : "Las bolillas eligen al grupo expositor")
+    : (mode === "roulette" ? "La ruleta está en marcha" : "Las bolillas se están mezclando");
+  $("#stage-footnote").textContent = isGroup
+    ? "Cada grupo tiene la misma probabilidad de salir."
+    : "El resultado se calcula con el método seleccionado.";
   $("#stage-result").hidden = true;
+  $("#expo-panel").hidden = true;
+  stopExpoTimer();
   $("#stage-pick-form").hidden = true;
   elements.selectionStage.querySelector(".selection-stage-frame").classList.remove("has-pick");
   elements.stageClose.hidden = true;
@@ -2150,7 +2196,10 @@ function prepareSelectionStage(candidates = roundEligibleStudents()) {
   stopBallMachine();
   if (mode === "balls") {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    state.ballMachine = createBallMachine($("#ball-canvas"), candidates, studentOrderMap(), reduce);
+    const ballOrderMap = orderMap || (isGroup
+      ? new Map(candidates.map((item) => [Number(item.id), Number(item.id)]))
+      : studentOrderMap());
+    state.ballMachine = createBallMachine($("#ball-canvas"), candidates, ballOrderMap, reduce);
   }
   $("#ball-count").textContent = `${candidates.length} ${candidates.length === 1 ? "BOLILLA" : "BOLILLAS"}`;
   $("#ball-machine-footer").textContent = "Mezclando participantes";
@@ -2211,18 +2260,28 @@ function finishSelectionStage(result, stage, error = null) {
     $("#stage-footnote").textContent = "Cierra esta ventana e inténtalo de nuevo.";
     return;
   }
-  const names = new Map(state.students.map((student) => [Number(student.id), student.display_name]));
+  const isGroup = state.stageFlow?.kind === "group";
+  const names = new Map((isGroup ? stage.candidates : state.students)
+    .map((item) => [Number(item.id), item.display_name]));
+  const memberCount = (id) => stage.candidates.find((item) => Number(item.id) === Number(id))?.members?.length ?? 0;
   const winners = result.selected_student_ids.map((id) => ({ id, name: names.get(Number(id)) || `Estudiante ${id}` }));
   $("#roulette-visual").hidden = stage.mode !== "roulette";
   $("#balls-visual").hidden = stage.mode !== "balls";
   // Texto final con el/los nombres. En la ruleta sale de inmediato; en el
   // bolillero solo después de que la bolilla termina de salir por el canal.
   const showFinalText = () => {
-    $("#stage-status").textContent = "DECISIÓN REGISTRADA";
-    $("#stage-heading").textContent = winners.length ? "¡Ya tenemos resultado!" : "Ronda completada";
+    $("#stage-status").textContent = isGroup ? "GRUPO ELEGIDO" : "DECISIÓN REGISTRADA";
+    $("#stage-heading").textContent = winners.length
+      ? (isGroup ? "¡Ya tenemos grupo expositor!" : "¡Ya tenemos resultado!")
+      : "Ronda completada";
     $("#stage-winners").innerHTML = winners.length
-      ? winners.map((student, index) => `<div class="stage-winner" style="animation-delay:${index * 90}ms"><span>${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(student.name)}</strong><small>ID ${student.id}</small></div>`).join("")
+      ? winners.map((student, index) => `<div class="stage-winner" style="animation-delay:${index * 90}ms"><span>${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(student.name)}</strong><small>${isGroup ? `${memberCount(student.id)} integrante${memberCount(student.id) === 1 ? "" : "s"}` : `ID ${student.id}`}</small></div>`).join("")
       : '<p class="stage-empty-result">No hubo estudiantes seleccionados.</p>';
+    if (isGroup) {
+      $("#stage-result-meta").textContent = "Grupo expositor elegido al azar.";
+      showGroupExposition(stage.candidates.find((item) => Number(item.id) === Number(winners[0]?.id)));
+      return;
+    }
     $("#stage-result-meta").textContent = `Sesión #${result.class_session_id} · Decisión #${result.decision_run_id}`;
     $("#stage-footnote").textContent = "La selección quedó registrada. Completa los datos o quita al estudiante.";
     showStagePick(result, winners);
@@ -2243,7 +2302,9 @@ function finishSelectionStage(result, stage, error = null) {
     showFinalText();
     return;
   }
-  const orderMap = studentOrderMap();
+  const orderMap = isGroup
+    ? new Map(stage.candidates.map((item) => [Number(item.id), Number(item.id)]))
+    : studentOrderMap();
   const numbers = winners.map((winner) => String(orderMap.get(Number(winner.id)) ?? "?").padStart(2, "0"));
   $("#stage-status").textContent = winners.length ? "SALE LA BOLILLA" : "CONFIRMANDO RESULTADO";
   $("#stage-heading").textContent = winners.length ? "Saliendo la bolilla elegida" : "Ronda completada";
@@ -2835,11 +2896,24 @@ async function advanceStage() {
 function requestStageExit() {
   const flow = state.stageFlow;
   if (flow?.pick && !window.confirm("El estudiante elegido aún no tiene su participación guardada. ¿Salir sin guardarla?")) return;
+  if (flow?.kind === "group" && expoTimerInProgress()
+    && !window.confirm("El cronómetro de la exposición sigue en marcha. ¿Salir?")) return;
   closeSelectionStage();
 }
 
 $("#selection-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (selectedTarget() === "group") {
+    setBusy(elements.runButton, true, "Seleccionando...");
+    try {
+      await startGroupStage();
+    } catch (error) {
+      notify(error.message, true);
+    } finally {
+      setBusy(elements.runButton, false);
+    }
+    return;
+  }
   if (!state.course || !roundEligibleStudents().length) return;
   state.stageFlow = { classSessionId: null, excluded: new Set(), pick: null, saved: 0, removed: 0, busy: false };
   setBusy(elements.runButton, true, "Seleccionando...");
@@ -2849,6 +2923,335 @@ $("#selection-form").addEventListener("submit", async (event) => {
     setBusy(elements.runButton, false);
   }
 });
+
+function selectedTarget() {
+  return document.querySelector('input[name="selection-target"]:checked')?.value || "student";
+}
+
+function selectedExpoPlan() {
+  return state.groupPlans.find((plan) => plan.id === Number($("#expo-plan-select").value)) || null;
+}
+
+function expoGroupCandidates(plan = selectedExpoPlan()) {
+  if (!plan) return [];
+  const names = new Map(state.students.map((student) => [Number(student.id), student.display_name]));
+  return plan.groups.map((group, index) => ({
+    id: index + 1,
+    display_name: group.name,
+    members: group.student_ids.map(Number)
+      .filter((id) => names.has(id) && state.roundEligibleStudentIds.has(id))
+      .map((id) => ({ id, name: names.get(id) })),
+  })).filter((candidate) => candidate.members.length);
+}
+
+function groupStageCandidates() {
+  const flow = state.stageFlow;
+  return expoGroupCandidates(flow.plan).filter((candidate) => !flow.excluded.has(Number(candidate.id)));
+}
+
+function renderExpoPlanOptions() {
+  const select = $("#expo-plan-select");
+  const previous = select.value;
+  const savedPlans = state.groupPlans.filter((plan) => Number.isInteger(plan.id));
+  select.innerHTML = savedPlans.length
+    ? savedPlans.map((plan) =>
+        `<option value="${plan.id}">${escapeHtml(plan.name)}</option>`).join("")
+    : '<option value="">Sin propuestas guardadas</option>';
+  if (savedPlans.some((plan) => String(plan.id) === previous)) select.value = previous;
+  else if (savedPlans.length) select.value = String(savedPlans[0].id);
+  select.disabled = !savedPlans.length;
+  updateSelectionControls();
+}
+
+function secureRandomInt(maxExclusive) {
+  const limit = Math.floor(0x100000000 / maxExclusive) * maxExclusive;
+  const buffer = new Uint32Array(1);
+  do {
+    crypto.getRandomValues(buffer);
+  } while (buffer[0] >= limit);
+  return buffer[0] % maxExclusive;
+}
+
+function secureShuffle(items) {
+  const copy = [...items];
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const other = secureRandomInt(index + 1);
+    [copy[index], copy[other]] = [copy[other], copy[index]];
+  }
+  return copy;
+}
+
+async function startGroupStage() {
+  const plan = selectedExpoPlan();
+  if (!state.course || !plan) {
+    notify("Selecciona una propuesta de grupos guardada.", true);
+    return;
+  }
+  const settings = state.exposureTimeSettings;
+  if (!settings) {
+    notify("No se pudieron cargar los tiempos de exposición de este curso.", true);
+    return;
+  }
+  const minMs = Number(settings.min_minutes) * 60000;
+  const maxMs = Number(settings.max_minutes) * 60000;
+  if (!Number.isFinite(minMs) || !Number.isFinite(maxMs) || minMs < 60000
+    || maxMs < minMs || maxMs > 240 * 60000) {
+    notify("Configura tiempos de exposición válidos antes de iniciar.", true);
+    return;
+  }
+  if (!expoGroupCandidates(plan).length) {
+    notify("Marca al menos un integrante de un grupo para poder seleccionarlo.", true);
+    return;
+  }
+  state.stageFlow = {
+    kind: "group",
+    plan,
+    excluded: new Set(),
+    shuffleOrder: $("#expo-shuffle-order").checked,
+    order: [],
+    minMs,
+    maxMs,
+  };
+  await runGroupSpin();
+}
+
+async function runGroupSpin() {
+  const candidates = groupStageCandidates();
+  if (!candidates.length) return;
+  const stage = prepareSelectionStage(
+    candidates,
+    new Map(candidates.map((item) => [Number(item.id), Number(item.id)])),
+  );
+  const winner = candidates[secureRandomInt(candidates.length)];
+  const remainingAnimation = Math.max(0, selectionAnimationDuration - (performance.now() - stage.startedAt));
+  if (remainingAnimation) await new Promise((resolve) => setTimeout(resolve, remainingAnimation));
+  finishSelectionStage({
+    selected_student_ids: [winner.id],
+    class_session_id: null,
+    decision_run_id: null,
+  }, stage);
+}
+
+function renderExpoOrder() {
+  const flow = state.stageFlow;
+  $("#expo-order-label").textContent = flow.shuffleOrder ? "ORDEN DE EXPOSICIÓN (SORTEADO)" : "INTEGRANTES";
+  $("#expo-reshuffle").hidden = !flow.shuffleOrder || flow.order.length < 2;
+  $("#expo-order").classList.toggle("is-unordered", !flow.shuffleOrder);
+  $("#expo-order").innerHTML = flow.order.map((member, index) =>
+    `<li><span>${flow.shuffleOrder ? index + 1 : "•"}</span><strong>${escapeHtml(member.name)}</strong></li>`,
+  ).join("");
+}
+
+function showGroupExposition(candidate) {
+  const flow = state.stageFlow;
+  if (!flow || !candidate) return;
+  flow.excluded.add(Number(candidate.id));
+  flow.order = flow.shuffleOrder ? secureShuffle(candidate.members) : [...candidate.members];
+  renderExpoOrder();
+  setupExpoTimer(flow.minMs, flow.maxMs);
+  const remaining = groupStageCandidates().length;
+  $("#expo-next-group").hidden = remaining === 0;
+  $("#expo-panel").hidden = false;
+  elements.selectionStage.querySelector(".selection-stage-frame").classList.add("has-pick");
+  $("#stage-footnote").textContent = remaining
+    ? `Quedan ${remaining} grupo${remaining === 1 ? "" : "s"} por elegir.`
+    : "Este fue el último grupo disponible.";
+  $("#expo-panel").scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+$("#expo-reshuffle").addEventListener("click", () => {
+  const flow = state.stageFlow;
+  if (!flow || flow.kind !== "group" || flow.order.length < 2) return;
+  const sameOrder = (next) => next.every((member, index) => member.id === flow.order[index].id);
+  let next;
+  do {
+    next = secureShuffle(flow.order);
+  } while (sameOrder(next));
+  flow.order = next;
+  renderExpoOrder();
+});
+
+$("#expo-next-group").addEventListener("click", async () => {
+  if (!state.stageFlow || state.stageFlow.kind !== "group") return;
+  if (expoTimerInProgress() && !window.confirm("El cronómetro todavía no terminó. ¿Elegir otro grupo de todos modos?")) return;
+  await runGroupSpin();
+});
+
+function formatExpoClock(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function expoElapsed(timer) {
+  return timer.elapsed + (timer.startedAt === null ? 0 : performance.now() - timer.startedAt);
+}
+
+function expoTimerInProgress() {
+  const phase = state.expoTimer?.phase;
+  return phase === "running" || phase === "paused";
+}
+
+function getAudioContext() {
+  const Context = window.AudioContext || window.webkitAudioContext;
+  if (!Context) return null;
+  state.audioContext = state.audioContext || new Context();
+  if (state.audioContext.state === "suspended") state.audioContext.resume();
+  return state.audioContext;
+}
+
+function playExpoTones(frequencies, { volume, duration, spacing, waveform = "sine" }) {
+  try {
+    const context = getAudioContext();
+    if (!context) return;
+    frequencies.forEach((frequency, index) => {
+      const start = context.currentTime + index * spacing;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = waveform;
+      oscillator.frequency.value = frequency;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(volume, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+      oscillator.connect(gain).connect(context.destination);
+      oscillator.start(start);
+      oscillator.stop(start + duration + 0.02);
+    });
+  } catch {
+    // El semáforo visual sigue funcionando si el navegador bloquea el audio.
+  }
+}
+
+function stopExpoTimer() {
+  if (state.expoTimer?.interval) clearInterval(state.expoTimer.interval);
+  state.expoTimer = null;
+}
+
+function setupExpoTimer(minMs, maxMs) {
+  stopExpoTimer();
+  state.expoTimer = {
+    minMs,
+    maxMs,
+    elapsed: 0,
+    startedAt: null,
+    interval: null,
+    phase: "idle",
+    warned: false,
+  };
+  renderExpoTimer();
+}
+
+function toggleExpoTimer() {
+  const timer = state.expoTimer;
+  if (!timer || timer.phase === "over") return;
+  if (timer.phase === "running") {
+    timer.elapsed = expoElapsed(timer);
+    timer.startedAt = null;
+    clearInterval(timer.interval);
+    timer.interval = null;
+    timer.phase = "paused";
+  } else {
+    getAudioContext();
+    timer.startedAt = performance.now();
+    timer.phase = "running";
+    timer.interval = setInterval(tickExpoTimer, 100);
+  }
+  renderExpoTimer();
+}
+
+function tickExpoTimer() {
+  const timer = state.expoTimer;
+  if (!timer) return;
+  const elapsed = expoElapsed(timer);
+  if (!timer.warned && elapsed >= timer.maxMs * (1 - EXPO_WARNING_RATIO) && elapsed < timer.maxMs) {
+    timer.warned = true;
+    playExpoTones([660], { volume: 0.12, duration: 0.85, spacing: 0.35 });
+  }
+  if (elapsed >= timer.maxMs) {
+    timer.elapsed = timer.maxMs;
+    timer.startedAt = null;
+    clearInterval(timer.interval);
+    timer.interval = null;
+    timer.phase = "over";
+    timer.warned = true;
+    playExpoTones([880, 660, 880, 660], {
+      volume: 0.32,
+      duration: 0.24,
+      spacing: 0.34,
+      waveform: "triangle",
+    });
+  }
+  renderExpoTimer();
+}
+
+function renderExpoTimer() {
+  const timer = state.expoTimer;
+  if (!timer) return;
+  const elapsed = Math.min(expoElapsed(timer), timer.maxMs);
+  const remaining = timer.maxMs - elapsed;
+  const ratio = remaining / timer.maxMs;
+  const minReached = elapsed >= timer.minMs;
+  const { neckTop, bottomY, bulb } = HOURGLASS;
+  const topHeight = bulb * ratio;
+  const bottomHeight = bulb * (1 - ratio);
+  $("#hg-sand-top").setAttribute("y", String(neckTop - topHeight));
+  $("#hg-sand-top").setAttribute("height", String(topHeight));
+  $("#hg-sand-bottom").setAttribute("y", String(bottomY - bottomHeight));
+  $("#hg-sand-bottom").setAttribute("height", String(bottomHeight));
+  $("#hg-stream").setAttribute("y2", String(bottomY - bottomHeight));
+  $("#expo-clock").textContent = formatExpoClock(remaining);
+  $("#expo-bar-fill").style.width = `${(elapsed / timer.maxMs) * 100}%`;
+  $("#expo-bar-min").style.left = `${(timer.minMs / timer.maxMs) * 100}%`;
+  const root = $("#expo-timer");
+  root.classList.toggle("is-running", timer.phase === "running");
+  root.classList.toggle("is-warning", timer.warned && timer.phase !== "over");
+  root.classList.toggle("is-over", timer.phase === "over");
+  root.classList.toggle("min-reached", minReached);
+  const signal = $("#expo-signal");
+  let signalState = "idle";
+  let signalLabel = "Listo para iniciar";
+  let status;
+  if (timer.phase === "idle") {
+    status = `Mínimo ${formatExpoClock(timer.minMs)} · máximo ${formatExpoClock(timer.maxMs)}. Pulsa Iniciar cuando comience la exposición.`;
+  } else if (timer.phase === "over") {
+    signalState = "over";
+    signalLabel = "Rojo · tiempo máximo alcanzado";
+    status = "Tiempo agotado. Es momento de cerrar la exposición.";
+  } else if (timer.warned) {
+    signalState = "warning";
+    signalLabel = "Amarillo · cerca del tiempo máximo";
+    const percent = Math.round(EXPO_WARNING_RATIO * 100);
+    status = `Queda el ${percent} % del tiempo: vayan cerrando.${minReached ? "" : " (Aún no se cumple el mínimo.)"}`;
+  } else if (minReached) {
+    signalState = "on-time";
+    signalLabel = "Verde · dentro del rango";
+    status = timer.phase === "paused"
+      ? "En pausa · tiempo mínimo cumplido."
+      : "Dentro del tiempo permitido · mínimo cumplido.";
+  } else {
+    signalState = "on-time";
+    signalLabel = "Verde · dentro del tiempo permitido";
+    status = `${timer.phase === "paused" ? "En pausa" : "En curso"} · aún no se alcanza el mínimo (${formatExpoClock(timer.minMs)}).`;
+  }
+  signal.className = `expo-signal is-${signalState}`;
+  signal.querySelectorAll("[data-signal-light]").forEach((light) => {
+    light.classList.toggle("is-active", light.dataset.signalLight === signalState);
+    light.classList.toggle("is-pulsing", signalState === "over" && light.dataset.signalLight === "over");
+  });
+  $("#expo-signal-label").textContent = signalLabel;
+  $("#expo-status").textContent = status;
+  const toggle = $("#expo-toggle");
+  toggle.textContent = { idle: "Iniciar", running: "Pausar", paused: "Reanudar", over: "Finalizado" }[timer.phase];
+  toggle.disabled = timer.phase === "over";
+}
+
+$("#expo-toggle").addEventListener("click", toggleExpoTimer);
+$("#expo-reset").addEventListener("click", () => {
+  const timer = state.expoTimer;
+  if (timer) setupExpoTimer(timer.minMs, timer.maxMs);
+});
+document.querySelectorAll('input[name="selection-target"]').forEach((input) =>
+  input.addEventListener("change", updateSelectionControls));
+$("#expo-plan-select").addEventListener("change", updateSelectionControls);
 
 $("#stage-score").addEventListener("input", (event) => {
   const input = event.currentTarget;
@@ -2923,6 +3326,7 @@ elements.selectionStage.addEventListener("cancel", (event) => {
 });
 elements.selectionStage.addEventListener("close", () => {
   const hadFlow = Boolean(state.stageFlow);
+  stopExpoTimer();
   state.stageFlow = null;
   if (hadFlow) refreshCourse().catch(() => {});
 });
@@ -3201,8 +3605,10 @@ elements.exposureSettingsForm.addEventListener("submit", async (event) => {
     });
     elements.exposureMinMinutes.value = settings.min_minutes;
     elements.exposureMaxMinutes.value = settings.max_minutes;
+    state.exposureTimeSettings = settings;
     elements.exposureSettingsStatus.textContent =
       "Configuración guardada. Se aplicará a las próximas presentaciones.";
+    updateSelectionControls();
     notify("Tiempos de exposición actualizados.");
   } catch (error) {
     elements.exposureSettingsStatus.textContent = error.message;
