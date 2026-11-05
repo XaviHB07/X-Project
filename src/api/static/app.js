@@ -113,6 +113,11 @@ const elements = {
   attendanceTab: $("#attendance-tab"),
   participationsTab: $("#participations-tab"),
   groupsTab: $("#groups-tab"),
+  exposureSettingsForm: $("#exposure-settings-form"),
+  exposureMinMinutes: $("#exposure-minutes-min"),
+  exposureMaxMinutes: $("#exposure-minutes-max"),
+  exposureSettingsStatus: $("#exposure-settings-status"),
+  saveExposureSettings: $("#save-exposure-settings"),
   gradesView: $("#grades-view"),
   gradeCycle: $("#grade-cycle"),
   gradeCourse: $("#grade-course"),
@@ -623,16 +628,21 @@ function renderCourseCreation() {
 
 function renderMethodOptions() {
   const descriptions = {
-    bayesian_fairness: "Bayesian fairness",
-    roulette: "Roulette",
+    bayesian_fairness: "Enfoque Bayesiano",
+    roulette: "Aleatorio Uniforme",
     weighted_softmax: "Weighted softmax",
   };
   const current = elements.methodSelect.value;
   elements.methodSelect.innerHTML = state.methods.map((method) =>
     `<option value="${escapeHtml(method)}">${escapeHtml(descriptions[method] || method)}</option>`,
   ).join("");
-  if (state.methods.includes(current)) elements.methodSelect.value = current;
-  if (!elements.methodSelect.value && state.methods.length) elements.methodSelect.value = state.methods[0];
+  if (state.methods.includes(current)) {
+    elements.methodSelect.value = current;
+  } else if (state.methods.includes("roulette")) {
+    elements.methodSelect.value = "roulette";
+  } else if (state.methods.length) {
+    elements.methodSelect.value = state.methods[0];
+  }
   updateMethodFields();
 }
 
@@ -1140,6 +1150,20 @@ async function loadProposal() {
   renderSessionBox();
 }
 
+async function loadExposureTimeSettings() {
+  if (!state.course) return;
+  elements.exposureSettingsStatus.textContent = "Cargando configuración...";
+  try {
+    const settings = await api(`/courses/${state.course.id}/exposure-time-settings`);
+    elements.exposureMinMinutes.value = settings.min_minutes;
+    elements.exposureMaxMinutes.value = settings.max_minutes;
+    elements.exposureSettingsStatus.textContent =
+      "Los tiempos se aplicarán a las próximas presentaciones.";
+  } catch (error) {
+    elements.exposureSettingsStatus.textContent = error.message;
+  }
+}
+
 async function loadCourse(courseId, { remember = true } = {}) {
   const id = Number(courseId);
   if (!Number.isInteger(id) || id <= 0) throw new Error("Escribe un ID de curso válido.");
@@ -1180,6 +1204,7 @@ async function loadCourse(courseId, { remember = true } = {}) {
   if (remember) saveRecentCourse(course);
   renderCourse();
   loadProposal();
+  loadExposureTimeSettings();
   loadGroupPlans();
 }
 
@@ -3157,6 +3182,34 @@ elements.participationsTab.addEventListener("click", () => {
 elements.groupsTab.addEventListener("click", () => {
   setCourseView("groups");
   if (state.course && !state.groupPlans.length) loadGroupPlans();
+});
+elements.exposureSettingsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const minMinutes = Number(elements.exposureMinMinutes.value);
+  const maxMinutes = Number(elements.exposureMaxMinutes.value);
+  if (!Number.isInteger(minMinutes) || !Number.isInteger(maxMinutes)
+    || minMinutes < 1 || maxMinutes > 240 || minMinutes > maxMinutes) {
+    elements.exposureSettingsStatus.textContent =
+      "El mínimo debe ser menor o igual al máximo, entre 1 y 240 minutos.";
+    return;
+  }
+  setBusy(elements.saveExposureSettings, true, "Guardando...");
+  try {
+    const settings = await api(`/courses/${state.course.id}/exposure-time-settings`, {
+      method: "PUT",
+      body: JSON.stringify({ min_minutes: minMinutes, max_minutes: maxMinutes }),
+    });
+    elements.exposureMinMinutes.value = settings.min_minutes;
+    elements.exposureMaxMinutes.value = settings.max_minutes;
+    elements.exposureSettingsStatus.textContent =
+      "Configuración guardada. Se aplicará a las próximas presentaciones.";
+    notify("Tiempos de exposición actualizados.");
+  } catch (error) {
+    elements.exposureSettingsStatus.textContent = error.message;
+    notify(error.message, true);
+  } finally {
+    setBusy(elements.saveExposureSettings, false);
+  }
 });
 elements.gradesViewButton.addEventListener("click", () => {
   state.gradeCycleId = state.course?.cycle_id || state.activeCycleId || null;

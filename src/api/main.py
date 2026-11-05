@@ -55,6 +55,8 @@ from src.api.schemas import (
     AvailableMethodsResponse,
     CourseCreateRequest,
     CourseResponse,
+    ExposureTimeSettingsRequest,
+    ExposureTimeSettingsResponse,
     DecisionResultResponse,
     FairnessMetricsResponse,
     WeeklyGradesResponse,
@@ -978,6 +980,55 @@ def propose_session(
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     return SessionProposalResponse(
         session_date=proposal.session_date, suggested_topic=proposal.suggested_topic
+    )
+
+
+@app.get(
+    "/courses/{course_id}/exposure-time-settings",
+    response_model=ExposureTimeSettingsResponse,
+    tags=["sesiones"],
+    dependencies=[Depends(require_course_access)],
+)
+def get_exposure_time_settings(
+    course_id: int,
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> ExposureTimeSettingsResponse:
+    with uow:
+        if uow.courses.get(course_id) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"Curso {course_id} no encontrado.")
+        settings = uow.exposure_time_settings.get_or_create(course_id)
+        uow.commit()
+    return ExposureTimeSettingsResponse(
+        course_id=settings.course_id,
+        min_minutes=settings.min_minutes,
+        max_minutes=settings.max_minutes,
+        updated_at=settings.updated_at,
+    )
+
+
+@app.put(
+    "/courses/{course_id}/exposure-time-settings",
+    response_model=ExposureTimeSettingsResponse,
+    tags=["sesiones"],
+    dependencies=[Depends(require_course_access)],
+)
+def update_exposure_time_settings(
+    course_id: int,
+    payload: ExposureTimeSettingsRequest,
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> ExposureTimeSettingsResponse:
+    with uow:
+        if uow.courses.get(course_id) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"Curso {course_id} no encontrado.")
+        settings = uow.exposure_time_settings.update(
+            course_id, payload.min_minutes, payload.max_minutes
+        )
+        uow.commit()
+    return ExposureTimeSettingsResponse(
+        course_id=settings.course_id,
+        min_minutes=settings.min_minutes,
+        max_minutes=settings.max_minutes,
+        updated_at=settings.updated_at,
     )
 
 

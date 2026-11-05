@@ -24,6 +24,7 @@ from src.domain.entities import (
     Course,
     CourseGroupPlan,
     DecisionRun,
+    ExposureTimeSettings,
     Student,
     StudentAccount,
     StudentGroup,
@@ -41,6 +42,7 @@ from src.repositories.interfaces import (
     AttendanceRepository,
     ClassSessionRepository,
     CourseRepository,
+    ExposureTimeSettingsRepository,
     DecisionRunRepository,
     DuplicateAcademicCycleError,
     DuplicateStudentError,
@@ -59,6 +61,7 @@ from src.repositories.sqlalchemy.models import (
     ClassSessionORM,
     CourseORM,
     CourseGroupPlanORM,
+    ExposureTimeSettingsORM,
     DecisionRunORM,
     SelectionEventORM,
     SessionAttendanceORM,
@@ -150,6 +153,46 @@ class SqlAlchemyCourseRepository(CourseRepository):
             created_at=row.created_at,
             cycle_id=row.cycle_id,
             roster_imported_at=row.roster_imported_at,
+        )
+
+
+class SqlAlchemyExposureTimeSettingsRepository(ExposureTimeSettingsRepository):
+    def __init__(self, session: Session):
+        self._session = session
+
+    def get_or_create(self, course_id: int) -> ExposureTimeSettings:
+        row = self._session.get(ExposureTimeSettingsORM, course_id)
+        if row is None:
+            row = ExposureTimeSettingsORM(course_id=course_id, min_minutes=1, max_minutes=5)
+            self._session.add(row)
+            self._session.flush()
+        return self._to_settings(row)
+
+    def update(
+        self, course_id: int, min_minutes: int, max_minutes: int
+    ) -> ExposureTimeSettings:
+        row = self._session.get(ExposureTimeSettingsORM, course_id)
+        if row is None:
+            row = ExposureTimeSettingsORM(
+                course_id=course_id,
+                min_minutes=min_minutes,
+                max_minutes=max_minutes,
+            )
+            self._session.add(row)
+        else:
+            row.min_minutes = min_minutes
+            row.max_minutes = max_minutes
+            row.updated_at = datetime.now(timezone.utc)
+        self._session.flush()
+        return self._to_settings(row)
+
+    @staticmethod
+    def _to_settings(row: ExposureTimeSettingsORM) -> ExposureTimeSettings:
+        return ExposureTimeSettings(
+            course_id=row.course_id,
+            min_minutes=row.min_minutes,
+            max_minutes=row.max_minutes,
+            updated_at=row.updated_at,
         )
 
 

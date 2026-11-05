@@ -27,6 +27,7 @@ from src.domain.entities import (
     Course,
     CourseGroupPlan,
     DecisionRun,
+    ExposureTimeSettings,
     Student,
     StudentAccount,
     StudentGroup,
@@ -77,6 +78,18 @@ class CourseRepository(ABC):
     def claim_roster_import(self, course_id: int) -> bool:
         """Atomically claims the course's one roster import for its cycle."""
         ...
+
+
+class ExposureTimeSettingsRepository(ABC):
+    """Persistencia de límites de tiempo de exposición por curso."""
+
+    @abstractmethod
+    def get_or_create(self, course_id: int) -> ExposureTimeSettings: ...
+
+    @abstractmethod
+    def update(
+        self, course_id: int, min_minutes: int, max_minutes: int
+    ) -> ExposureTimeSettings: ...
 
 
 class AcademicCycleRepository(ABC):
@@ -454,6 +467,7 @@ class UnitOfWork(ABC):
     """
 
     courses: CourseRepository
+    exposure_time_settings: ExposureTimeSettingsRepository
     cycles: AcademicCycleRepository
     students: StudentRepository
     student_states: StudentStateRepository

@@ -33,6 +33,16 @@ class Course:
 
 
 @dataclass(frozen=True)
+class ExposureTimeSettings:
+    """Límites de duración de una exposición dentro de un curso."""
+
+    course_id: int
+    min_minutes: int
+    max_minutes: int
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
 class AcademicCycle:
     """Un periodo académico que agrupa cursos independientes."""
 

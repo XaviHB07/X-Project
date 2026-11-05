@@ -475,7 +475,22 @@ código 2 y lo dice, en vez de dar un "OK" sin haber comprobado nada.**
 
 ---
 
-## 6\. De aquí a producción real: qué falta
+## 6\. Configuración del tiempo de exposición
+
+En **Sesiones y asistencia**, la vista Docente muestra el panel **Tiempo de
+exposición** para el curso activo. Permite guardar un tiempo mínimo y máximo,
+expresados en minutos, entre 1 y 240. El mínimo no puede superar al máximo.
+Los valores iniciales son 1 y 5 minutos.
+
+La configuración se consulta y actualiza mediante:
+
+* `GET /courses/{course_id}/exposure-time-settings`
+* `PUT /courses/{course_id}/exposure-time-settings`
+
+La configuración se guarda por curso en `exposure_time_settings`, por lo que
+cada curso puede utilizar límites diferentes.
+
+## 7\. De aquí a producción real: qué falta
 
 Este proyecto es un backend funcionalmente completo y probado, pero
 antes de exponerlo a usuarios reales en internet, considera agregar:
@@ -511,7 +526,7 @@ contratos) descrita en este README: son extensiones sobre la misma base.
 
 \---
 
-## 7\. Estructura completa del proyecto
+## 8\. Estructura completa del proyecto
 
 ```
 seleccion\_bayesiana/

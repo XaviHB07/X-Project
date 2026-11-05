@@ -141,6 +141,17 @@ class CourseORM(Base):
     syllabus_entries: Mapped[List["SyllabusEntryORM"]] = relationship(back_populates="course")
 
 
+class ExposureTimeSettingsORM(Base):
+    __tablename__ = "exposure_time_settings"
+
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), primary_key=True)
+    min_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    max_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    course: Mapped["CourseORM"] = relationship()
+
+
 class CourseGroupPlanORM(Base):
     __tablename__ = "course_group_plans"
 

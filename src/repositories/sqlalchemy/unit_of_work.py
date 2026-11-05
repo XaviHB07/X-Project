@@ -21,6 +21,7 @@ from src.repositories.sqlalchemy.repository_impl import (
     SqlAlchemyAcademicCycleRepository,
     SqlAlchemyClassSessionRepository,
     SqlAlchemyCourseRepository,
+    SqlAlchemyExposureTimeSettingsRepository,
     SqlAlchemyDecisionRunRepository,
     SqlAlchemyEventRepository,
     SqlAlchemyGroupPlanRepository,
@@ -47,6 +48,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         # que hace que todas sus operaciones se confirmen o se deshagan
         # juntas al llamar a commit()/rollback().
         self.courses = SqlAlchemyCourseRepository(self._session)
+        self.exposure_time_settings = SqlAlchemyExposureTimeSettingsRepository(self._session)
         self.cycles = SqlAlchemyAcademicCycleRepository(self._session)
         self.students = SqlAlchemyStudentRepository(self._session)
         self.student_accounts = SqlAlchemyStudentAccountRepository(self._session)

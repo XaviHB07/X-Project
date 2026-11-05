@@ -885,6 +885,27 @@ class TestSesionesYAsistencia:
         ids = [c["id"] for c in client.get("/courses").json()]
         assert ids[-2:] == [first, second]
 
+    def test_exposure_time_settings_have_defaults_and_can_be_updated(self, client: TestClient):
+        course_id, _ = self._course(client)
+        defaults = client.get(f"/courses/{course_id}/exposure-time-settings")
+        assert defaults.status_code == 200
+        assert defaults.json()["min_minutes"] == 1
+        assert defaults.json()["max_minutes"] == 5
+
+        updated = client.put(
+            f"/courses/{course_id}/exposure-time-settings",
+            json={"min_minutes": 3, "max_minutes": 12},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["min_minutes"] == 3
+        assert updated.json()["max_minutes"] == 12
+
+        invalid = client.put(
+            f"/courses/{course_id}/exposure-time-settings",
+            json={"min_minutes": 13, "max_minutes": 12},
+        )
+        assert invalid.status_code == 422
+
     def test_proposal_without_and_with_syllabus(self, client: TestClient):
         course_id, _ = self._course(client)
         empty = client.get(f"/courses/{course_id}/class-sessions/proposal").json()

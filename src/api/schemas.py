@@ -30,6 +30,24 @@ class CourseResponse(BaseModel):
     roster_imported: bool = False
 
 
+class ExposureTimeSettingsRequest(BaseModel):
+    min_minutes: int = Field(..., ge=1, le=240)
+    max_minutes: int = Field(..., ge=1, le=240)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "ExposureTimeSettingsRequest":
+        if self.min_minutes > self.max_minutes:
+            raise ValueError("El tiempo mínimo no puede superar al tiempo máximo.")
+        return self
+
+
+class ExposureTimeSettingsResponse(BaseModel):
+    course_id: int
+    min_minutes: int
+    max_minutes: int
+    updated_at: datetime
+
+
 class AcademicCycleCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, examples=["2026-II"])
     starts_on: Optional[date] = None

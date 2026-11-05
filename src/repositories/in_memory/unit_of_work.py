@@ -17,6 +17,7 @@ from src.repositories.in_memory.repository_impl import (
     InMemoryClassSessionRepository,
     InMemoryCourseRepository,
     InMemoryDatabase,
+    InMemoryExposureTimeSettingsRepository,
     InMemoryDecisionRunRepository,
     InMemoryEventRepository,
     InMemoryGroupPlanRepository,
@@ -38,6 +39,7 @@ class InMemoryUnitOfWork(UnitOfWork):
 
     def __enter__(self) -> "InMemoryUnitOfWork":
         self.courses = InMemoryCourseRepository(self._db)
+        self.exposure_time_settings = InMemoryExposureTimeSettingsRepository(self._db)
         self.cycles = InMemoryAcademicCycleRepository(self._db)
         self.students = InMemoryStudentRepository(self._db)
         self.student_accounts = InMemoryStudentAccountRepository(self._db)

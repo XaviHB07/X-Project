@@ -190,6 +190,12 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .panel-heading { display: flex; justify-content: space-between; align-items: center; }
 .panel-heading .eyebrow { margin-bottom: 6px; }
 .panel-heading h2 { display: flex; align-items: center; gap: 9px; margin: 0; color: var(--forest); font-family: Fraunces, Georgia, serif; font-size: 23px; font-weight: 500; }
+.exposure-settings-panel { margin-bottom: 17px; padding: 20px 22px; border: 1px solid var(--line); border-radius: 6px; background: var(--white); }
+.exposure-settings-panel .panel-heading { margin-bottom: 4px; }
+.exposure-settings-form { display: grid; grid-template-columns: minmax(150px, 190px) minmax(150px, 190px) auto; align-items: end; gap: 14px; }
+.exposure-settings-form .form-field { margin-top: 12px; }
+.exposure-settings-form .button { min-height: 40px; margin-bottom: 0; }
+.exposure-settings-status { grid-column: 1 / -1; margin: 0; }
 .academic-setup-page, .teacher-management-page, .course-creation-page { display: grid; gap: 17px; }
 .setup-heading .eyebrow { margin-bottom: 8px; }
 .setup-heading .heading-meta { max-width: 760px; line-height: 1.55; }
@@ -573,6 +579,9 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 @media (max-width: 760px) {
   .app-shell { display: block;     .grade-filters { grid-template-columns: 1fr; }
     .grade-analysis-panel { padding: 15px; }
+    .exposure-settings-panel { padding: 15px; }
+    .exposure-settings-form { grid-template-columns: 1fr; gap: 8px; }
+    .exposure-settings-form .button { width: 100%; }
   }
   .sidebar { position: relative; height: auto; min-height: 0; padding: 15px 18px; }
   .brand { margin-bottom: 14px; }

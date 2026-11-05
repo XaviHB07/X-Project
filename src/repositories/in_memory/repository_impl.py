@@ -27,6 +27,7 @@ from src.domain.entities import (
     Course,
     CourseGroupPlan,
     DecisionRun,
+    ExposureTimeSettings,
     Student,
     StudentAccount,
     StudentGroup,
@@ -44,6 +45,7 @@ from src.repositories.interfaces import (
     AttendanceRepository,
     ClassSessionRepository,
     CourseRepository,
+    ExposureTimeSettingsRepository,
     DecisionRunRepository,
     DuplicateAcademicCycleError,
     DuplicateStudentError,
@@ -98,6 +100,7 @@ class InMemoryDatabase:
 
     def __init__(self) -> None:
         self.courses: Dict[int, Course] = {}
+        self.exposure_time_settings: Dict[int, ExposureTimeSettings] = {}
         self.cycles: Dict[int, AcademicCycle] = {}
         self.students: Dict[int, Student] = {}
         self.student_accounts: Dict[int, StudentAccount] = {}
@@ -147,6 +150,35 @@ class InMemoryCourseRepository(CourseRepository):
                 return False
             self._db.courses[course_id] = replace(course, roster_imported_at=_utcnow())
             return True
+
+
+class InMemoryExposureTimeSettingsRepository(ExposureTimeSettingsRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def get_or_create(self, course_id: int) -> ExposureTimeSettings:
+        settings = self._db.exposure_time_settings.get(course_id)
+        if settings is None:
+            settings = ExposureTimeSettings(
+                course_id=course_id,
+                min_minutes=1,
+                max_minutes=5,
+                updated_at=_utcnow(),
+            )
+            self._db.exposure_time_settings[course_id] = settings
+        return settings
+
+    def update(
+        self, course_id: int, min_minutes: int, max_minutes: int
+    ) -> ExposureTimeSettings:
+        settings = ExposureTimeSettings(
+            course_id=course_id,
+            min_minutes=min_minutes,
+            max_minutes=max_minutes,
+            updated_at=_utcnow(),
+        )
+        self._db.exposure_time_settings[course_id] = settings
+        return settings
 
 
 class InMemoryAcademicCycleRepository(AcademicCycleRepository):
