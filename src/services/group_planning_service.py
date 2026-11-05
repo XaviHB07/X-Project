@@ -141,7 +141,7 @@ class GroupPlanningService:
         max_group_size: int,
         groups: Sequence[StudentGroup],
     ) -> CourseGroupPlan:
-        self._clean_name(name)
+        cleaned_name = self._clean_name(name)
         self._validate_max_group_size(max_group_size)
         if not groups or len(groups) > MAX_GROUPS:
             raise InvalidGroupPlanError(

@@ -147,7 +147,8 @@ const elements = {
   editGroupPlanButton: $("#edit-group-plan-button"),
   cancelGroupEditsButton: $("#cancel-group-edits-button"),
   groupValidationMessage: $("#group-validation-message"),
-  groupSetupChoices: $("#group-setup-choices"),
+  groupSetupMethod: $("#group-setup-method"),
+  groupMethodSelect: $("#group-method-select"),
   groupGenerationForm: $("#group-generation-form"),
   autoGroupPlanName: $("#auto-group-plan-name"),
   groupMaxSize: $("#group-max-size"),
@@ -158,7 +159,6 @@ const elements = {
   manualGroupSizePreview: $("#manual-group-size-preview"),
   prepareManualGroupsButton: $("#prepare-manual-groups-button"),
   generateGroupsButton: $("#generate-groups-button"),
-  createManualGroupsButton: $("#create-manual-groups-button"),
   addGroupButton: $("#add-group-button"),
   groupPlanNameField: $(".group-plan-name-field"),
   saveGroupPlanButton: $("#save-group-plan-button"),
@@ -1413,7 +1413,11 @@ function renderGroupEditor() {
             ? `<input class="field" type="text" maxlength="100" value="${escapeHtml(group.name)}" data-group-name="${groupIndex}" aria-label="Nombre del grupo ${groupIndex + 1}" />`
             : `<h3>${escapeHtml(group.name)}</h3>`}
           <span>${members.length} estudiante${members.length === 1 ? "" : "s"}</span>
-          ${editable ? `<button class="icon-button group-remove-button" type="button" data-remove-group="${groupIndex}" aria-label="Eliminar grupo" title="Eliminar grupo">×</button>` : ""}
+          ${editable ? `<button class="icon-button group-remove-button" type="button" data-remove-group="${groupIndex}" aria-label="Eliminar ${escapeHtml(group.name)}" title="Eliminar grupo">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 5v5m4-5v5" />
+            </svg>
+          </button>` : ""}
         </div>
         <div class="group-member-list">${memberRows}</div>
       </section>`;
@@ -1443,7 +1447,7 @@ function renderGroupEditor() {
         ? `${unassignedCount} estudiante${unassignedCount === 1 ? "" : "s"} sin grupo.`
         : "Todos los estudiantes activos tienen grupo."
       : state.course && state.students.length
-        ? "Crea una propuesta aleatoria o una distribución manual para comenzar."
+        ? "Selecciona un método para comenzar."
         : "Matricula estudiantes activos para poder crear grupos.");
   elements.saveGroupPlanButton.hidden = !editable;
   elements.saveGroupPlanButton.disabled = !editable || !state.activeGroupPlanId || Boolean(validation);
@@ -1460,10 +1464,13 @@ function renderGroupEditor() {
   elements.addGroupButton.disabled = !editable || state.draftGroups.length >= 100;
 }
 
-function showGroupSetup(mode = null) {
-  elements.groupSetupChoices.hidden = Boolean(mode);
-  elements.groupGenerationForm.hidden = mode !== "random";
-  elements.manualGroupSetup.hidden = mode !== "manual";
+function showGroupSetup(mode = elements.groupMethodSelect.value) {
+  const selectedMode = mode === "random" || mode === "manual" ? mode : "";
+  const hasActivePlan = Boolean(state.activeGroupPlanId || state.groupPlanDraft);
+  elements.groupMethodSelect.value = selectedMode;
+  elements.groupSetupMethod.hidden = hasActivePlan;
+  elements.groupGenerationForm.hidden = hasActivePlan || selectedMode !== "random";
+  elements.manualGroupSetup.hidden = hasActivePlan || selectedMode !== "manual";
 }
 
 function nextGroupName() {
@@ -1477,9 +1484,7 @@ function applyGroupPlan(plan) {
   state.activeGroupPlanId = plan?.id ?? null;
   state.groupPlanDraft = plan?.id ? null : plan;
   state.groupPlanEditing = Boolean(plan && !plan.id);
-  elements.groupSetupChoices.hidden = Boolean(plan);
-  elements.groupGenerationForm.hidden = Boolean(plan);
-  elements.manualGroupSetup.hidden = Boolean(plan);
+  showGroupSetup("");
   elements.deleteGroupPlanButton.disabled = !state.activeGroupPlanId;
   if (!plan) {
     state.draftGroups = [];
@@ -1487,7 +1492,7 @@ function applyGroupPlan(plan) {
     renderGroupEditor();
     elements.groupEditorNote.textContent = state.groupPlans.length
       ? "Selecciona una propuesta guardada."
-      : "Genera una propuesta aleatoria para comenzar.";
+      : "Selecciona un método para crear tu primera propuesta.";
     return;
   }
   elements.groupPlanSelect.value = String(plan.id);
@@ -1511,13 +1516,10 @@ function renderGroupPlans() {
   ).join("");
   elements.groupPlanSelect.innerHTML = options || '<option value="">Todavía no hay propuestas</option>';
   elements.groupPlanSelect.disabled = !state.groupPlans.length;
-  const hasActivePlan = Boolean(state.activeGroupPlanId || state.groupPlanDraft);
-  elements.groupSetupChoices.hidden = hasActivePlan;
-  elements.groupGenerationForm.hidden = hasActivePlan;
-  elements.manualGroupSetup.hidden = hasActivePlan;
+  showGroupSetup();
   elements.deleteGroupPlanButton.disabled = !state.activeGroupPlanId;
   elements.generateGroupsButton.disabled = !state.course || !state.students.length;
-  elements.createManualGroupsButton.disabled = !state.course || !state.students.length;
+  elements.groupMethodSelect.disabled = !state.course || !state.students.length;
   elements.manualGroupCount.max = String(Math.min(100, state.students.length || 1));
   if (!Number(elements.manualGroupCount.value) || Number(elements.manualGroupCount.value) > state.students.length) {
     elements.manualGroupCount.value = String(Math.min(5, state.students.length || 1));
@@ -3648,18 +3650,19 @@ elements.groupPlanSelect.addEventListener("change", () => {
   applyGroupPlan(plan || null);
 });
 $("#group-generation-form").addEventListener("submit", generateGroupPlan);
-$("#create-auto-groups-button").addEventListener("click", () => {
-  showGroupSetup("random");
-  elements.groupMaxSize.focus();
-});
-elements.createManualGroupsButton.addEventListener("click", () => {
-  showGroupSetup("manual");
-  elements.manualGroupCount.value = String(Math.min(5, state.students.length || 1));
-  updateManualGroupSizePreview();
-  elements.manualGroupCount.focus();
+elements.groupMethodSelect.addEventListener("change", () => {
+  const mode = elements.groupMethodSelect.value;
+  showGroupSetup(mode);
+  if (mode === "random") {
+    elements.groupMaxSize.focus();
+  } else if (mode === "manual") {
+    elements.manualGroupCount.value = String(Math.min(5, state.students.length || 1));
+    updateManualGroupSizePreview();
+    elements.manualGroupCount.focus();
+  }
 });
 document.querySelectorAll("[data-back-to-group-methods]").forEach((button) => {
-  button.addEventListener("click", () => showGroupSetup());
+  button.addEventListener("click", () => showGroupSetup(""));
 });
 elements.manualGroupCount.addEventListener("input", updateManualGroupSizePreview);
 elements.prepareManualGroupsButton.addEventListener("click", () => createGroupPlan("manual"));
