@@ -387,18 +387,16 @@
               <div>
                 <p class="eyebrow">ORGANIZACIÓN DEL CURSO</p>
                 <h2 id="groups-title">Propuesta de grupos</h2>
-                <p class="form-note">Genera un borrador aleatorio o decide cuántos grupos crear, edítalo y confírmalo cuando estés conforme. Solo las propuestas confirmadas quedan guardadas.</p>
+                <p class="form-note">Elige un método para generar un borrador, edítalo y confírmalo cuando estés conforme. Solo las propuestas confirmadas quedan guardadas.</p>
               </div>
             </div>
-            <div class="group-setup-choices" id="group-setup-choices">
-              <button class="group-setup-choice" id="create-auto-groups-button" type="button">
-                <span class="group-setup-choice-title">Generar grupos automáticamente</span>
-                <span class="group-setup-choice-note">Define un máximo de estudiantes por grupo y deja que el sistema distribuya la lista.</span>
-              </button>
-              <button class="group-setup-choice" id="create-manual-groups-button" type="button">
-                <span class="group-setup-choice-title">Configurar grupos manualmente</span>
-                <span class="group-setup-choice-note">Elige cuántos grupos crear y luego organiza a los estudiantes.</span>
-              </button>
+            <div class="group-setup-method" id="group-setup-method">
+              <label class="form-label" for="group-method-select">Cómo quieres crear los grupos</label>
+              <select class="field" id="group-method-select">
+                <option value="">Selecciona un método</option>
+                <option value="random">Generar aleatoriamente</option>
+                <option value="manual">Configurar manualmente</option>
+              </select>
             </div>
             <form class="group-mode-panel" id="group-generation-form" hidden>
               <div class="group-mode-heading">

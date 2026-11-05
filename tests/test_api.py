@@ -103,8 +103,15 @@ class TestInfraestructura:
         assert 'id="management-tab"' not in page.text
         assert 'id="groups-tab"' in page.text
         assert 'id="groups-view"' in page.text
-        assert 'id="group-generation-form"' in page.text
-        assert 'id="create-manual-groups-button"' in page.text
+        assert 'id="group-method-select"' in page.text
+        assert '<option value="random">Generar aleatoriamente</option>' in page.text
+        assert '<option value="manual">Configurar manualmente</option>' in page.text
+        assert 'id="group-generation-form" hidden' in page.text
+        assert 'id="manual-group-setup" hidden' in page.text
+        assert 'id="create-auto-groups-button"' not in page.text
+        assert 'id="create-manual-groups-button"' not in page.text
+        assert 'aria-label="Eliminar ${escapeHtml(group.name)}"' in script.text
+        assert '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' in script.text
         assert 'id="active-role"' in page.text
         assert 'id="mark-session-present-button"' in page.text
         assert '<option value="docente">Docente</option>' in page.text
@@ -417,6 +424,20 @@ class TestPropuestasDeGrupos:
         assert reloaded.status_code == 200
         assert reloaded.json()[0]["id"] == updated.json()["id"]
         assert reloaded.json()[0]["groups"] == updated.json()["groups"]
+
+        edit_groups = reloaded.json()[0]["groups"]
+        edit_groups[0]["name"] = "Equipo editado"
+        edited = client.put(
+            f"/courses/{course_id}/group-plans/{updated.json()['id']}",
+            json={
+                "name": "  Proyecto editado  ",
+                "max_group_size": 3,
+                "groups": edit_groups,
+            },
+        )
+        assert edited.status_code == 200
+        assert edited.json()["name"] == "Proyecto editado"
+        assert edited.json()["groups"][0]["name"] == "Equipo editado"
 
     def test_edit_rejects_duplicates_and_allows_unassigned_students(
         self, client: TestClient
