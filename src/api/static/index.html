@@ -280,6 +280,34 @@
                     <option value="roulette">Aleatorio Uniforme</option>
                   </select>
 
+                  <fieldset class="visual-choice expo-target-choice">
+                    <legend class="form-label">¿Qué se elige?</legend>
+                    <label class="visual-option">
+                      <input type="radio" name="selection-target" value="student" checked />
+                      <span class="visual-option-art" aria-hidden="true">👤</span>
+                      <span><strong>Estudiante</strong><small>Elección individual</small></span>
+                    </label>
+                    <label class="visual-option">
+                      <input type="radio" name="selection-target" value="group" />
+                      <span class="visual-option-art" aria-hidden="true">👥</span>
+                      <span><strong>Grupo expositor</strong><small>Se elige un solo grupo</small></span>
+                    </label>
+                  </fieldset>
+
+                  <div class="expo-fields" id="expo-fields" hidden>
+                    <div class="form-field">
+                      <label class="form-label" for="expo-plan-select">Propuesta de grupos</label>
+                      <select id="expo-plan-select" class="field">
+                        <option value="">Cargando propuestas...</option>
+                      </select>
+                    </div>
+                    <label class="expo-check" for="expo-shuffle-order">
+                      <input id="expo-shuffle-order" type="checkbox" />
+                      <span>Sortear el orden de exposición de los integrantes</span>
+                    </label>
+                    <p class="form-note expo-settings-note" id="expo-settings-note">El cronómetro usará los tiempos configurados para este curso.</p>
+                  </div>
+
                   <fieldset class="visual-choice">
                     <legend class="form-label">Visualización</legend>
                     <label class="visual-option">
@@ -797,6 +825,48 @@
           <p class="stage-result-label"><span aria-hidden="true">✓</span> RESULTADO FINAL</p>
           <div class="stage-winners" id="stage-winners"></div>
           <p class="stage-result-meta" id="stage-result-meta"></p>
+          <section class="expo-panel" id="expo-panel" hidden aria-label="Orden de exposición y cronómetro">
+            <div class="expo-order-block">
+              <div class="expo-order-head">
+                <span class="expo-label" id="expo-order-label">INTEGRANTES</span>
+                <button class="text-button" id="expo-reshuffle" type="button" hidden>Volver a sortear</button>
+              </div>
+              <ol class="expo-order" id="expo-order"></ol>
+            </div>
+            <div class="expo-timer" id="expo-timer">
+              <svg class="hourglass" id="hourglass" viewBox="0 0 120 180" role="img" aria-label="Reloj de arena de la exposición">
+                <defs>
+                  <clipPath id="hg-clip-top"><path d="M24 24 H96 L65 88 H55 Z" /></clipPath>
+                  <clipPath id="hg-clip-bottom"><path d="M55 92 H65 L96 156 H24 Z" /></clipPath>
+                </defs>
+                <path class="hg-glass" d="M24 24 H96 L65 88 V92 L96 156 H24 L55 92 V88 Z" />
+                <rect class="hg-sand" id="hg-sand-top" x="24" y="24" width="72" height="64" clip-path="url(#hg-clip-top)" />
+                <rect class="hg-sand" id="hg-sand-bottom" x="24" y="156" width="72" height="0" clip-path="url(#hg-clip-bottom)" />
+                <line class="hg-stream" id="hg-stream" x1="60" y1="88" x2="60" y2="156" />
+                <path class="hg-outline" d="M24 24 H96 L65 88 V92 L96 156 H24 L55 92 V88 Z" />
+                <rect class="hg-cap" x="14" y="12" width="92" height="12" rx="3" />
+                <rect class="hg-cap" x="14" y="156" width="92" height="12" rx="3" />
+              </svg>
+              <div class="expo-timer-side">
+                <div class="expo-clock" id="expo-clock">00:00</div>
+                <div class="expo-bar" aria-hidden="true"><span id="expo-bar-fill"></span><i id="expo-bar-min"></i></div>
+                <div class="expo-signal is-idle" id="expo-signal" role="status" aria-live="polite">
+                  <span class="traffic-light" aria-hidden="true">
+                    <span class="traffic-light-lamp traffic-light-red" data-signal-light="over"></span>
+                    <span class="traffic-light-lamp traffic-light-yellow" data-signal-light="warning"></span>
+                    <span class="traffic-light-lamp traffic-light-green" data-signal-light="on-time"></span>
+                  </span>
+                  <strong id="expo-signal-label">Listo para iniciar</strong>
+                </div>
+                <p class="expo-status" id="expo-status"></p>
+                <div class="expo-timer-actions">
+                  <button class="button button-add" id="expo-toggle" type="button">Iniciar</button>
+                  <button class="button button-quiet" id="expo-reset" type="button">Reiniciar</button>
+                </div>
+              </div>
+            </div>
+            <button class="button button-quiet expo-next" id="expo-next-group" type="button">Elegir otro grupo</button>
+          </section>
           <form class="stage-pick-form" id="stage-pick-form" hidden>
             <div class="stage-pick-grid">
               <div class="stage-pick-field">

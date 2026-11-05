@@ -67,9 +67,21 @@ class TestInfraestructura:
         assert page.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
         assert 'id="course-title"' in page.text
         assert "Los ciclos académicos y la matrícula de estudiantes" in page.text
+        assert 'name="selection-target" value="group"' in page.text
+        assert 'id="expo-signal"' in page.text
+        assert page.text.count('data-signal-light="') == 3
         assert script.status_code == 200
         assert script.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
         assert "/sessions/select" in script.text
+        assert "Amarillo · cerca del tiempo máximo" in script.text
+        assert "Rojo · tiempo máximo alcanzado" in script.text
+        assert "Verde · dentro del tiempo permitido" in script.text
+        assert "elapsed >= timer.maxMs * (1 - EXPO_WARNING_RATIO)" in script.text
+        assert "playExpoTones([660]" in script.text
+        assert "duration: 0.85" in script.text
+        assert "playExpoTones([880, 660, 880, 660]" in script.text
+        assert 'waveform: "triangle"' in script.text
+        assert 'light.dataset.signalLight === signalState' in script.text
         assert 'api("/courses")' in script.text
         assert styles.status_code == 200
         assert 'id="management-view"' in page.text

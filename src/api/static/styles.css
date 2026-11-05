@@ -196,6 +196,10 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .exposure-settings-form .form-field { margin-top: 12px; }
 .exposure-settings-form .button { min-height: 40px; margin-bottom: 0; }
 .exposure-settings-status { grid-column: 1 / -1; margin: 0; }
+.expo-fields { margin-top: 4px; }
+.expo-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 13px; color: var(--forest); font-size: 12px; cursor: pointer; }
+.expo-check input { margin-top: 2px; accent-color: var(--teal); }
+.expo-settings-note { margin: 9px 0 0; }
 .academic-setup-page, .teacher-management-page, .course-creation-page { display: grid; gap: 17px; }
 .setup-heading .eyebrow { margin-bottom: 8px; }
 .setup-heading .heading-meta { max-width: 760px; line-height: 1.55; }
@@ -488,6 +492,58 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .stage-comment { height: auto; min-height: 58px; padding: 9px 12px; resize: vertical; font: inherit; }
 .stage-pick-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .stage-pick-actions .button-add { flex: 1 1 auto; min-height: 40px; }
+
+.expo-panel { display: grid; gap: 14px; max-width: 460px; margin: 14px auto 0; text-align: left; animation: rise-in .3s ease both; }
+.expo-order-block { padding: 12px 14px; border: 1px solid #d4deec; border-radius: 6px; background: white; }
+.expo-order-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.expo-label { color: #165ab3; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+.expo-order { display: grid; gap: 6px; max-height: 150px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.expo-order li { display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: center; gap: 9px; }
+.expo-order li span { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--lime); color: var(--forest); font-size: 12px; font-weight: 700; }
+.expo-order.is-unordered li span { background: transparent; color: var(--muted); }
+.expo-order li strong { overflow-wrap: anywhere; color: var(--forest); font-size: 14px; font-weight: 600; }
+.expo-timer { display: grid; grid-template-columns: 112px minmax(0, 1fr); align-items: center; gap: 16px; padding: 12px 14px; border: 1px solid #d4deec; border-radius: 6px; background: white; }
+.hourglass { width: 100%; height: auto; overflow: visible; }
+.hg-glass { fill: rgb(207 224 244 / 45%); }
+.hg-outline { fill: none; stroke: var(--forest); stroke-width: 2.5; stroke-linejoin: round; }
+.hg-cap { fill: var(--forest); }
+.hg-sand { fill: var(--yellow); transition: fill .3s; }
+.hg-stream { stroke: var(--yellow); stroke-width: 2; stroke-dasharray: 3 3; opacity: 0; transition: stroke .3s; }
+.expo-timer.is-running .hg-stream { opacity: 1; animation: sand-fall .45s linear infinite; }
+.expo-timer.is-warning .hg-sand { fill: var(--coral); }
+.expo-timer.is-warning .hg-stream { stroke: var(--coral); }
+.expo-timer.is-over .hg-sand { fill: var(--danger); }
+.expo-timer.is-over .hg-stream { opacity: 0; }
+.expo-clock { color: var(--forest); font-family: Fraunces, Georgia, serif; font-size: 38px; font-variant-numeric: tabular-nums; line-height: 1; }
+.expo-timer.is-warning .expo-clock { color: var(--coral); }
+.expo-timer.is-over .expo-clock { color: var(--danger); }
+.expo-bar { position: relative; height: 7px; margin-top: 10px; border-radius: 4px; background: #e2e8f0; }
+.expo-bar span { display: block; height: 100%; border-radius: inherit; background: var(--teal); transition: background .3s; }
+.expo-bar i { position: absolute; top: -3px; width: 2px; height: 13px; margin-left: -1px; background: var(--forest); }
+.expo-timer.min-reached .expo-bar span { background: #2e9e6b; }
+.expo-timer.is-warning .expo-bar span { background: #d39a16; }
+.expo-timer.is-over .expo-bar span { background: var(--danger); }
+.expo-signal { display: flex; align-items: center; gap: 10px; min-height: 58px; margin-top: 9px; color: var(--muted); font-size: 11px; }
+.traffic-light { display: grid; flex: 0 0 32px; justify-items: center; gap: 5px; padding: 6px 5px; border: 1px solid #17202d; border-radius: 12px; background: linear-gradient(90deg, #303946, #161d27 52%, #303946); box-shadow: 0 2px 4px rgb(15 31 53 / 24%), inset 0 1px rgb(255 255 255 / 14%); }
+.traffic-light-lamp { width: 18px; height: 18px; border: 2px solid #111821; border-radius: 50%; background: #343b44; box-shadow: inset 0 2px 3px rgb(0 0 0 / 45%); opacity: .58; }
+.traffic-light-red.is-active { border-color: #8c2824; background: #ec5148; box-shadow: 0 0 10px 3px rgb(236 81 72 / 65%), inset 0 1px rgb(255 255 255 / 60%); opacity: 1; }
+.traffic-light-yellow.is-active { border-color: #926b06; background: #ffd44d; box-shadow: 0 0 10px 3px rgb(255 212 77 / 65%), inset 0 1px rgb(255 255 255 / 65%); opacity: 1; }
+.traffic-light-green.is-active { border-color: #17613c; background: #42c77a; box-shadow: 0 0 10px 3px rgb(66 199 122 / 58%), inset 0 1px rgb(255 255 255 / 65%); opacity: 1; }
+.traffic-light-red.is-pulsing { animation: traffic-light-pulse .9s ease-in-out infinite alternate; }
+.expo-signal.is-on-time { color: #17613c; }
+.expo-signal.is-warning { color: #856000; }
+.expo-status { min-height: 32px; margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.expo-timer.is-warning .expo-status { color: #9a6b00; font-weight: 700; }
+.expo-timer.is-over .expo-status { color: var(--danger); font-weight: 700; }
+.expo-timer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.expo-timer-actions .button-add { flex: 1 1 auto; min-height: 38px; }
+.expo-timer-actions .button-quiet, .expo-next { border: 1px solid var(--line); }
+.expo-next { min-height: 40px; }
+@keyframes sand-fall { to { stroke-dashoffset: -6; } }
+@keyframes traffic-light-pulse { to { opacity: .65; box-shadow: 0 0 4px 1px rgb(236 81 72 / 45%), inset 0 1px rgb(255 255 255 / 60%); } }
+@media (prefers-reduced-motion: reduce) {
+  .traffic-light-red.is-pulsing { animation: none; }
+}
 .stage-pick-actions .button-quiet { border: 1px solid var(--line); }
 .participation-table td.participation-note { max-width: 240px; overflow-wrap: anywhere; white-space: pre-wrap; }
 
@@ -715,4 +771,10 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  .expo-timer.is-running .hg-stream { animation: none; }
+}
+
+@media (max-width: 520px) {
+  .expo-timer { grid-template-columns: 84px minmax(0, 1fr); gap: 11px; padding: 10px; }
+  .expo-clock { font-size: 30px; }
 }
