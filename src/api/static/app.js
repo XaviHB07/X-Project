@@ -8,6 +8,7 @@ const state = {
   authenticatedUser: null,
   viewAs: "administrador",
   teachers: [],
+  editingTeacherId: null,
   studentAccounts: [],
   studentCourses: [],
   selectedStudentCourse: null,
@@ -170,6 +171,7 @@ const elements = {
   assignmentCourseList: $("#assignment-course-list"),
   saveAssignmentsButton: $("#save-assignments-button"),
   createTeacherForm: $("#create-teacher-form"),
+  teacherRegistrationCourseFields: $("#teacher-registration-course-fields"),
   createTeacherCourseList: $("#create-teacher-course-list"),
   createTeacherSubmit: $("#create-teacher-submit"),
   teacherDirectoryList: $("#teacher-directory-list"),
@@ -321,25 +323,33 @@ function renderTeacherAssignments() {
           .map((course) => course.name);
         return `<details class="teacher-directory-item">
           <summary class="teacher-directory-summary">
-            <span><strong>${escapeHtml(teacher.full_name)}</strong><small>${escapeHtml(teacher.username)}</small></span>
+            <span><strong>${escapeHtml(teacher.full_name)} ${teacher.active === false ? '<em class="teacher-status is-inactive">Deshabilitado</em>' : '<em class="teacher-status">Activo</em>'}</strong><small>${escapeHtml(teacher.username)} · DNI ${escapeHtml(teacher.dni || "Sin registrar")}</small></span>
             <span class="teacher-details-toggle" aria-hidden="true">＋</span>
           </summary>
           <div class="teacher-directory-details">
+            <span>Identificación: ${escapeHtml(teacher.dni || "No registrado")}</span>
             <span>Teléfono: ${escapeHtml(teacher.phone_number || "No registrado")}</span>
             <span>Correo: ${escapeHtml(teacher.email || "No registrado")}</span>
             <span>Cursos: ${escapeHtml(courses.join(", ") || "Sin cursos")}</span>
-            <button class="button button-quiet" type="button" data-reset-teacher="${teacher.id}">
-              Restablecer contraseña
-            </button>
+            <div class="teacher-directory-actions">
+              <button class="button button-quiet" type="button" data-edit-teacher="${teacher.id}">
+                Modificar datos
+              </button>
+              ${teacher.active === false
+                ? `<button class="button button-quiet" type="button" data-toggle-teacher="${teacher.id}" data-next-active="true">Habilitar</button>`
+                : `<button class="button button-quiet" type="button" data-toggle-teacher="${teacher.id}" data-next-active="false">Deshabilitar</button>
+                   <button class="button button-quiet" type="button" data-reset-teacher="${teacher.id}">Restablecer contraseña</button>`}
+            </div>
           </div>
         </details>`;
       }).join("")
     : '<p class="form-note">Todavía no hay docentes registrados.</p>';
   const selectedTeacherId = Number(elements.assignmentTeacher.value) || null;
-  elements.assignmentTeacher.innerHTML = `<option value="">Selecciona un docente</option>${state.teachers
+  const activeTeachers = state.teachers.filter((teacher) => teacher.active !== false);
+  elements.assignmentTeacher.innerHTML = `<option value="">Selecciona un docente</option>${activeTeachers
     .map((teacher) => `<option value="${teacher.id}">${escapeHtml(teacher.full_name)} · ${escapeHtml(teacher.username)}</option>`)
     .join("")}`;
-  if (selectedTeacherId && state.teachers.some((teacher) => teacher.id === selectedTeacherId)) {
+  if (selectedTeacherId && activeTeachers.some((teacher) => teacher.id === selectedTeacherId)) {
     elements.assignmentTeacher.value = String(selectedTeacherId);
   }
   const teacher = state.teachers.find(
@@ -355,12 +365,12 @@ function renderTeacherAssignments() {
         </label>
       `).join("")
     : `<p class="form-note">${
-        state.teachers.length
+        activeTeachers.length
           ? "Selecciona un docente para configurar sus cursos."
-          : "No hay cuentas activas con rol Docente. Agrega docentes en la base de datos."
+          : "No hay cuentas docentes activas. Registra o habilita un docente."
       }</p>`;
   filterCourseOptions($("#assignment-course-search"), elements.assignmentCourseList);
-  elements.saveAssignmentsButton.disabled = !teacher;
+  elements.saveAssignmentsButton.disabled = !teacher || teacher.active === false;
 }
 
 function renderStudentAccounts() {
@@ -2603,6 +2613,13 @@ $("#assignment-course-search").addEventListener("input", (event) => {
   filterCourseOptions(event.currentTarget, elements.assignmentCourseList);
 });
 elements.registerTeacherButton.addEventListener("click", () => {
+  state.editingTeacherId = null;
+  elements.createTeacherForm.reset();
+  elements.teacherRegistrationCourseFields.hidden = false;
+  $("#create-teacher-form h3").textContent = "Registrar docente";
+  $("#create-teacher-submit").textContent = "Registrar docente";
+  $("#create-teacher-form > .form-note").textContent =
+    "Completa los datos y elige uno o más cursos para asignar.";
   elements.teacherManagementHome.hidden = true;
   elements.registerTeacherButton.hidden = true;
   elements.createTeacherForm.hidden = false;
@@ -2610,6 +2627,8 @@ elements.registerTeacherButton.addEventListener("click", () => {
 });
 elements.cancelTeacherRegistration.addEventListener("click", () => {
   elements.createTeacherForm.reset();
+  state.editingTeacherId = null;
+  elements.teacherRegistrationCourseFields.hidden = false;
   $("#create-teacher-course-search").value = "";
   filterCourseOptions($("#create-teacher-course-search"), elements.createTeacherCourseList);
   showTeacherManagementHome();
@@ -2619,34 +2638,46 @@ elements.assignmentCourseList.addEventListener("change", () => {
 });
 elements.createTeacherForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const courseIds = [...elements.createTeacherCourseList.querySelectorAll("input:checked")]
+  const isEditing = state.editingTeacherId !== null;
+  const courseIds = isEditing ? [] : [...elements.createTeacherCourseList.querySelectorAll("input:checked")]
     .map((checkbox) => Number(checkbox.value));
-  if (!courseIds.length) {
+  if (!isEditing && !courseIds.length) {
     notify("Selecciona al menos un curso para el docente.", true);
     return;
   }
   setBusy(elements.createTeacherSubmit, true, "Registrando...");
   try {
-    const teacher = await api("/admin/teachers", {
-      method: "POST",
-      body: JSON.stringify({
-        full_name: $("#teacher-full-name").value.trim(),
-        username: $("#teacher-username").value.trim(),
-        phone_number: $("#teacher-phone").value.trim() || null,
-        email: $("#teacher-email").value.trim(),
-        course_ids: courseIds,
-      }),
+    const payload = {
+      full_name: $("#teacher-full-name").value.trim(),
+      dni: $("#teacher-dni").value.trim(),
+      username: $("#teacher-username").value.trim(),
+      phone_number: $("#teacher-phone").value.trim() || null,
+      email: $("#teacher-email").value.trim(),
+    };
+    const teacher = await api(
+      isEditing ? `/admin/teachers/${state.editingTeacherId}` : "/admin/teachers",
+      {
+      method: isEditing ? "PUT" : "POST",
+      body: JSON.stringify(isEditing ? payload : { ...payload, course_ids: courseIds }),
     });
     const { temporary_password: temporaryPassword, ...teacherDetails } = teacher;
-    state.teachers = [...state.teachers, teacherDetails];
+    state.teachers = isEditing
+      ? state.teachers.map((item) => item.id === teacherDetails.id ? teacherDetails : item)
+      : [...state.teachers, teacherDetails];
     elements.createTeacherForm.reset();
+    state.editingTeacherId = null;
+    elements.teacherRegistrationCourseFields.hidden = false;
     $("#create-teacher-course-search").value = "";
     renderTeacherAssignments();
     showTeacherManagementHome();
-    showTemporaryPassword(
-      temporaryPassword,
-      `Cuenta creada para ${teacher.full_name} (${teacher.username}).`,
-    );
+    if (temporaryPassword) {
+      showTemporaryPassword(
+        temporaryPassword,
+        `Cuenta creada para ${teacher.full_name} (${teacher.username}).`,
+      );
+    } else {
+      notify(`Datos de ${teacher.full_name} actualizados.`);
+    }
   } catch (error) {
     notify(error.message, true);
   } finally {
@@ -2656,6 +2687,54 @@ elements.createTeacherForm.addEventListener("submit", async (event) => {
 });
 
 elements.teacherDirectoryList.addEventListener("click", async (event) => {
+  const editButton = event.target.closest("[data-edit-teacher]");
+  if (editButton) {
+    const teacher = state.teachers.find((item) => item.id === Number(editButton.dataset.editTeacher));
+    if (!teacher) return;
+    state.editingTeacherId = teacher.id;
+    $("#teacher-full-name").value = teacher.full_name;
+    $("#teacher-dni").value = teacher.dni || "";
+    $("#teacher-username").value = teacher.username;
+    $("#teacher-phone").value = teacher.phone_number || "";
+    $("#teacher-email").value = teacher.email || "";
+    elements.teacherRegistrationCourseFields.hidden = true;
+    $("#create-teacher-form h3").textContent = "Modificar datos del docente";
+    $("#create-teacher-form > .form-note").textContent =
+      "Actualiza sus datos de identificación y contacto. Sus cursos y su historial se conservarán.";
+    $("#create-teacher-submit").textContent = "Guardar modificaciones";
+    elements.createTeacherSubmit.disabled = false;
+    elements.teacherManagementHome.hidden = true;
+    elements.registerTeacherButton.hidden = true;
+    elements.createTeacherForm.hidden = false;
+    $("#teacher-full-name").focus();
+    return;
+  }
+  const toggleButton = event.target.closest("[data-toggle-teacher]");
+  if (toggleButton) {
+    const teacher = state.teachers.find((item) => item.id === Number(toggleButton.dataset.toggleTeacher));
+    if (!teacher) return;
+    const nextActive = toggleButton.dataset.nextActive === "true";
+    const prompt = nextActive
+      ? `¿Habilitar nuevamente a ${teacher.full_name}?`
+      : `¿Deshabilitar a ${teacher.full_name}? Se conservarán sus datos, cursos e historial.`;
+    if (!window.confirm(prompt)) return;
+    setBusy(toggleButton, true, nextActive ? "Habilitando..." : "Deshabilitando...");
+    try {
+      const updated = await api(`/admin/teachers/${teacher.id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ active: nextActive }),
+      });
+      state.teachers = state.teachers.map((item) => item.id === updated.id ? updated : item);
+      renderTeacherAssignments();
+      notify(nextActive ? "Docente habilitado." : "Docente deshabilitado. Sus datos históricos se conservaron.");
+    } catch (error) {
+      notify(error.message, true);
+    } finally {
+      setBusy(toggleButton, false);
+      renderTeacherAssignments();
+    }
+    return;
+  }
   const button = event.target.closest("[data-reset-teacher]");
   if (!button) return;
   const teacher = state.teachers.find((item) => item.id === Number(button.dataset.resetTeacher));

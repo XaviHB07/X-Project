@@ -198,7 +198,10 @@ Con la cuenta inicial creada, inicia la API y abre `http://127.0.0.1:8000/`.
 El acceso al panel requiere iniciar sesión con `ADMIN_USERNAME` y la contraseña
 ingresada durante el aprovisionamiento. El Administrador registra docentes
 desde **Ciclos académicos → Gestión de docentes**, con nombre, usuario,
-teléfono, correo y cursos asignados.
+DNI/identificación única, teléfono, correo y cursos asignados. Desde el
+directorio puede modificar sus datos, restablecer su contraseña o
+deshabilitar/habilitar su cuenta. Deshabilitar revoca su sesión y bloquea
+nuevos accesos, pero conserva sus datos, cursos asignados e historial.
 
 Las secciones **Sesión y asistencia** y **Análisis de notas** aparecen en la
 vista Docente. La vista Administrador se concentra en ciclos, cursos,
@@ -300,6 +303,8 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |GET|`/methods`|Estrategias de selección disponibles|
 |GET|`/admin/teachers`|Administrador: listar docentes y cursos asignados|
 |POST|`/admin/teachers`|Administrador: registrar docente, asignar cursos y devolver una contraseña temporal de un solo vistazo|
+|PUT|`/admin/teachers/{id}`|Administrador: modificar los datos de identificación y contacto del docente|
+|PATCH|`/admin/teachers/{id}/status`|Administrador: habilitar o deshabilitar la cuenta sin borrar sus datos ni historial|
 |PUT|`/admin/teachers/{id}/courses`|Administrador: reemplazar cursos asignados al docente|
 |POST|`/admin/teachers/{id}/reset-password`|Administrador: generar una contraseña temporal de un solo vistazo|
 |POST|`/cycles`|Crear un ciclo académico|

@@ -77,10 +77,12 @@ class RoleORM(Base):
 
 class UserORM(Base):
     __tablename__ = "users"
+    __table_args__ = (Index("uq_users_dni", "dni", unique=True),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    dni: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     phone_number: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

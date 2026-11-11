@@ -108,6 +108,7 @@ _ADDED_COLUMNS = [
     ("students", "times_repeated", "VARCHAR(255)"),
     ("users", "phone_number", "VARCHAR(32)"),
     ("users", "email", "VARCHAR(255)"),
+    ("users", "dni", "VARCHAR(32)"),
     ("users", "must_change_password", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ("class_sessions", "session_date", "DATE"),
     ("class_sessions", "topic", "VARCHAR(255)"),
@@ -133,17 +134,16 @@ def _ensure_columns(engine) -> None:
         present = {c["name"] for c in inspector.get_columns(table)}
         if column not in present:
             missing.append((table, column, ddl))
-    if not missing:
-        return
-    with engine.begin() as conn:
-        for table, column, ddl in missing:
-            try:
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
-            except SQLAlchemyError:
-                # Una columna que no se pudo agregar deja la base en un estado
-                # inconsistente, pero tumbar la app entera impide al menos usar
-                # `/health` y diagnosticar. Se registra y se sigue.
-                logging.exception("No se pudo agregar %s.%s", table, column)
+    if missing:
+        with engine.begin() as conn:
+            for table, column, ddl in missing:
+                try:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+                except SQLAlchemyError:
+                    logging.exception("No se pudo agregar %s.%s", table, column)
+    if "users" in existing_tables:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_dni ON users (dni)"))
 
 
 def _provision_initial_admin(session_factory) -> None:

@@ -89,9 +89,11 @@ from src.api.schemas import (
     StudentStateResponse,
     StudentUpdateRequest,
     TeacherAssignmentResponse,
+    TeacherActiveRequest,
     TeacherCreatedResponse,
     TeacherCreateRequest,
     TeacherCourseAssignmentRequest,
+    TeacherUpdateRequest,
     PasswordChangeRequest,
     TemporaryPasswordResponse,
     SyllabusEntryRequest,
@@ -562,6 +564,7 @@ def create_teacher(
         teacher, temporary_password = request.app.state.app_context.auth_service.create_teacher(
             username=payload.username,
             full_name=payload.full_name,
+            dni=payload.dni,
             email=payload.email,
             phone_number=payload.phone_number,
             course_ids=payload.course_ids,
@@ -569,6 +572,49 @@ def create_teacher(
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return TeacherCreatedResponse(**teacher, temporary_password=temporary_password)
+
+
+@app.put(
+    "/admin/teachers/{teacher_id}",
+    response_model=TeacherAssignmentResponse,
+    tags=["administración"],
+    dependencies=[Depends(require_admin)],
+)
+def update_teacher(
+    teacher_id: int, payload: TeacherUpdateRequest, request: Request
+) -> TeacherAssignmentResponse:
+    try:
+        teacher = request.app.state.app_context.auth_service.update_teacher(
+            teacher_id=teacher_id,
+            username=payload.username,
+            full_name=payload.full_name,
+            dni=payload.dni,
+            email=payload.email,
+            phone_number=payload.phone_number,
+        )
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return TeacherAssignmentResponse(**teacher)
+
+
+@app.patch(
+    "/admin/teachers/{teacher_id}/status",
+    response_model=TeacherAssignmentResponse,
+    tags=["administración"],
+    dependencies=[Depends(require_admin)],
+)
+def set_teacher_status(
+    teacher_id: int, payload: TeacherActiveRequest, request: Request
+) -> TeacherAssignmentResponse:
+    try:
+        teacher = request.app.state.app_context.auth_service.set_teacher_active(
+            teacher_id, payload.active
+        )
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return TeacherAssignmentResponse(**teacher)
 
 
 @app.post(

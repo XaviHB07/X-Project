@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from src.repositories.sqlalchemy.models import RoleORM, UserORM
+from src.repositories.sqlalchemy.models import AuthSessionORM, RoleORM, TeacherCourseORM, UserORM
 from src.services.auth_service import hash_password
 
 
@@ -267,6 +267,7 @@ class TestCiclosAcademicos:
             json={
                 "username": "docente-nuevo",
                 "full_name": "Docente Nuevo",
+                "dni": "12345678",
                 "phone_number": "555-0102",
                 "email": "docente@example.com",
                 "course_ids": [course["id"]],
@@ -276,6 +277,7 @@ class TestCiclosAcademicos:
         teacher = created.json()
         assert teacher["course_ids"] == [course["id"]]
         assert teacher["phone_number"] == "555-0102"
+        assert teacher["dni"] == "12345678"
         assert teacher["email"] == "docente@example.com"
         assert created.headers["cache-control"] == "no-store"
         first_temporary_password = teacher.pop("temporary_password")
@@ -327,6 +329,99 @@ class TestCiclosAcademicos:
             json={"new_password": "docente-password-final-456"},
         )
         assert final_change.status_code == 200
+
+    def test_admin_can_edit_and_disable_teacher_without_deleting_history(
+        self, client: TestClient
+    ):
+        cycle = client.post("/cycles", json={"name": "2030-I"}).json()
+        course = client.post(
+            "/courses", json={"name": "Historia", "cycle_id": cycle["id"]}
+        ).json()
+        created = client.post(
+            "/admin/teachers",
+            json={
+                "username": "docente-historia",
+                "full_name": "Docente Historia",
+                "dni": "87654321",
+                "email": "historia@example.com",
+                "course_ids": [course["id"]],
+            },
+        )
+        assert created.status_code == 201
+        teacher = created.json()
+        client.cookies.clear()
+        teacher_login = client.post(
+            "/auth/login",
+            json={
+                "username": "docente-historia",
+                "password": teacher["temporary_password"],
+            },
+        )
+        assert teacher_login.status_code == 200
+        client.cookies.clear()
+        assert client.post(
+            "/auth/login",
+            json={"username": "admin", "password": "test-admin-password-123"},
+        ).status_code == 200
+
+        duplicate = client.post(
+            "/admin/teachers",
+            json={
+                "username": "otro-docente",
+                "full_name": "Otro Docente",
+                "dni": " 87654321 ",
+                "email": "otro@example.com",
+                "course_ids": [course["id"]],
+            },
+        )
+        assert duplicate.status_code == 400
+
+        updated = client.put(
+            f"/admin/teachers/{teacher['id']}",
+            json={
+                "username": "docente-historia-editado",
+                "full_name": "Docente Historia Editado",
+                "dni": " ab123456 ",
+                "phone_number": "555-0101",
+                "email": "historia-editada@example.com",
+            },
+        )
+        assert updated.status_code == 200
+        assert updated.json()["dni"] == "AB123456"
+        assert updated.json()["course_ids"] == [course["id"]]
+
+        disabled = client.patch(
+            f"/admin/teachers/{teacher['id']}/status",
+            json={"active": False},
+        )
+        assert disabled.status_code == 200
+        assert disabled.json()["active"] is False
+        listed = {
+            item["id"]: item for item in client.get("/admin/teachers").json()
+        }[teacher["id"]]
+        assert listed["dni"] == "AB123456"
+        assert listed["course_ids"] == [course["id"]]
+
+        auth_service = client.app.state.app_context.auth_service
+        with auth_service._session_factory() as session:
+            assert session.query(TeacherCourseORM).filter_by(
+                teacher_id=teacher["id"], course_id=course["id"]
+            ).count() == 1
+            assert session.query(AuthSessionORM).filter_by(
+                user_id=teacher["id"]
+            ).count() == 0
+
+        disabled_login = client.post(
+            "/auth/login",
+            json={"username": "docente-historia-editado", "password": teacher["temporary_password"]},
+        )
+        assert disabled_login.status_code == 401
+        enabled = client.patch(
+            f"/admin/teachers/{teacher['id']}/status",
+            json={"active": True},
+        )
+        assert enabled.status_code == 200
+        assert enabled.json()["active"] is True
 
 
 class TestFlujoCompleto:

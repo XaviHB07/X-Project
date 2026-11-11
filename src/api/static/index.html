@@ -569,6 +569,10 @@
                   <input class="field" id="teacher-full-name" maxlength="255" required />
                 </div>
                 <div>
+                  <label class="form-label" for="teacher-dni">DNI / identificación única</label>
+                  <input class="field" id="teacher-dni" maxlength="32" autocomplete="off" required />
+                </div>
+                <div>
                   <label class="form-label" for="teacher-username">Usuario</label>
                   <input class="field" id="teacher-username" maxlength="120" autocomplete="off" required />
                 </div>
@@ -581,10 +585,12 @@
                   <input class="field" id="teacher-email" type="email" maxlength="255" required />
                 </div>
               </div>
-              <label class="form-label" for="create-teacher-course-search">Buscar cursos a asignar</label>
-              <input class="field course-search" id="create-teacher-course-search" type="search" placeholder="Escribe el nombre o ID del curso" autocomplete="off" />
-              <div class="assignment-course-list" id="create-teacher-course-list"></div>
-              <p class="form-note">Al registrar, se mostrará una contraseña temporal para compartir con el docente. Deberá cambiarla al iniciar sesión.</p>
+              <div id="teacher-registration-course-fields">
+                <label class="form-label" for="create-teacher-course-search">Buscar cursos a asignar</label>
+                <input class="field course-search" id="create-teacher-course-search" type="search" placeholder="Escribe el nombre o ID del curso" autocomplete="off" />
+                <div class="assignment-course-list" id="create-teacher-course-list"></div>
+                <p class="form-note">Al registrar, se mostrará una contraseña temporal para compartir con el docente. Deberá cambiarla al iniciar sesión.</p>
+              </div>
               <div class="teacher-form-actions">
                 <button class="button button-quiet" id="cancel-teacher-registration" type="button">Volver</button>
                 <button class="button button-add" id="create-teacher-submit" type="submit">Registrar docente</button>

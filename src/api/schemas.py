@@ -90,8 +90,10 @@ class AuthenticatedUserResponse(BaseModel):
 
 
 class TeacherAssignmentResponse(AuthenticatedUserResponse):
+    dni: Optional[str] = None
     phone_number: Optional[str] = None
     email: Optional[str] = None
+    active: bool = True
     course_ids: List[int]
 
 
@@ -106,17 +108,23 @@ class TemporaryPasswordResponse(BaseModel):
 class TeacherCreateRequest(BaseModel):
     username: str = Field(..., min_length=1, max_length=120)
     full_name: str = Field(..., min_length=1, max_length=255)
+    dni: str = Field(..., min_length=1, max_length=32)
     phone_number: Optional[str] = Field(None, max_length=32)
     email: str = Field(..., min_length=3, max_length=255)
     course_ids: List[int] = Field(..., min_length=1)
 
-    @field_validator("username", "full_name", "email")
+    @field_validator("username", "full_name", "email", "dni")
     @classmethod
     def _strip_required_values(cls, value: str) -> str:
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("Este campo no puede estar vacío.")
         return cleaned
+
+    @field_validator("dni")
+    @classmethod
+    def _normalize_dni(cls, value: str) -> str:
+        return value.strip().upper()
 
     @field_validator("email")
     @classmethod
@@ -128,6 +136,42 @@ class TeacherCreateRequest(BaseModel):
         ):
             raise ValueError("Ingresa un correo electrónico válido.")
         return value
+
+
+class TeacherUpdateRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=120)
+    full_name: str = Field(..., min_length=1, max_length=255)
+    dni: str = Field(..., min_length=1, max_length=32)
+    phone_number: Optional[str] = Field(None, max_length=32)
+    email: str = Field(..., min_length=3, max_length=255)
+
+    @field_validator("username", "full_name", "email", "dni")
+    @classmethod
+    def _strip_required_values(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Este campo no puede estar vacío.")
+        return cleaned
+
+    @field_validator("dni")
+    @classmethod
+    def _normalize_dni(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @field_validator("email")
+    @classmethod
+    def _validate_email_shape(cls, value: str) -> str:
+        if (
+            any(character.isspace() for character in value)
+            or value.count("@") != 1
+            or "." not in value.rsplit("@", 1)[1]
+        ):
+            raise ValueError("Ingresa un correo electrónico válido.")
+        return value
+
+
+class TeacherActiveRequest(BaseModel):
+    active: bool
 
 
 class StudentAccountCreateRequest(BaseModel):

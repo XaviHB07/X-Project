@@ -110,15 +110,17 @@ class AuthService:
         self,
         username: str,
         full_name: str,
+        dni: str,
         email: str,
         phone_number: Optional[str],
         course_ids: List[int],
     ) -> tuple[dict, str]:
         username = username.strip()
         full_name = " ".join(full_name.split())
+        dni = dni.strip().upper()
         email = email.strip()
-        if not username or not full_name or not email:
-            raise ValueError("Usuario, nombre y correo son obligatorios.")
+        if not username or not full_name or not dni or not email:
+            raise ValueError("Usuario, nombre, DNI y correo son obligatorios.")
         if not course_ids:
             raise ValueError("Asigna al menos un curso al docente.")
 
@@ -132,6 +134,10 @@ class AuthService:
                 select(UserORM.id).where(func.lower(UserORM.email) == email.lower())
             ).scalar_one_or_none() is not None:
                 raise ValueError("Ese correo ya está asociado a una cuenta.")
+            if session.execute(
+                select(UserORM.id).where(func.upper(UserORM.dni) == dni)
+            ).scalar_one_or_none() is not None:
+                raise ValueError("Ese DNI/identificador ya está asociado a una cuenta.")
             self._validate_course_ids(session, course_ids)
             teacher_role_id = session.execute(
                 select(RoleORM.id).where(RoleORM.name == ROLE_TEACHER)
@@ -139,6 +145,7 @@ class AuthService:
             teacher = UserORM(
                 username=username,
                 full_name=full_name,
+                dni=dni,
                 email=email,
                 phone_number=phone_number.strip() if phone_number and phone_number.strip() else None,
                 password_hash=hash_password(temporary_password),
@@ -387,7 +394,7 @@ class AuthService:
         with self._session_factory() as session:
             teachers = session.execute(
                 select(UserORM).join(RoleORM).where(
-                    RoleORM.name == ROLE_TEACHER, UserORM.active.is_(True)
+                    RoleORM.name == ROLE_TEACHER
                 ).order_by(UserORM.full_name, UserORM.id)
             ).scalars().all()
             result = []
@@ -401,12 +408,83 @@ class AuthService:
                     "id": teacher.id,
                     "username": teacher.username,
                     "full_name": teacher.full_name,
+                    "dni": teacher.dni,
                     "phone_number": teacher.phone_number,
                     "email": teacher.email,
+                    "active": teacher.active,
                     "role": ROLE_TEACHER,
                     "course_ids": list(course_ids),
                 })
             return result
+
+    def update_teacher(
+        self,
+        teacher_id: int,
+        username: str,
+        full_name: str,
+        dni: str,
+        email: str,
+        phone_number: Optional[str],
+    ) -> dict:
+        username = username.strip()
+        full_name = " ".join(full_name.split())
+        dni = dni.strip().upper()
+        email = email.strip()
+        if not username or not full_name or not dni or not email:
+            raise ValueError("Usuario, nombre, DNI y correo son obligatorios.")
+        with self._session_factory() as session:
+            teacher = session.execute(
+                select(UserORM)
+                .join(RoleORM)
+                .where(UserORM.id == teacher_id, RoleORM.name == ROLE_TEACHER)
+            ).scalar_one_or_none()
+            if teacher is None:
+                raise LookupError(f"Docente {teacher_id} no encontrado.")
+            if session.execute(
+                select(UserORM.id).where(
+                    UserORM.username == username, UserORM.id != teacher_id
+                )
+            ).scalar_one_or_none() is not None:
+                raise ValueError("Ese nombre de usuario ya está registrado.")
+            if session.execute(
+                select(UserORM.id).where(
+                    func.lower(UserORM.email) == email.lower(),
+                    UserORM.id != teacher_id,
+                )
+            ).scalar_one_or_none() is not None:
+                raise ValueError("Ese correo ya está asociado a una cuenta.")
+            if session.execute(
+                select(UserORM.id).where(
+                    func.upper(UserORM.dni) == dni, UserORM.id != teacher_id
+                )
+            ).scalar_one_or_none() is not None:
+                raise ValueError("Ese DNI/identificador ya está asociado a una cuenta.")
+            teacher.username = username
+            teacher.full_name = full_name
+            teacher.dni = dni
+            teacher.email = email
+            teacher.phone_number = (
+                phone_number.strip() if phone_number and phone_number.strip() else None
+            )
+            session.commit()
+            return self._teacher_response(teacher)
+
+    def set_teacher_active(self, teacher_id: int, active: bool) -> dict:
+        with self._session_factory() as session:
+            teacher = session.execute(
+                select(UserORM)
+                .join(RoleORM)
+                .where(UserORM.id == teacher_id, RoleORM.name == ROLE_TEACHER)
+            ).scalar_one_or_none()
+            if teacher is None:
+                raise LookupError(f"Docente {teacher_id} no encontrado.")
+            teacher.active = active
+            if not active:
+                session.execute(
+                    delete(AuthSessionORM).where(AuthSessionORM.user_id == teacher_id)
+                )
+            session.commit()
+            return self._teacher_response(teacher)
 
     def assign_courses(self, teacher_id: int, course_ids: List[int]) -> bool:
         with self._session_factory() as session:
@@ -447,8 +525,10 @@ class AuthService:
             "id": teacher.id,
             "username": teacher.username,
             "full_name": teacher.full_name,
+            "dni": teacher.dni,
             "phone_number": teacher.phone_number,
             "email": teacher.email,
+            "active": teacher.active,
             "role": ROLE_TEACHER,
             "course_ids": sorted(assignment.course_id for assignment in teacher.course_assignments),
         }
