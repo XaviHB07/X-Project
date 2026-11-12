@@ -69,10 +69,15 @@ class TestInfraestructura:
         assert "Los ciclos académicos y la matrícula de estudiantes" in page.text
         assert 'name="selection-target" value="group"' in page.text
         assert 'id="expo-signal"' in page.text
+        assert 'id="expo-grades-form"' in page.text
+        assert 'id="expo-group-score"' in page.text
+        assert 'id="expo-member-grades"' in page.text
         assert page.text.count('data-signal-light="') == 3
         assert script.status_code == 200
         assert script.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
         assert "/sessions/select" in script.text
+        assert "/group-expositions" in script.text
+        assert "Falta la nota individual de" in script.text
         assert "Amarillo · cerca del tiempo máximo" in script.text
         assert "Rojo · tiempo máximo alcanzado" in script.text
         assert "Verde · dentro del tiempo permitido" in script.text
@@ -1488,3 +1493,197 @@ class TestRegistroParticipaciones:
             },
         )
         assert resp.status_code == 422
+
+
+class TestNotasDeExposicionGrupal:
+    def _course_with_plan(self, client: TestClient):
+        course_id = new_course(client, "Curso con exposiciones")
+        student_ids = [
+            client.post(
+                f"/courses/{course_id}/students",
+                json={"external_ref": f"EX{i}", "display_name": f"Expositor {i}"},
+            ).json()["id"]
+            for i in range(4)
+        ]
+        plan = client.post(
+            f"/courses/{course_id}/group-plans/confirm",
+            json={
+                "name": "Proyecto final",
+                "max_group_size": 2,
+                "groups": [
+                    {"name": "Grupo 1", "student_ids": student_ids[:2]},
+                    {"name": "Grupo 2", "student_ids": student_ids[2:]},
+                ],
+            },
+        ).json()
+        return course_id, student_ids, plan
+
+    def test_record_update_and_list_group_exposition(self, client: TestClient):
+        course_id, student_ids, plan = self._course_with_plan(client)
+        session = client.post(f"/courses/{course_id}/class-sessions", json={}).json()
+        endpoint = f"/courses/{course_id}/group-expositions"
+
+        created = client.post(
+            endpoint,
+            json={
+                "group_name": "Grupo 1",
+                "group_score": 4,
+                "group_plan_id": plan["id"],
+                "class_session_id": session["id"],
+                "comment": "  Buena exposición  ",
+                "duration_seconds": 290,
+                "members": [
+                    {"student_id": student_ids[0], "present": True, "score": 4.5, "position": 2},
+                    {"student_id": student_ids[1], "present": True, "score": 3.5, "position": 1},
+                ],
+            },
+        )
+        assert created.status_code == 201
+        body = created.json()
+        assert body["group_name"] == "Grupo 1"
+        assert body["group_score"] == 4
+        assert body["plan_name"] == "Proyecto final"
+        assert body["group_plan_id"] == plan["id"]
+        assert body["class_session_id"] == session["id"]
+        assert body["comment"] == "Buena exposición"
+        assert body["duration_seconds"] == 290
+        assert [m["student_id"] for m in body["members"]] == [student_ids[1], student_ids[0]]
+        assert [m["score"] for m in body["members"]] == [3.5, 4.5]
+        assert body["members"][0]["display_name"] == "Expositor 1"
+
+        updated = client.put(
+            f"{endpoint}/{body['id']}",
+            json={
+                "group_score": 4.5,
+                "comment": None,
+                "members": [
+                    {"student_id": student_ids[0], "present": True, "score": 5, "position": 1},
+                    {"student_id": student_ids[1], "present": False, "score": None},
+                ],
+            },
+        )
+        assert updated.status_code == 200
+        assert updated.json()["id"] == body["id"]
+        assert updated.json()["group_score"] == 4.5
+        assert updated.json()["comment"] is None
+        assert [(m["student_id"], m["score"], m["present"]) for m in updated.json()["members"]] == [
+            (student_ids[0], 5, True),
+            (student_ids[1], None, False),
+        ]
+
+        second = client.post(
+            endpoint,
+            json={
+                "group_name": "Grupo 2",
+                "group_score": 3,
+                "group_plan_id": plan["id"],
+                "members": [
+                    {"student_id": student_id, "present": True, "score": 3}
+                    for student_id in student_ids[2:]
+                ],
+            },
+        )
+        assert second.status_code == 201
+
+        listed = client.get(endpoint)
+        assert listed.status_code == 200
+        assert [item["group_name"] for item in listed.json()] == ["Grupo 2", "Grupo 1"]
+
+        # SQLite devuelve las fechas sin zona horaria al releer; se comparan
+        # los datos de la exposición, no el formato del timestamp.
+        def without_timestamps(item):
+            return {k: v for k, v in item.items() if k not in ("created_at", "updated_at")}
+
+        assert without_timestamps(listed.json()[1]) == without_timestamps(updated.json())
+        assert without_timestamps(
+            client.get(f"{endpoint}/{body['id']}").json()
+        ) == without_timestamps(updated.json())
+
+    def test_group_exposition_validations(self, client: TestClient):
+        course_id, student_ids, _ = self._course_with_plan(client)
+        other_course_id = new_course(client, "Curso ajeno")
+        outsider = client.post(
+            f"/courses/{other_course_id}/students",
+            json={"external_ref": "OUT", "display_name": "Ajeno"},
+        ).json()["id"]
+        endpoint = f"/courses/{course_id}/group-expositions"
+
+        def payload(**overrides):
+            base = {
+                "group_name": "Grupo 1",
+                "group_score": 4,
+                "members": [
+                    {"student_id": student_ids[0], "present": True, "score": 4},
+                    {"student_id": student_ids[1], "present": True, "score": 4},
+                ],
+            }
+            base.update(overrides)
+            return base
+
+        assert client.post(endpoint, json=payload(group_score=5.1)).status_code == 422
+        assert client.post(endpoint, json=payload(members=[])).status_code == 422
+        missing_score = client.post(
+            endpoint,
+            json=payload(members=[{"student_id": student_ids[0], "present": True}]),
+        )
+        assert missing_score.status_code == 400
+        assert "presente" in missing_score.json()["detail"]
+        assert client.post(
+            endpoint,
+            json=payload(members=[
+                {"student_id": student_ids[0], "present": True, "score": 4},
+                {"student_id": student_ids[0], "present": True, "score": 3},
+            ]),
+        ).status_code == 400
+        assert client.post(
+            endpoint,
+            json=payload(members=[{"student_id": outsider, "present": True, "score": 4}]),
+        ).status_code == 400
+        assert client.post(endpoint, json=payload(class_session_id=9999)).status_code == 404
+        assert client.post(endpoint, json=payload(group_plan_id=9999)).status_code == 400
+        assert client.put(
+            f"{endpoint}/9999", json={"group_score": 4, "members": payload()["members"]}
+        ).status_code == 404
+        assert client.get(endpoint).json() == []
+
+    def test_scores_are_kept_when_group_plan_is_deleted(self, client: TestClient):
+        course_id, student_ids, plan = self._course_with_plan(client)
+        endpoint = f"/courses/{course_id}/group-expositions"
+        created = client.post(
+            endpoint,
+            json={
+                "group_name": "Grupo 1",
+                "group_score": 4,
+                "group_plan_id": plan["id"],
+                "members": [
+                    {"student_id": student_id, "present": True, "score": 4}
+                    for student_id in student_ids[:2]
+                ],
+            },
+        ).json()
+
+        deleted = client.delete(f"/courses/{course_id}/group-plans/{plan['id']}")
+        assert deleted.status_code == 204
+
+        kept = client.get(f"{endpoint}/{created['id']}").json()
+        assert kept["group_plan_id"] is None
+        assert kept["plan_name"] == "Proyecto final"
+        assert len(kept["members"]) == 2
+
+    def test_teacher_only_reaches_expositions_of_assigned_courses(self, client: TestClient):
+        course_id, _, _ = self._course_with_plan(client)
+        teacher_id = next(
+            teacher["id"] for teacher in client.get("/admin/teachers").json()
+            if teacher["username"] == "teacher"
+        )
+        other_course_id = new_course(client, "Curso sin asignar")
+        client.put(f"/admin/teachers/{teacher_id}/courses", json={"course_ids": [course_id]})
+
+        client.cookies.clear()
+        login = client.post(
+            "/auth/login",
+            json={"username": "teacher", "password": "test-teacher-password-123"},
+        )
+        assert login.status_code == 200
+        assert client.get(f"/courses/{course_id}/group-expositions").status_code == 200
+        assert client.get(f"/courses/{other_course_id}/group-expositions").status_code == 403
