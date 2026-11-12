@@ -130,6 +130,21 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .workspace-tab { min-height: 37px; padding: 0 15px; border: 0; border-radius: 4px; background: transparent; color: #63736a; font-size: 12px; font-weight: 700; }
 .workspace-tab.active { background: var(--white); color: var(--forest); box-shadow: 0 1px 3px rgb(24 60 50 / 10%); }
 .group-planning-panel { padding: 22px; border: 1px solid var(--line); border-radius: 6px; background: var(--white); }
+.course-materials-panel { padding: 22px; border: 1px solid var(--line); border-radius: 6px; background: var(--white); }
+.course-materials-panel h2 { margin: 0 0 7px; color: var(--forest); font-family: Fraunces, Georgia, serif; font-size: 24px; font-weight: 500; }
+.material-upload-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: end; padding: 16px; border: 1px solid var(--line); border-radius: 5px; background: #f7f9fc; }
+.material-upload-form .form-label { display: block; margin-bottom: 6px; }
+.material-upload-form input[type="file"] { padding: 8px; }
+.material-status { min-height: 18px; }
+.course-material-list { display: grid; gap: 9px; }
+.course-material-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 5px; }
+.course-material-info { display: grid; gap: 4px; min-width: 0; }
+.course-material-info strong { color: var(--forest); }
+.course-material-info span { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+.course-material-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.course-material-actions a { text-decoration: none; }
+.material-replace-form { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.material-replace-form .field { width: min(230px, 100%); height: 34px; padding: 5px; font-size: 11px; }
 .group-planning-heading { margin-bottom: 18px; }
 .group-planning-heading h2 { margin-bottom: 7px; }
 .group-planning-heading .form-note { margin: 0; }
@@ -852,6 +867,8 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
   .assignment-course { align-items: flex-start; padding: 9px 0; }
   .assignment-course span { min-width: 0; overflow-wrap: anywhere; }
   .participation-history-panel { min-width: 0; }
+  .material-upload-form { grid-template-columns: minmax(0, 1fr); }
+  .course-material-card { align-items: flex-start; flex-direction: column; }
   .participation-table-wrap, .grade-matrix-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
   .participation-table { min-width: 620px; }
   .grade-matrix-scroll { scrollbar-width: thin; }

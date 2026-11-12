@@ -35,6 +35,7 @@ from src.services.auth_service import (
 from src.services.group_exposition_service import GroupExpositionService
 from src.services.group_planning_service import GroupPlanningService
 from src.services.grade_analysis_service import GradeAnalysisService
+from src.services.material_service import CourseMaterialService
 from src.services.roster_service import RosterService
 from src.services.selection_service import SelectionService
 from src.services.session_service import SessionService
@@ -84,6 +85,7 @@ class AppContext:
     group_planning_service: GroupPlanningService
     group_exposition_service: GroupExpositionService
     grade_analysis_service: GradeAnalysisService
+    material_service: CourseMaterialService
 
 
 # Columnas agregadas a tablas que ya existían antes del Sprint 1. `create_all`
@@ -269,4 +271,5 @@ def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bo
         group_planning_service=GroupPlanningService(uow_factory),
         group_exposition_service=GroupExpositionService(uow_factory),
         grade_analysis_service=GradeAnalysisService(uow_factory),
+        material_service=CourseMaterialService(uow_factory),
     )

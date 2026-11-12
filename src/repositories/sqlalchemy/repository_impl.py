@@ -14,8 +14,8 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import Date, cast, func, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy import Date, cast, delete, func, select, update
+from sqlalchemy.orm import Session, load_only
 
 from src.domain.entities import (
     AcademicCycle,
@@ -23,6 +23,8 @@ from src.domain.entities import (
     ClassSession,
     Course,
     CourseGroupPlan,
+    CourseMaterial,
+    CourseMaterialContent,
     DecisionRun,
     ExposureTimeSettings,
     GroupExposition,
@@ -45,6 +47,7 @@ from src.repositories.interfaces import (
     AttendanceRepository,
     ClassSessionRepository,
     CourseRepository,
+    CourseMaterialRepository,
     ExposureTimeSettingsRepository,
     DecisionRunRepository,
     AcademicCycleInUseError,
@@ -66,6 +69,7 @@ from src.repositories.sqlalchemy.models import (
     ClassSessionORM,
     CourseORM,
     CourseGroupPlanORM,
+    CourseMaterialORM,
     ExposureTimeSettingsORM,
     DecisionRunORM,
     GroupExpositionMemberScoreORM,
@@ -201,6 +205,164 @@ class SqlAlchemyExposureTimeSettingsRepository(ExposureTimeSettingsRepository):
             max_minutes=row.max_minutes,
             updated_at=row.updated_at,
         )
+
+
+class SqlAlchemyCourseMaterialRepository(CourseMaterialRepository):
+    def __init__(self, session: Session):
+        self._session = session
+
+    @staticmethod
+    def _to_material(row: CourseMaterialORM) -> CourseMaterial:
+        return CourseMaterial(
+            id=row.id,
+            course_id=row.course_id,
+            class_session_id=row.class_session_id,
+            file_name=row.file_name,
+            title=row.title,
+            topic=row.topic,
+            content_type=row.content_type,
+            size_bytes=row.size_bytes,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    def create(
+        self,
+        course_id: int,
+        class_session_id: Optional[int],
+        file_name: str,
+        title: str,
+        topic: Optional[str],
+        content_type: str,
+        size_bytes: int,
+        file_data: bytes,
+        extracted_text: str,
+    ) -> CourseMaterial:
+        row = CourseMaterialORM(
+            course_id=course_id,
+            class_session_id=class_session_id,
+            file_name=file_name,
+            title=title,
+            topic=topic,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            file_data=file_data,
+            extracted_text=extracted_text,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return self._to_material(row)
+
+    def get(self, course_id: int, material_id: int) -> Optional[CourseMaterial]:
+        row = self._session.execute(
+            select(
+                CourseMaterialORM.id,
+                CourseMaterialORM.course_id,
+                CourseMaterialORM.class_session_id,
+                CourseMaterialORM.file_name,
+                CourseMaterialORM.title,
+                CourseMaterialORM.topic,
+                CourseMaterialORM.content_type,
+                CourseMaterialORM.size_bytes,
+                CourseMaterialORM.created_at,
+                CourseMaterialORM.updated_at,
+            ).where(
+                CourseMaterialORM.course_id == course_id,
+                CourseMaterialORM.id == material_id,
+            )
+        ).one_or_none()
+        return CourseMaterial(**row._mapping) if row is not None else None
+
+    def get_content(
+        self, course_id: int, material_id: int
+    ) -> Optional[CourseMaterialContent]:
+        row = self._session.execute(
+            select(
+                CourseMaterialORM.file_name,
+                CourseMaterialORM.content_type,
+                CourseMaterialORM.file_data,
+                CourseMaterialORM.extracted_text,
+            ).where(
+                CourseMaterialORM.course_id == course_id,
+                CourseMaterialORM.id == material_id,
+            )
+        ).one_or_none()
+        if row is None:
+            return None
+        return CourseMaterialContent(
+            file_name=row.file_name,
+            content_type=row.content_type,
+            file_data=bytes(row.file_data),
+            extracted_text=row.extracted_text,
+        )
+
+    def list_by_course(self, course_id: int) -> List[CourseMaterial]:
+        rows = self._session.execute(
+            select(
+                CourseMaterialORM.id,
+                CourseMaterialORM.course_id,
+                CourseMaterialORM.class_session_id,
+                CourseMaterialORM.file_name,
+                CourseMaterialORM.title,
+                CourseMaterialORM.topic,
+                CourseMaterialORM.content_type,
+                CourseMaterialORM.size_bytes,
+                CourseMaterialORM.created_at,
+                CourseMaterialORM.updated_at,
+            )
+            .where(CourseMaterialORM.course_id == course_id)
+            .order_by(CourseMaterialORM.created_at.desc(), CourseMaterialORM.id.desc())
+        ).all()
+        return [CourseMaterial(**row._mapping) for row in rows]
+
+    def replace_file(
+        self,
+        course_id: int,
+        material_id: int,
+        file_name: str,
+        content_type: str,
+        size_bytes: int,
+        file_data: bytes,
+        extracted_text: str,
+    ) -> Optional[CourseMaterial]:
+        row = self._session.execute(
+            select(CourseMaterialORM)
+            .options(load_only(
+                CourseMaterialORM.id,
+                CourseMaterialORM.course_id,
+                CourseMaterialORM.class_session_id,
+                CourseMaterialORM.file_name,
+                CourseMaterialORM.title,
+                CourseMaterialORM.topic,
+                CourseMaterialORM.content_type,
+                CourseMaterialORM.size_bytes,
+                CourseMaterialORM.created_at,
+                CourseMaterialORM.updated_at,
+            ))
+            .where(
+                CourseMaterialORM.course_id == course_id,
+                CourseMaterialORM.id == material_id,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        row.file_name = file_name
+        row.content_type = content_type
+        row.size_bytes = size_bytes
+        row.file_data = file_data
+        row.extracted_text = extracted_text
+        row.updated_at = datetime.now(timezone.utc)
+        self._session.flush()
+        return self._to_material(row)
+
+    def delete(self, course_id: int, material_id: int) -> bool:
+        result = self._session.execute(
+            delete(CourseMaterialORM).where(
+                CourseMaterialORM.course_id == course_id,
+                CourseMaterialORM.id == material_id,
+            )
+        )
+        return result.rowcount == 1
 
 
 class SqlAlchemyAcademicCycleRepository(AcademicCycleRepository):

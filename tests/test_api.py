@@ -105,6 +105,8 @@ class TestInfraestructura:
         assert 'id="course-creation-list-title">Cursos existentes</h3>' in page.text
         assert 'id="courses-view-button"' in page.text
         assert 'id="enrollment-view-button"' in page.text
+        assert 'id="materials-tab"' in page.text
+        assert 'accept=".pptx,.docx,.xlsx,.pdf"' in page.text
         assert 'id="create-cycle-form"' in page.text
         assert 'id="create-cycle-form"' in page.text[:page.text.index('id="academic-setup-page"')]
         assert page.text.index('id="create-course-form"') > page.text.index('id="academic-setup-page"')
@@ -814,6 +816,7 @@ class TestImportacionExcel:
         students = client.get(f"/courses/{course_id}/students").json()
         assert [s["display_name"] for s in students] == ["Ana", "Luis"]
         assert all(s["active"] for s in students)
+
 
     def test_invalid_rows_are_reported_with_row_number(self, client: TestClient):
         course_id = new_course(client)
@@ -1763,6 +1766,78 @@ class TestNotasDeExposicionGrupal:
         assert login.status_code == 200
         assert client.get(f"/courses/{course_id}/group-expositions").status_code == 200
         assert client.get(f"/courses/{other_course_id}/group-expositions").status_code == 403
+
+
+class TestMaterialAcademico:
+    def test_upload_list_download_text_replace_and_delete(self, client: TestClient):
+        course_id = new_course(client, "Curso con material")
+        first_file = make_xlsx([["Unidad 1"], ["Derivadas y continuidad"]])
+        uploaded = client.post(
+            f"/courses/{course_id}/materials",
+            data={"title": "Unidad 1", "topic": "Derivadas"},
+            files={"file": ("unidad.xlsx", first_file, XLSX_MIME)},
+        )
+
+        assert uploaded.status_code == 201
+        material = uploaded.json()
+        assert material["file_name"] == "unidad.xlsx"
+        assert material["title"] == "Unidad 1"
+        assert material["topic"] == "Derivadas"
+        assert material["size_bytes"] == len(first_file)
+
+        listed = client.get(f"/courses/{course_id}/materials")
+        assert listed.status_code == 200
+        assert [item["id"] for item in listed.json()] == [material["id"]]
+
+        downloaded = client.get(
+            f"/courses/{course_id}/materials/{material['id']}/content"
+        )
+        assert downloaded.status_code == 200
+        assert downloaded.content == first_file
+        assert downloaded.headers["content-disposition"].endswith("unidad.xlsx")
+        assert downloaded.headers["x-content-type-options"] == "nosniff"
+
+        extracted = client.get(
+            f"/courses/{course_id}/materials/{material['id']}/text"
+        )
+        assert extracted.status_code == 200
+        assert "Derivadas y continuidad" in extracted.text
+
+        replacement = make_xlsx([["Unidad 1"], ["Integrales"]])
+        updated = client.put(
+            f"/courses/{course_id}/materials/{material['id']}",
+            files={"file": ("unidad-actualizada.xlsx", replacement, XLSX_MIME)},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["title"] == "Unidad 1"
+        assert updated.json()["file_name"] == "unidad-actualizada.xlsx"
+        assert "Integrales" in client.get(
+            f"/courses/{course_id}/materials/{material['id']}/text"
+        ).text
+
+        deleted = client.delete(
+            f"/courses/{course_id}/materials/{material['id']}"
+        )
+        assert deleted.status_code == 204
+        assert client.get(f"/courses/{course_id}/materials").json() == []
+        assert client.get(
+            f"/courses/{course_id}/materials/{material['id']}/content"
+        ).status_code == 404
+
+    def test_upload_rejects_unknown_extensions_and_requires_authentication(
+        self, client: TestClient
+    ):
+        course_id = new_course(client, "Curso con material inválido")
+        rejected = client.post(
+            f"/courses/{course_id}/materials",
+            files={"file": ("tema.doc", b"no soportado", "application/msword")},
+        )
+        assert rejected.status_code == 400
+        assert "Solo se admiten" in rejected.json()["detail"]
+
+        client.cookies.clear()
+        unauthenticated = client.get(f"/courses/{course_id}/materials")
+        assert unauthenticated.status_code == 401
 
 
 def _login_as_teacher(client: TestClient) -> None:

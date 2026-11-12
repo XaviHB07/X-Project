@@ -18,6 +18,7 @@ from src.services.fairness_service import FairnessMetricsService
 from src.services.group_exposition_service import GroupExpositionService
 from src.services.group_planning_service import GroupPlanningService
 from src.services.grade_analysis_service import GradeAnalysisService
+from src.services.material_service import CourseMaterialService
 from src.services.roster_service import RosterService
 from src.services.selection_service import SelectionService
 from src.services.session_service import SessionService
@@ -54,6 +55,10 @@ def get_group_exposition_service(request: Request) -> GroupExpositionService:
 
 def get_grade_analysis_service(request: Request) -> GradeAnalysisService:
     return get_app_context(request).grade_analysis_service
+
+
+def get_material_service(request: Request) -> CourseMaterialService:
+    return get_app_context(request).material_service
 
 
 def new_unit_of_work(request: Request) -> UnitOfWork:

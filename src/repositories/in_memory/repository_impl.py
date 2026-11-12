@@ -26,6 +26,8 @@ from src.domain.entities import (
     ClassSession,
     Course,
     CourseGroupPlan,
+    CourseMaterial,
+    CourseMaterialContent,
     DecisionRun,
     ExposureTimeSettings,
     GroupExposition,
@@ -48,6 +50,7 @@ from src.repositories.interfaces import (
     AttendanceRepository,
     ClassSessionRepository,
     CourseRepository,
+    CourseMaterialRepository,
     ExposureTimeSettingsRepository,
     DecisionRunRepository,
     AcademicCycleInUseError,
@@ -105,6 +108,7 @@ class InMemoryDatabase:
 
     def __init__(self) -> None:
         self.courses: Dict[int, Course] = {}
+        self.course_materials: Dict[int, tuple[CourseMaterial, CourseMaterialContent]] = {}
         self.exposure_time_settings: Dict[int, ExposureTimeSettings] = {}
         self.cycles: Dict[int, AcademicCycle] = {}
         self.students: Dict[int, Student] = {}
@@ -186,6 +190,100 @@ class InMemoryExposureTimeSettingsRepository(ExposureTimeSettingsRepository):
         self._db.exposure_time_settings[course_id] = settings
         return settings
 
+
+class InMemoryCourseMaterialRepository(CourseMaterialRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def create(
+        self,
+        course_id: int,
+        class_session_id: Optional[int],
+        file_name: str,
+        title: str,
+        topic: Optional[str],
+        content_type: str,
+        size_bytes: int,
+        file_data: bytes,
+        extracted_text: str,
+    ) -> CourseMaterial:
+        now = _utcnow()
+        material = CourseMaterial(
+            id=self._db.next_id("course_materials"),
+            course_id=course_id,
+            class_session_id=class_session_id,
+            file_name=file_name,
+            title=title,
+            topic=topic,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            created_at=now,
+            updated_at=now,
+        )
+        self._db.course_materials[material.id] = (
+            material,
+            CourseMaterialContent(
+                file_name=file_name,
+                content_type=content_type,
+                file_data=file_data,
+                extracted_text=extracted_text,
+            ),
+        )
+        return material
+
+    def get(self, course_id: int, material_id: int) -> Optional[CourseMaterial]:
+        stored = self._db.course_materials.get(material_id)
+        return stored[0] if stored and stored[0].course_id == course_id else None
+
+    def get_content(
+        self, course_id: int, material_id: int
+    ) -> Optional[CourseMaterialContent]:
+        stored = self._db.course_materials.get(material_id)
+        return stored[1] if stored and stored[0].course_id == course_id else None
+
+    def list_by_course(self, course_id: int) -> List[CourseMaterial]:
+        materials = [
+            material
+            for material, _ in self._db.course_materials.values()
+            if material.course_id == course_id
+        ]
+        return sorted(materials, key=lambda material: (material.created_at, material.id), reverse=True)
+
+    def replace_file(
+        self,
+        course_id: int,
+        material_id: int,
+        file_name: str,
+        content_type: str,
+        size_bytes: int,
+        file_data: bytes,
+        extracted_text: str,
+    ) -> Optional[CourseMaterial]:
+        stored = self._db.course_materials.get(material_id)
+        if stored is None or stored[0].course_id != course_id:
+            return None
+        material = replace(
+            stored[0],
+            file_name=file_name,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            updated_at=_utcnow(),
+        )
+        content = CourseMaterialContent(
+            file_name=file_name,
+            content_type=content_type,
+            file_data=file_data,
+            extracted_text=extracted_text,
+        )
+        self._db.course_materials[material_id] = (material, content)
+        return material
+
+    def delete(self, course_id: int, material_id: int) -> bool:
+        stored = self._db.course_materials.get(material_id)
+        if stored is None or stored[0].course_id != course_id:
+            return False
+        del self._db.course_materials[material_id]
+        return True
 
 class InMemoryAcademicCycleRepository(AcademicCycleRepository):
     def __init__(self, db: InMemoryDatabase):

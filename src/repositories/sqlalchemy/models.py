@@ -32,6 +32,7 @@ from sqlalchemy import (
     Index,
     Integer,
     JSON,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -157,6 +158,33 @@ class CourseORM(Base):
     students: Mapped[List["StudentORM"]] = relationship(back_populates="course")
     class_sessions: Mapped[List["ClassSessionORM"]] = relationship(back_populates="course")
     syllabus_entries: Mapped[List["SyllabusEntryORM"]] = relationship(back_populates="course")
+
+
+class CourseMaterialORM(Base):
+    __tablename__ = "course_materials"
+    __table_args__ = (
+        Index("ix_course_materials_course_created", "course_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), nullable=False)
+    class_session_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("class_sessions.id"), nullable=True
+    )
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    topic: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    content_type: Mapped[str] = mapped_column(String(127), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    file_data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    extracted_text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+    course: Mapped["CourseORM"] = relationship()
+    class_session: Mapped[Optional["ClassSessionORM"]] = relationship()
 
 
 class ExposureTimeSettingsORM(Base):

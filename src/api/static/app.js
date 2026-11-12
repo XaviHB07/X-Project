@@ -16,6 +16,7 @@ const state = {
   appView: "daily",
   courseView: "attendance",
   groupPlans: [],
+  materials: [],
   gradeCycleId: null,
   gradeCourseId: null,
   gradeMatrix: null,
@@ -120,6 +121,14 @@ const elements = {
   attendanceTab: $("#attendance-tab"),
   participationsTab: $("#participations-tab"),
   groupsTab: $("#groups-tab"),
+  materialsTab: $("#materials-tab"),
+  materialsView: $("#materials-view"),
+  materialUploadForm: $("#material-upload-form"),
+  materialFile: $("#material-file"),
+  materialSession: $("#material-session"),
+  materialStatus: $("#material-status"),
+  courseMaterialList: $("#course-material-list"),
+  uploadMaterialButton: $("#upload-material-button"),
   exposureSettingsForm: $("#exposure-settings-form"),
   exposureMinMinutes: $("#exposure-minutes-min"),
   exposureMaxMinutes: $("#exposure-minutes-max"),
@@ -216,6 +225,8 @@ function showLogin(message = "") {
   stopExpoTimer();
   state.authenticatedUser = null;
   state.course = null;
+  state.materials = [];
+  renderCourseMaterials();
   state.availableCourses = [];
   state.cycles = [];
   state.teachers = [];
@@ -839,12 +850,16 @@ function renderCourse() {
   renderStudents();
   renderManagementStudents();
   renderGroupPlans();
+  if (state.courseView === "materials") loadCourseMaterials();
   if (state.metrics) renderMetrics(state.metrics);
 }
 
 function clearCourseSelection() {
   stopExpoTimer();
   state.course = null;
+  state.materials = [];
+  elements.materialSession.value = "";
+  renderCourseMaterials();
   state.students = [];
   state.managementStudents = [];
   state.session = null;
@@ -1225,15 +1240,113 @@ function setCourseView(view) {
   const attendance = view === "attendance";
   const participations = view === "participations";
   const groups = view === "groups";
-  elements.attendanceView.hidden = participations || groups;
+  const materials = view === "materials";
+  elements.attendanceView.hidden = participations || groups || materials;
   elements.participationsView.hidden = !participations;
   elements.groupsView.hidden = !groups;
+  elements.materialsView.hidden = !materials;
   elements.attendanceTab.classList.toggle("active", attendance);
   elements.participationsTab.classList.toggle("active", participations);
   elements.groupsTab.classList.toggle("active", groups);
+  elements.materialsTab.classList.toggle("active", materials);
   elements.attendanceTab.setAttribute("aria-selected", String(attendance));
   elements.participationsTab.setAttribute("aria-selected", String(participations));
   elements.groupsTab.setAttribute("aria-selected", String(groups));
+  elements.materialsTab.setAttribute("aria-selected", String(materials));
+}
+
+function formatMaterialSize(size) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function renderCourseMaterials() {
+  elements.courseMaterialList.innerHTML = state.materials.map((material) => `
+    <article class="course-material-card">
+      <div class="course-material-info">
+        <strong>${escapeHtml(material.title)}</strong>
+        <span>${escapeHtml(material.file_name)} · ${formatMaterialSize(material.size_bytes)}</span>
+        <span>${escapeHtml(material.topic || "Sin tema")}${material.class_session_id
+          ? ` · Sesión #${material.class_session_id}` : ""}</span>
+      </div>
+      <div class="course-material-actions">
+        <a class="button button-quiet" href="/courses/${state.course.id}/materials/${material.id}/content" download>Descargar</a>
+        <form class="material-replace-form" data-replace-material="${material.id}">
+          <label class="sr-only" for="replace-material-${material.id}">Reemplazar archivo de ${escapeHtml(material.title)}</label>
+          <input class="field" id="replace-material-${material.id}" type="file" name="file" accept=".pptx,.docx,.xlsx,.pdf" required />
+          <button class="button button-quiet" type="submit">Reemplazar archivo</button>
+        </form>
+        <button class="button button-quiet" type="button" data-delete-material="${material.id}">Eliminar</button>
+      </div>
+    </article>
+  `).join("");
+  $("#course-materials-empty").hidden = state.materials.length > 0;
+}
+
+async function loadCourseMaterials() {
+  if (!state.course) return;
+  const courseId = state.course.id;
+  elements.materialStatus.textContent = "Cargando materiales...";
+  try {
+    const [materials, sessions] = await Promise.all([
+      api(`/courses/${courseId}/materials`),
+      api(`/courses/${courseId}/class-sessions`),
+    ]);
+    if (state.course?.id !== courseId) return;
+    state.materials = materials;
+    const selectedSession = elements.materialSession.value;
+    elements.materialSession.innerHTML = `<option value="">Asociar solo al curso</option>${sessions
+      .map((session) => `<option value="${session.id}">Sesión #${session.id} · ${escapeHtml(session.topic || session.label || "Sin tema")} · ${escapeHtml(session.session_date || "")}</option>`)
+      .join("")}`;
+    if (sessions.some((session) => String(session.id) === selectedSession)) {
+      elements.materialSession.value = selectedSession;
+    }
+    renderCourseMaterials();
+    elements.materialStatus.textContent = "";
+  } catch (error) {
+    if (state.course?.id !== courseId) return;
+    elements.materialStatus.textContent = error.message;
+    notify(`No se pudieron cargar los materiales: ${error.message}`, true);
+  }
+}
+
+async function submitMaterialForm(form, materialId = null) {
+  const file = form.querySelector('input[type="file"]').files[0];
+  if (!file || !state.course) return;
+  const courseId = state.course.id;
+  if (!window.confirm(
+    materialId
+      ? "¿Reemplazar el archivo y el texto fuente de este material?"
+      : `¿Guardar «${file.name}» en el curso ${state.course.name}?`,
+  )) return;
+  const formData = new FormData();
+  formData.append("file", file);
+  if (!materialId) {
+    const title = elements.materialUploadForm.elements.title.value.trim();
+    const topic = elements.materialUploadForm.elements.topic.value.trim();
+    const sessionId = elements.materialSession.value;
+    if (title) formData.append("title", title);
+    if (topic) formData.append("topic", topic);
+    if (sessionId) formData.append("class_session_id", sessionId);
+  }
+  const button = form.querySelector('button[type="submit"]');
+  setBusy(button, true, materialId ? "Reemplazando..." : "Guardando...");
+  elements.materialStatus.textContent = "";
+  try {
+    const path = `/courses/${courseId}/materials${materialId ? `/${materialId}` : ""}`;
+    await api(path, { method: materialId ? "PUT" : "POST", body: formData });
+    if (state.course?.id === courseId) {
+      if (!materialId) elements.materialUploadForm.reset();
+      await loadCourseMaterials();
+    }
+    notify(materialId ? "Material reemplazado." : "Material guardado.");
+  } catch (error) {
+    elements.materialStatus.textContent = error.message;
+    notify(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
 }
 
 function renderSessionBox() {
@@ -1306,6 +1419,9 @@ async function loadCourse(courseId, { remember = true } = {}) {
   ]);
   state.course = course;
   state.course = course;
+  state.materials = [];
+  elements.materialSession.value = "";
+  renderCourseMaterials();
   state.exposureTimeSettings = null;
   if (course.cycle_id !== null && course.cycle_id !== undefined) {
     renderCycles(course.cycle_id);
@@ -4073,6 +4189,38 @@ elements.groupsTab.addEventListener("click", () => {
   setCourseView("groups");
   if (state.course && !state.groupPlans.length) loadGroupPlans();
 });
+elements.materialsTab.addEventListener("click", () => {
+  setCourseView("materials");
+  loadCourseMaterials();
+});
+elements.materialUploadForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  submitMaterialForm(elements.materialUploadForm);
+});
+elements.courseMaterialList.addEventListener("submit", (event) => {
+  const form = event.target.closest("[data-replace-material]");
+  if (!form) return;
+  event.preventDefault();
+  submitMaterialForm(form, Number(form.dataset.replaceMaterial));
+});
+elements.courseMaterialList.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-delete-material]");
+  if (!button || !state.course) return;
+  const material = state.materials.find((item) => item.id === Number(button.dataset.deleteMaterial));
+  if (!material || !window.confirm(`¿Eliminar «${material.title}» y su archivo guardado?`)) return;
+  setBusy(button, true, "Eliminando...");
+  try {
+    await api(`/courses/${state.course.id}/materials/${material.id}`, { method: "DELETE" });
+    await loadCourseMaterials();
+    notify("Material eliminado.");
+  } catch (error) {
+    elements.materialStatus.textContent = error.message;
+    notify(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+});
+$("#refresh-materials").addEventListener("click", loadCourseMaterials);
 elements.exposureSettingsForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const minMinutes = Number(elements.exposureMinMinutes.value);
