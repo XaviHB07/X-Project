@@ -829,7 +829,7 @@
           <p class="stage-result-label"><span aria-hidden="true">✓</span> RESULTADO FINAL</p>
           <div class="stage-winners" id="stage-winners"></div>
           <p class="stage-result-meta" id="stage-result-meta"></p>
-          <section class="expo-panel" id="expo-panel" hidden aria-label="Orden de exposición y cronómetro">
+          <section class="expo-panel" id="expo-panel" hidden aria-label="Orden de exposición, cronómetro y notas">
             <div class="expo-order-block">
               <div class="expo-order-head">
                 <span class="expo-label" id="expo-order-label">INTEGRANTES</span>
@@ -869,6 +869,39 @@
                 </div>
               </div>
             </div>
+            <form class="expo-grades" id="expo-grades-form" novalidate aria-label="Notas de la exposición">
+              <div class="expo-grades-head">
+                <span class="expo-label" id="expo-grades-label">NOTAS DE LA EXPOSICIÓN</span>
+                <label class="expo-grades-reveal" for="expo-grades-reveal"><input id="expo-grades-reveal" type="checkbox" /> Mostrar notas</label>
+              </div>
+              <div class="expo-group-grade">
+                <label class="form-label" for="expo-group-score">Nota grupal (0 al 5)</label>
+                <input id="expo-group-score" class="field participation-score" type="password" inputmode="decimal"
+                  autocomplete="new-password" maxlength="6" data-expo-score aria-label="Nota grupal de 0 a 5" />
+              </div>
+              <div class="expo-grades-table-wrap">
+                <table class="expo-grades-table">
+                  <thead>
+                    <tr>
+                      <th scope="col" class="expo-grade-position">#</th>
+                      <th scope="col">Integrante</th>
+                      <th scope="col" class="expo-grade-present">Presente</th>
+                      <th scope="col" class="expo-grade-score">Nota individual</th>
+                    </tr>
+                  </thead>
+                  <tbody id="expo-member-grades"></tbody>
+                </table>
+              </div>
+              <button class="text-button expo-copy-score" id="expo-copy-group-score" type="button">Usar la nota grupal para los presentes</button>
+              <div class="stage-pick-field">
+                <label class="form-label" for="expo-grades-comment">Comentario <span class="optional">OPCIONAL</span></label>
+                <textarea id="expo-grades-comment" class="field stage-comment" rows="2" maxlength="1000" placeholder="Anotaciones sobre la exposición"></textarea>
+              </div>
+              <div class="expo-grades-actions">
+                <button class="button button-add" id="expo-grades-save" type="submit">Guardar notas</button>
+                <p class="expo-grades-status" id="expo-grades-status" role="status" aria-live="polite"></p>
+              </div>
+            </form>
             <button class="button button-quiet expo-next" id="expo-next-group" type="button">Elegir otro grupo</button>
           </section>
           <form class="stage-pick-form" id="stage-pick-form" hidden>

@@ -32,6 +32,7 @@ from src.services.fairness_service import FairnessMetricsService
 from src.services.auth_service import (
     AuthService, ROLE_ADMIN, ROLE_STUDENT, ROLE_TEACHER, hash_password,
 )
+from src.services.group_exposition_service import GroupExpositionService
 from src.services.group_planning_service import GroupPlanningService
 from src.services.grade_analysis_service import GradeAnalysisService
 from src.services.roster_service import RosterService
@@ -81,6 +82,7 @@ class AppContext:
     session_service: SessionService
     auth_service: AuthService
     group_planning_service: GroupPlanningService
+    group_exposition_service: GroupExpositionService
     grade_analysis_service: GradeAnalysisService
 
 
@@ -230,5 +232,6 @@ def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bo
         session_service=SessionService(uow_factory),
         auth_service=AuthService(session_factory),
         group_planning_service=GroupPlanningService(uow_factory),
+        group_exposition_service=GroupExpositionService(uow_factory),
         grade_analysis_service=GradeAnalysisService(uow_factory),
     )

@@ -569,6 +569,55 @@ class WeeklyGradesResponse(BaseModel):
     students: List[StudentWeeklyGradesResponse]
 
 
+class GroupExpositionMemberRequest(BaseModel):
+    student_id: int = Field(..., gt=0)
+    present: bool
+    # Vacío solo para integrantes ausentes (lo valida el servicio).
+    score: Optional[float] = Field(None, ge=0, le=5)
+    position: Optional[int] = Field(None, ge=1, le=1000)
+
+
+class GroupExpositionCreateRequest(BaseModel):
+    group_name: str = Field(..., min_length=1, max_length=255)
+    group_score: float = Field(..., ge=0, le=5)
+    members: List[GroupExpositionMemberRequest] = Field(..., min_length=1, max_length=1000)
+    group_plan_id: Optional[int] = Field(None, gt=0)
+    class_session_id: Optional[int] = Field(None, gt=0)
+    comment: Optional[str] = Field(None, max_length=1000)
+    duration_seconds: Optional[int] = Field(None, ge=0, le=86400)
+
+
+class GroupExpositionUpdateRequest(BaseModel):
+    group_score: float = Field(..., ge=0, le=5)
+    members: List[GroupExpositionMemberRequest] = Field(..., min_length=1, max_length=1000)
+    comment: Optional[str] = Field(None, max_length=1000)
+    duration_seconds: Optional[int] = Field(None, ge=0, le=86400)
+
+
+class GroupExpositionMemberResponse(BaseModel):
+    student_id: int
+    external_ref: str
+    display_name: str
+    present: bool
+    score: Optional[float] = None
+    position: Optional[int] = None
+
+
+class GroupExpositionResponse(BaseModel):
+    id: int
+    course_id: int
+    group_name: str
+    group_score: float
+    members: List[GroupExpositionMemberResponse]
+    created_at: datetime
+    updated_at: datetime
+    class_session_id: Optional[int] = None
+    group_plan_id: Optional[int] = None
+    plan_name: Optional[str] = None
+    comment: Optional[str] = None
+    duration_seconds: Optional[int] = None
+
+
 class WeeklyParticipationDetailResponse(BaseModel):
     id: int
     session_date: date

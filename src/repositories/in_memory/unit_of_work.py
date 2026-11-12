@@ -20,6 +20,7 @@ from src.repositories.in_memory.repository_impl import (
     InMemoryExposureTimeSettingsRepository,
     InMemoryDecisionRunRepository,
     InMemoryEventRepository,
+    InMemoryGroupExpositionRepository,
     InMemoryGroupPlanRepository,
     InMemoryParticipationRepository,
     InMemoryStudentRepository,
@@ -51,6 +52,7 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.events = InMemoryEventRepository(self._db)
         self.participations = InMemoryParticipationRepository(self._db)
         self.group_plans = InMemoryGroupPlanRepository(self._db)
+        self.group_expositions = InMemoryGroupExpositionRepository(self._db)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:

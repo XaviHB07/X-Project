@@ -543,6 +543,31 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .expo-timer-actions .button-add { flex: 1 1 auto; min-height: 38px; }
 .expo-timer-actions .button-quiet, .expo-next { border: 1px solid var(--line); }
 .expo-next { min-height: 40px; }
+.expo-grades { display: grid; gap: 11px; padding: 12px 14px; border: 1px solid #d4deec; border-radius: 6px; background: white; }
+.expo-grades-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.expo-grades-reveal { display: inline-flex; align-items: center; gap: 5px; color: #59665e; font-size: 11px; cursor: pointer; }
+.expo-grades-reveal input { accent-color: var(--teal); }
+.expo-group-grade { display: grid; grid-template-columns: minmax(0, 1fr) 112px; align-items: center; gap: 11px; padding: 9px 11px; border-radius: 5px; background: #eef5fd; }
+.expo-group-grade .form-label { margin: 0; color: var(--forest); font-size: 12px; }
+.expo-grades-table-wrap { max-height: 300px; overflow: auto; border: 1px solid #e2e8f0; border-radius: 5px; }
+.expo-grades-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.expo-grades-table th { position: sticky; top: 0; z-index: 1; padding: 7px 8px; background: #f4f8fd; color: #535e6c; font-size: 10px; font-weight: 700; letter-spacing: .03em; text-align: left; text-transform: uppercase; }
+.expo-grades-table td { padding: 6px 8px; border-top: 1px solid #e2e8f0; vertical-align: middle; }
+.expo-grades-table .expo-grade-position { width: 34px; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
+.expo-grades-table .expo-grade-present { width: 68px; text-align: center; }
+.expo-grades-table .expo-grade-score { width: 118px; }
+.expo-grades-table td.expo-grade-present input { width: 16px; height: 16px; accent-color: var(--forest); cursor: pointer; }
+.expo-grade-name strong { display: block; overflow-wrap: anywhere; color: var(--forest); font-size: 13px; font-weight: 600; }
+.expo-grade-name small { display: block; margin-top: 1px; color: var(--muted); font-size: 10px; }
+.expo-grades-table .participation-score { height: 34px; padding: 0 6px; }
+.expo-grades input[type="text"].participation-score { letter-spacing: 0; }
+.expo-grades-table tr.is-absent .expo-grade-name strong { color: var(--muted); font-weight: 500; }
+.expo-copy-score { justify-self: start; padding: 0; color: #165ab3; }
+.expo-grades-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.expo-grades-actions .button-add { flex: 0 0 auto; min-height: 40px; padding: 0 18px; }
+.expo-grades-status { flex: 1 1 140px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.expo-grades-status.is-saved { color: #17613c; font-weight: 700; }
+.expo-grades-status.is-pending { color: #9a6b00; font-weight: 700; }
 @keyframes sand-fall { to { stroke-dashoffset: -6; } }
 @keyframes traffic-light-pulse { to { opacity: .65; box-shadow: 0 0 4px 1px rgb(236 81 72 / 45%), inset 0 1px rgb(255 255 255 / 60%); } }
 @media (prefers-reduced-motion: reduce) {
@@ -780,6 +805,10 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 
 @media (max-width: 520px) {
   .expo-timer { grid-template-columns: 84px minmax(0, 1fr); gap: 11px; padding: 10px; }
+  .expo-grades { padding: 10px; }
+  .expo-group-grade { grid-template-columns: minmax(0, 1fr) 92px; }
+  .expo-grades-table .expo-grade-present { width: 58px; }
+  .expo-grades-table .expo-grade-score { width: 84px; }
   .expo-clock { font-size: 30px; }
 }
 

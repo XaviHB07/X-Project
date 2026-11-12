@@ -224,6 +224,9 @@ class GroupPlanningService:
                 raise GroupPlanNotFoundError(
                     f"La propuesta de grupos {plan_id} no existe en el curso {course_id}."
                 )
+            # Las notas de exposición ya registradas se conservan (guardan su
+            # propia copia del nombre del grupo y de la propuesta).
+            uow.group_expositions.detach_plan(plan_id)
             uow.group_plans.delete(plan_id)
             uow.commit()
 

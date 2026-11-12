@@ -14,6 +14,7 @@ Esquema (ver README para el diagrama y la justificación completa):
     courses (1) ---- (N) syllabus_entries
     class_sessions (1) ---- (N) session_attendance (N) ---- (1) students
     students (1) ---- (N) selection_events
+    courses (1) ---- (N) group_expositions (1) ---- (N) group_exposition_member_scores (N) ---- (1) students
 """
 
 from __future__ import annotations
@@ -346,3 +347,85 @@ class StudentParticipationORM(Base):
 
     decision_run: Mapped["DecisionRunORM"] = relationship(back_populates="participations")
     student: Mapped["StudentORM"] = relationship(back_populates="participations")
+
+
+class GroupExpositionORM(Base):
+    """Exposición calificada de un grupo: nota grupal + datos de contexto.
+
+    `group_name` y `plan_name` son copias (snapshot): la propuesta de grupos
+    vive como JSON editable en `course_group_plans`, así que la nota no puede
+    depender de que ese JSON siga igual. `group_plan_id` queda solo como
+    referencia y se pone en NULL si la propuesta se elimina.
+    """
+
+    __tablename__ = "group_expositions"
+    __table_args__ = (
+        CheckConstraint(
+            "group_score >= 0 AND group_score <= 5", name="ck_group_exposition_score_range"
+        ),
+        CheckConstraint(
+            "duration_seconds IS NULL OR duration_seconds >= 0",
+            name="ck_group_exposition_duration",
+        ),
+        Index("ix_group_expositions_course_created", "course_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), nullable=False)
+    class_session_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("class_sessions.id"), nullable=True, index=True
+    )
+    group_plan_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("course_group_plans.id", ondelete="SET NULL"), nullable=True
+    )
+    plan_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    group_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    group_score: Mapped[float] = mapped_column(Float, nullable=False)
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    duration_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+    course: Mapped["CourseORM"] = relationship()
+    member_scores: Mapped[List["GroupExpositionMemberScoreORM"]] = relationship(
+        back_populates="exposition",
+        cascade="all, delete-orphan",
+        order_by="GroupExpositionMemberScoreORM.id",
+    )
+
+
+class GroupExpositionMemberScoreORM(Base):
+    """Nota individual de un integrante dentro de una exposición grupal.
+
+    `score` admite NULL únicamente para integrantes ausentes (la regla
+    "presente => nota obligatoria" la valida el servicio).
+    """
+
+    __tablename__ = "group_exposition_member_scores"
+    __table_args__ = (
+        UniqueConstraint(
+            "exposition_id", "student_id", name="uq_group_exposition_member"
+        ),
+        CheckConstraint(
+            "score IS NULL OR (score >= 0 AND score <= 5)",
+            name="ck_group_exposition_member_score_range",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    exposition_id: Mapped[int] = mapped_column(
+        ForeignKey("group_expositions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    student_id: Mapped[int] = mapped_column(
+        ForeignKey("students.id"), nullable=False, index=True
+    )
+    score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    present: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    # Lugar en el orden de exposición (1 = primero). La columna no se llama
+    # `position` porque esa es una palabra clave de SQL.
+    position: Mapped[Optional[int]] = mapped_column("exposition_order", Integer, nullable=True)
+
+    exposition: Mapped["GroupExpositionORM"] = relationship(back_populates="member_scores")
+    student: Mapped["StudentORM"] = relationship()

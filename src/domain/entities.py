@@ -12,7 +12,7 @@ un test), nada fuera de `repositories/` se entera del cambio.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Optional
 
@@ -220,3 +220,53 @@ class StudentParticipation:
     display_name: str
     question: Optional[str] = None
     comment: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class GroupExpositionMemberEntry:
+    """Nota individual de un integrante tal como la envía el docente.
+
+    `score` puede quedar vacío solo si el integrante no estuvo presente;
+    `position` es su lugar en el orden de exposición (1 = primero).
+    """
+
+    student_id: int
+    present: bool
+    score: Optional[float] = None
+    position: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class GroupExpositionMemberScore:
+    """Nota individual ya registrada de un integrante del grupo expositor."""
+
+    student_id: int
+    external_ref: str
+    display_name: str
+    present: bool
+    score: Optional[float] = None
+    position: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class GroupExposition:
+    """Calificación de la exposición de un grupo elegido por ruleta/bolillero.
+
+    Guarda una nota grupal y una nota individual por integrante. El nombre
+    del grupo y el de la propuesta se copian al momento de calificar: las
+    propuestas de grupos se pueden editar o eliminar después, y la nota
+    registrada no debe cambiar ni perderse por eso.
+    """
+
+    id: int
+    course_id: int
+    group_name: str
+    group_score: float
+    created_at: datetime
+    updated_at: datetime
+    members: list[GroupExpositionMemberScore] = field(default_factory=list)
+    class_session_id: Optional[int] = None
+    group_plan_id: Optional[int] = None
+    plan_name: Optional[str] = None
+    comment: Optional[str] = None
+    duration_seconds: Optional[int] = None

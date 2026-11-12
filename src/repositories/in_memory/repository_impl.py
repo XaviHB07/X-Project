@@ -28,6 +28,9 @@ from src.domain.entities import (
     CourseGroupPlan,
     DecisionRun,
     ExposureTimeSettings,
+    GroupExposition,
+    GroupExpositionMemberEntry,
+    GroupExpositionMemberScore,
     Student,
     StudentAccount,
     StudentGroup,
@@ -50,6 +53,7 @@ from src.repositories.interfaces import (
     DuplicateAcademicCycleError,
     DuplicateStudentError,
     EventRepository,
+    GroupExpositionRepository,
     GroupPlanRepository,
     InvalidParticipationStudentError,
     ParticipationDecisionNotFoundError,
@@ -112,6 +116,7 @@ class InMemoryDatabase:
         self.events: List[SelectionEventRecord] = []
         self.participations: Dict[Tuple[int, int], StudentParticipation] = {}
         self.group_plans: Dict[int, CourseGroupPlan] = {}
+        self.group_expositions: Dict[int, GroupExposition] = {}
 
         self._counters: Dict[str, int] = {}
         self._meta_lock = threading.Lock()  # protege solo la asignación de ids
@@ -744,3 +749,99 @@ class InMemoryGroupPlanRepository(GroupPlanRepository):
 
     def delete(self, plan_id: int) -> bool:
         return self._db.group_plans.pop(plan_id, None) is not None
+
+
+class InMemoryGroupExpositionRepository(GroupExpositionRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def _member_scores(
+        self, members: List[GroupExpositionMemberEntry]
+    ) -> List[GroupExpositionMemberScore]:
+        scores = []
+        for entry in members:
+            student = self._db.students[entry.student_id]
+            scores.append(
+                GroupExpositionMemberScore(
+                    student_id=entry.student_id,
+                    external_ref=student.external_ref,
+                    display_name=student.display_name,
+                    present=entry.present,
+                    score=entry.score,
+                    position=entry.position,
+                )
+            )
+        # Mismo orden que la versión SQL: con posición primero, luego el resto.
+        return sorted(
+            scores,
+            key=lambda item: (item.position is None, item.position or 0),
+        )
+
+    def create(
+        self,
+        course_id: int,
+        group_name: str,
+        group_score: float,
+        members: List[GroupExpositionMemberEntry],
+        class_session_id: Optional[int] = None,
+        group_plan_id: Optional[int] = None,
+        plan_name: Optional[str] = None,
+        comment: Optional[str] = None,
+        duration_seconds: Optional[int] = None,
+    ) -> GroupExposition:
+        now = _utcnow()
+        exposition = GroupExposition(
+            id=self._db.next_id("group_expositions"),
+            course_id=course_id,
+            group_name=group_name,
+            group_score=group_score,
+            created_at=now,
+            updated_at=now,
+            members=self._member_scores(members),
+            class_session_id=class_session_id,
+            group_plan_id=group_plan_id,
+            plan_name=plan_name,
+            comment=comment,
+            duration_seconds=duration_seconds,
+        )
+        self._db.group_expositions[exposition.id] = exposition
+        return exposition
+
+    def get(self, exposition_id: int) -> Optional[GroupExposition]:
+        return self._db.group_expositions.get(exposition_id)
+
+    def update(
+        self,
+        exposition_id: int,
+        group_score: float,
+        members: List[GroupExpositionMemberEntry],
+        comment: Optional[str] = None,
+        duration_seconds: Optional[int] = None,
+    ) -> Optional[GroupExposition]:
+        exposition = self._db.group_expositions.get(exposition_id)
+        if exposition is None:
+            return None
+        updated = replace(
+            exposition,
+            group_score=group_score,
+            members=self._member_scores(members),
+            comment=comment,
+            duration_seconds=duration_seconds,
+            updated_at=_utcnow(),
+        )
+        self._db.group_expositions[exposition_id] = updated
+        return updated
+
+    def list_by_course(self, course_id: int, limit: int = 200) -> List[GroupExposition]:
+        expositions = [
+            item for item in self._db.group_expositions.values() if item.course_id == course_id
+        ]
+        expositions.sort(key=lambda item: (item.created_at, item.id), reverse=True)
+        return expositions[:limit]
+
+    def detach_plan(self, plan_id: int) -> None:
+        for exposition_id, exposition in list(self._db.group_expositions.items()):
+            if exposition.group_plan_id == plan_id:
+                self._db.group_expositions[exposition_id] = replace(
+                    exposition, group_plan_id=None
+                )

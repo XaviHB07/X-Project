@@ -24,6 +24,7 @@ from src.repositories.sqlalchemy.repository_impl import (
     SqlAlchemyExposureTimeSettingsRepository,
     SqlAlchemyDecisionRunRepository,
     SqlAlchemyEventRepository,
+    SqlAlchemyGroupExpositionRepository,
     SqlAlchemyGroupPlanRepository,
     SqlAlchemyParticipationRepository,
     SqlAlchemyStudentRepository,
@@ -60,6 +61,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.events = SqlAlchemyEventRepository(self._session)
         self.participations = SqlAlchemyParticipationRepository(self._session)
         self.group_plans = SqlAlchemyGroupPlanRepository(self._session)
+        self.group_expositions = SqlAlchemyGroupExpositionRepository(self._session)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:

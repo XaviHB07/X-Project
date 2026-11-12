@@ -30,10 +30,11 @@ from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, 
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from src.domain.entities import StudentGroup
+from src.domain.entities import GroupExpositionMemberEntry, StudentGroup
 from src.api.dependencies import (
     current_user,
     get_fairness_service,
+    get_group_exposition_service,
     get_group_planning_service,
     get_grade_analysis_service,
     get_roster_service,
@@ -61,6 +62,9 @@ from src.api.schemas import (
     FairnessMetricsResponse,
     WeeklyGradesResponse,
     WeeklyParticipationDetailsResponse,
+    GroupExpositionCreateRequest,
+    GroupExpositionResponse,
+    GroupExpositionUpdateRequest,
     GroupPlanGenerateRequest,
     GroupPlanResponse,
     GroupPlanUpdateRequest,
@@ -119,6 +123,11 @@ from src.services.errors import (
     InvalidAttendanceError,
     SessionNotFoundError,
     StudentNotFoundError,
+)
+from src.services.group_exposition_service import (
+    GroupExpositionNotFoundError,
+    GroupExpositionService,
+    InvalidGroupExpositionError,
 )
 from src.services.group_planning_service import (
     GroupPlanNotFoundError,
@@ -1331,6 +1340,136 @@ def weekly_grade_details(
     except GradeAnalysisError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return WeeklyParticipationDetailsResponse(**result)
+
+
+def _member_entries(members) -> List[GroupExpositionMemberEntry]:
+    return [
+        GroupExpositionMemberEntry(
+            student_id=member.student_id,
+            present=member.present,
+            score=member.score,
+            position=member.position,
+        )
+        for member in members
+    ]
+
+
+def _group_exposition_response(exposition) -> GroupExpositionResponse:
+    return GroupExpositionResponse(
+        id=exposition.id,
+        course_id=exposition.course_id,
+        group_name=exposition.group_name,
+        group_score=exposition.group_score,
+        members=[member.__dict__ for member in exposition.members],
+        created_at=exposition.created_at,
+        updated_at=exposition.updated_at,
+        class_session_id=exposition.class_session_id,
+        group_plan_id=exposition.group_plan_id,
+        plan_name=exposition.plan_name,
+        comment=exposition.comment,
+        duration_seconds=exposition.duration_seconds,
+    )
+
+
+@app.post(
+    "/courses/{course_id}/group-expositions",
+    response_model=GroupExpositionResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["exposiciones"],
+    dependencies=[Depends(require_course_access)],
+)
+def record_group_exposition(
+    course_id: int,
+    payload: GroupExpositionCreateRequest,
+    exposition_service: GroupExpositionService = Depends(get_group_exposition_service),
+) -> GroupExpositionResponse:
+    """Registra la nota grupal y las notas individuales del grupo expositor."""
+    try:
+        exposition = exposition_service.record(
+            course_id,
+            group_name=payload.group_name,
+            group_score=payload.group_score,
+            members=_member_entries(payload.members),
+            class_session_id=payload.class_session_id,
+            group_plan_id=payload.group_plan_id,
+            comment=payload.comment,
+            duration_seconds=payload.duration_seconds,
+        )
+    except (CourseNotFoundError, SessionNotFoundError) as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except InvalidGroupExpositionError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _group_exposition_response(exposition)
+
+
+@app.put(
+    "/courses/{course_id}/group-expositions/{exposition_id}",
+    response_model=GroupExpositionResponse,
+    tags=["exposiciones"],
+    dependencies=[Depends(require_course_access)],
+)
+def update_group_exposition(
+    course_id: int,
+    exposition_id: int,
+    payload: GroupExpositionUpdateRequest,
+    exposition_service: GroupExpositionService = Depends(get_group_exposition_service),
+) -> GroupExpositionResponse:
+    """Corrige las notas de una exposición ya registrada."""
+    try:
+        exposition = exposition_service.update(
+            course_id,
+            exposition_id,
+            group_score=payload.group_score,
+            members=_member_entries(payload.members),
+            comment=payload.comment,
+            duration_seconds=payload.duration_seconds,
+        )
+    except (CourseNotFoundError, GroupExpositionNotFoundError) as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except InvalidGroupExpositionError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _group_exposition_response(exposition)
+
+
+@app.get(
+    "/courses/{course_id}/group-expositions",
+    response_model=List[GroupExpositionResponse],
+    tags=["exposiciones"],
+    dependencies=[Depends(require_course_access)],
+)
+def list_group_expositions(
+    course_id: int,
+    limit: int = 200,
+    exposition_service: GroupExpositionService = Depends(get_group_exposition_service),
+) -> List[GroupExpositionResponse]:
+    """Exposiciones calificadas del curso, la más reciente primero."""
+    if not 1 <= limit <= 1000:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "El límite debe estar entre 1 y 1000."
+        )
+    try:
+        expositions = exposition_service.list_for_course(course_id, limit=limit)
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return [_group_exposition_response(exposition) for exposition in expositions]
+
+
+@app.get(
+    "/courses/{course_id}/group-expositions/{exposition_id}",
+    response_model=GroupExpositionResponse,
+    tags=["exposiciones"],
+    dependencies=[Depends(require_course_access)],
+)
+def get_group_exposition(
+    course_id: int,
+    exposition_id: int,
+    exposition_service: GroupExpositionService = Depends(get_group_exposition_service),
+) -> GroupExpositionResponse:
+    try:
+        exposition = exposition_service.get(course_id, exposition_id)
+    except (CourseNotFoundError, GroupExpositionNotFoundError) as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return _group_exposition_response(exposition)
 
 
 def _group_plan_response(plan) -> GroupPlanResponse:

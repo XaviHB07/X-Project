@@ -28,6 +28,8 @@ from src.domain.entities import (
     CourseGroupPlan,
     DecisionRun,
     ExposureTimeSettings,
+    GroupExposition,
+    GroupExpositionMemberEntry,
     Student,
     StudentAccount,
     StudentGroup,
@@ -448,6 +450,51 @@ class GroupPlanRepository(ABC):
     def delete(self, plan_id: int) -> bool: ...
 
 
+class GroupExpositionRepository(ABC):
+    """Notas de exposiciones grupales (nota grupal + nota por integrante)."""
+
+    @abstractmethod
+    def create(
+        self,
+        course_id: int,
+        group_name: str,
+        group_score: float,
+        members: List[GroupExpositionMemberEntry],
+        class_session_id: Optional[int] = None,
+        group_plan_id: Optional[int] = None,
+        plan_name: Optional[str] = None,
+        comment: Optional[str] = None,
+        duration_seconds: Optional[int] = None,
+    ) -> GroupExposition: ...
+
+    @abstractmethod
+    def get(self, exposition_id: int) -> Optional[GroupExposition]: ...
+
+    @abstractmethod
+    def update(
+        self,
+        exposition_id: int,
+        group_score: float,
+        members: List[GroupExpositionMemberEntry],
+        comment: Optional[str] = None,
+        duration_seconds: Optional[int] = None,
+    ) -> Optional[GroupExposition]:
+        """Reemplaza la nota grupal y las notas individuales. Devuelve
+        `None` si la exposición no existe."""
+        ...
+
+    @abstractmethod
+    def list_by_course(self, course_id: int, limit: int = 200) -> List[GroupExposition]:
+        """Exposiciones calificadas del curso, la más reciente primero."""
+        ...
+
+    @abstractmethod
+    def detach_plan(self, plan_id: int) -> None:
+        """Quita la referencia a una propuesta que se va a eliminar (las
+        notas se conservan con el nombre copiado de la propuesta)."""
+        ...
+
+
 class UnitOfWork(ABC):
     """Agrupa todos los repositorios de una transacción y garantiza que
     se confirman o se descartan juntos (patrón Unit of Work).
@@ -478,6 +525,7 @@ class UnitOfWork(ABC):
     events: EventRepository
     participations: ParticipationRepository
     group_plans: GroupPlanRepository
+    group_expositions: GroupExpositionRepository
     student_accounts: StudentAccountRepository
 
     @abstractmethod

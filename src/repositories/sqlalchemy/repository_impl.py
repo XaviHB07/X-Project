@@ -25,6 +25,9 @@ from src.domain.entities import (
     CourseGroupPlan,
     DecisionRun,
     ExposureTimeSettings,
+    GroupExposition,
+    GroupExpositionMemberEntry,
+    GroupExpositionMemberScore,
     Student,
     StudentAccount,
     StudentGroup,
@@ -47,6 +50,7 @@ from src.repositories.interfaces import (
     DuplicateAcademicCycleError,
     DuplicateStudentError,
     EventRepository,
+    GroupExpositionRepository,
     GroupPlanRepository,
     InvalidParticipationStudentError,
     ParticipationDecisionNotFoundError,
@@ -63,6 +67,8 @@ from src.repositories.sqlalchemy.models import (
     CourseGroupPlanORM,
     ExposureTimeSettingsORM,
     DecisionRunORM,
+    GroupExpositionMemberScoreORM,
+    GroupExpositionORM,
     SelectionEventORM,
     SessionAttendanceORM,
     StudentORM,
@@ -1022,3 +1028,132 @@ class SqlAlchemyGroupPlanRepository(GroupPlanRepository):
             return False
         self._session.delete(row)
         return True
+
+
+class SqlAlchemyGroupExpositionRepository(GroupExpositionRepository):
+    def __init__(self, session: Session):
+        self._session = session
+
+    def _to_exposition(self, row: GroupExpositionORM) -> GroupExposition:
+        member_rows = self._session.execute(
+            select(GroupExpositionMemberScoreORM, StudentORM)
+            .join(StudentORM, StudentORM.id == GroupExpositionMemberScoreORM.student_id)
+            .where(GroupExpositionMemberScoreORM.exposition_id == row.id)
+            .order_by(
+                # Primero quienes tienen orden de exposición; luego el resto.
+                GroupExpositionMemberScoreORM.position.is_(None),
+                GroupExpositionMemberScoreORM.position,
+                GroupExpositionMemberScoreORM.id,
+            )
+        ).all()
+        return GroupExposition(
+            id=row.id,
+            course_id=row.course_id,
+            group_name=row.group_name,
+            group_score=row.group_score,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            members=[
+                GroupExpositionMemberScore(
+                    student_id=member.student_id,
+                    external_ref=student.external_ref,
+                    display_name=student.display_name,
+                    present=member.present,
+                    score=member.score,
+                    position=member.position,
+                )
+                for member, student in member_rows
+            ],
+            class_session_id=row.class_session_id,
+            group_plan_id=row.group_plan_id,
+            plan_name=row.plan_name,
+            comment=row.comment,
+            duration_seconds=row.duration_seconds,
+        )
+
+    @staticmethod
+    def _member_row(entry: GroupExpositionMemberEntry) -> GroupExpositionMemberScoreORM:
+        return GroupExpositionMemberScoreORM(
+            student_id=entry.student_id,
+            score=entry.score,
+            present=entry.present,
+            position=entry.position,
+        )
+
+    def create(
+        self,
+        course_id: int,
+        group_name: str,
+        group_score: float,
+        members: List[GroupExpositionMemberEntry],
+        class_session_id: Optional[int] = None,
+        group_plan_id: Optional[int] = None,
+        plan_name: Optional[str] = None,
+        comment: Optional[str] = None,
+        duration_seconds: Optional[int] = None,
+    ) -> GroupExposition:
+        row = GroupExpositionORM(
+            course_id=course_id,
+            class_session_id=class_session_id,
+            group_plan_id=group_plan_id,
+            plan_name=plan_name,
+            group_name=group_name,
+            group_score=group_score,
+            comment=comment,
+            duration_seconds=duration_seconds,
+            member_scores=[self._member_row(entry) for entry in members],
+        )
+        self._session.add(row)
+        self._session.flush()
+        return self._to_exposition(row)
+
+    def get(self, exposition_id: int) -> Optional[GroupExposition]:
+        row = self._session.get(GroupExpositionORM, exposition_id)
+        return self._to_exposition(row) if row is not None else None
+
+    def update(
+        self,
+        exposition_id: int,
+        group_score: float,
+        members: List[GroupExpositionMemberEntry],
+        comment: Optional[str] = None,
+        duration_seconds: Optional[int] = None,
+    ) -> Optional[GroupExposition]:
+        row = self._session.get(GroupExpositionORM, exposition_id)
+        if row is None:
+            return None
+        row.group_score = group_score
+        row.comment = comment
+        row.duration_seconds = duration_seconds
+        row.updated_at = datetime.now(timezone.utc)
+        existing = {member.student_id: member for member in row.member_scores}
+        submitted_ids = {entry.student_id for entry in members}
+        for student_id, member in existing.items():
+            if student_id not in submitted_ids:
+                row.member_scores.remove(member)  # delete-orphan lo borra
+        for entry in members:
+            member = existing.get(entry.student_id)
+            if member is None:
+                row.member_scores.append(self._member_row(entry))
+            else:
+                member.score = entry.score
+                member.present = entry.present
+                member.position = entry.position
+        self._session.flush()
+        return self._to_exposition(row)
+
+    def list_by_course(self, course_id: int, limit: int = 200) -> List[GroupExposition]:
+        rows = self._session.execute(
+            select(GroupExpositionORM)
+            .where(GroupExpositionORM.course_id == course_id)
+            .order_by(GroupExpositionORM.created_at.desc(), GroupExpositionORM.id.desc())
+            .limit(limit)
+        ).scalars().all()
+        return [self._to_exposition(row) for row in rows]
+
+    def detach_plan(self, plan_id: int) -> None:
+        self._session.execute(
+            update(GroupExpositionORM)
+            .where(GroupExpositionORM.group_plan_id == plan_id)
+            .values(group_plan_id=None)
+        )

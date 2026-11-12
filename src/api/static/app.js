@@ -2858,7 +2858,7 @@ elements.startRound.addEventListener("click", () => {
 });
 
 document.addEventListener("input", (event) => {
-  const input = event.target.closest("[data-score-id]");
+  const input = event.target.closest("[data-score-id], [data-expo-score]");
   if (!input) return;
   const normalized = input.value.replace(",", ".");
   const validFormat = /^\d*(?:\.\d*)?$/.test(normalized);
@@ -2979,6 +2979,8 @@ function requestStageExit() {
   if (flow?.pick && !window.confirm("El estudiante elegido aún no tiene su participación guardada. ¿Salir sin guardarla?")) return;
   if (flow?.kind === "group" && expoTimerInProgress()
     && !window.confirm("El cronómetro de la exposición sigue en marcha. ¿Salir?")) return;
+  if (flow?.kind === "group" && expoGradesUnsaved()
+    && !window.confirm("Las notas de este grupo tienen cambios sin guardar. ¿Salir sin guardarlas?")) return;
   closeSelectionStage();
 }
 
@@ -3016,13 +3018,18 @@ function selectedExpoPlan() {
 function expoGroupCandidates(plan = selectedExpoPlan()) {
   if (!plan) return [];
   const names = new Map(state.students.map((student) => [Number(student.id), student.display_name]));
-  return plan.groups.map((group, index) => ({
-    id: index + 1,
-    display_name: group.name,
-    members: group.student_ids.map(Number)
-      .filter((id) => names.has(id) && state.roundEligibleStudentIds.has(id))
-      .map((id) => ({ id, name: names.get(id) })),
-  })).filter((candidate) => candidate.members.length);
+  return plan.groups.map((group, index) => {
+    const roster = group.student_ids.map(Number).filter((id) => names.has(id));
+    const toMember = (id) => ({ id, name: names.get(id) });
+    return {
+      id: index + 1,
+      display_name: group.name,
+      members: roster.filter((id) => state.roundEligibleStudentIds.has(id)).map(toMember),
+      // Integrantes del grupo no marcados para esta ronda: no exponen ni entran
+      // al sorteo de orden, pero sí aparecen en la tabla de notas (como ausentes).
+      absentMembers: roster.filter((id) => !state.roundEligibleStudentIds.has(id)).map(toMember),
+    };
+  }).filter((candidate) => candidate.members.length);
 }
 
 function groupStageCandidates() {
@@ -3121,6 +3128,7 @@ function renderExpoOrder() {
   $("#expo-order").innerHTML = flow.order.map((member, index) =>
     `<li><span>${flow.shuffleOrder ? index + 1 : "•"}</span><strong>${escapeHtml(member.name)}</strong></li>`,
   ).join("");
+  syncExpoGradeOrder();
 }
 
 function showGroupExposition(candidate) {
@@ -3128,6 +3136,7 @@ function showGroupExposition(candidate) {
   if (!flow || !candidate) return;
   flow.excluded.add(Number(candidate.id));
   flow.order = flow.shuffleOrder ? secureShuffle(candidate.members) : [...candidate.members];
+  setupExpoGrades(candidate);
   renderExpoOrder();
   setupExpoTimer(flow.minMs, flow.maxMs);
   const remaining = groupStageCandidates().length;
@@ -3150,12 +3159,249 @@ $("#expo-reshuffle").addEventListener("click", () => {
   } while (sameOrder(next));
   flow.order = next;
   renderExpoOrder();
+  if (flow.grading?.expositionId) markExpoGradesDirty();
 });
 
 $("#expo-next-group").addEventListener("click", async () => {
   if (!state.stageFlow || state.stageFlow.kind !== "group") return;
   if (expoTimerInProgress() && !window.confirm("El cronómetro todavía no terminó. ¿Elegir otro grupo de todos modos?")) return;
+  if (expoGradesUnsaved() && !window.confirm("Las notas de este grupo tienen cambios sin guardar. ¿Elegir otro grupo sin guardarlas?")) return;
   await runGroupSpin();
+});
+
+/* ==========================================================================
+   Notas de la exposición grupal.
+   Debajo del cronómetro el docente registra una nota grupal y una nota
+   individual por integrante (misma escala 0 a 5 que la participación
+   individual). Se guardan en la base de datos con
+   POST /courses/{id}/group-expositions; si se corrigen después, el mismo
+   registro se actualiza con PUT. Las notas se escriben ocultas, igual que en
+   la selección individual, porque la pantalla suele estar proyectada.
+   ========================================================================== */
+function parseExpoScore(rawValue) {
+  const raw = String(rawValue).trim().replace(",", ".");
+  if (raw === "" || !/^\d*(?:\.\d*)?$/.test(raw) || raw === ".") return null;
+  const score = Number(raw);
+  return Number.isFinite(score) && score >= 0 && score <= 5 ? score : null;
+}
+
+function expoGradesUnsaved() {
+  return Boolean(state.stageFlow?.grading?.dirty);
+}
+
+function expoDurationSeconds() {
+  const timer = state.expoTimer;
+  if (!timer || timer.phase === "idle") return null;
+  return Math.round(Math.min(expoElapsed(timer), timer.maxMs) / 1000);
+}
+
+function renderExpoGradesStatus(message = null, tone = "") {
+  const grading = state.stageFlow?.grading;
+  const status = $("#expo-grades-status");
+  const save = $("#expo-grades-save");
+  if (!grading) return;
+  if (!save.hasAttribute("aria-busy")) {
+    save.textContent = grading.expositionId ? "Actualizar notas" : "Guardar notas";
+  }
+  let text = message;
+  let className = tone;
+  if (text === null) {
+    if (grading.dirty) {
+      text = grading.expositionId ? "Hay cambios sin guardar." : "Notas sin guardar.";
+      className = "is-pending";
+    } else if (grading.expositionId) {
+      text = `Notas guardadas · ${grading.savedAt}`;
+      className = "is-saved";
+    } else {
+      text = "Los integrantes presentes necesitan nota individual.";
+    }
+  }
+  status.textContent = text;
+  status.className = `expo-grades-status ${className}`.trim();
+}
+
+function markExpoGradesDirty() {
+  const grading = state.stageFlow?.grading;
+  if (!grading) return;
+  grading.dirty = true;
+  renderExpoGradesStatus();
+}
+
+function setupExpoGrades(candidate) {
+  const flow = state.stageFlow;
+  flow.grading = {
+    groupName: candidate.display_name,
+    expositionId: null,
+    savedAt: "",
+    durationSeconds: null,
+    dirty: false,
+    busy: false,
+  };
+  const form = $("#expo-grades-form");
+  form.reset();
+  $("#expo-grades-label").textContent = `NOTAS · ${candidate.display_name}`.toLocaleUpperCase();
+  // Con sesión activa se respeta la asistencia marcada; sin sesión, quien fue
+  // marcado para la ronda se asume presente.
+  const isPresent = (id) => (state.session ? state.present.has(Number(id)) : true);
+  const row = (member, listed) => {
+    const id = Number(member.id);
+    const present = listed && isPresent(id);
+    const name = escapeHtml(member.name);
+    return `<tr data-grade-row="${id}" data-grade-listed="${listed}" class="${present ? "" : "is-absent"}">
+      <td class="expo-grade-position" data-grade-position></td>
+      <td class="expo-grade-name"><strong>${name}</strong>${listed ? "" : "<small>No marcado para esta ronda</small>"}</td>
+      <td class="expo-grade-present"><input type="checkbox" data-grade-present="${id}" ${present ? "checked" : ""} aria-label="${name} estuvo presente" /></td>
+      <td class="expo-grade-score"><input class="field participation-score" type="password" inputmode="decimal"
+        autocomplete="new-password" maxlength="6" data-expo-score data-grade-score="${id}" aria-label="Nota individual de ${name}, de 0 a 5" /></td>
+    </tr>`;
+  };
+  $("#expo-member-grades").innerHTML =
+    flow.order.map((member) => row(member, true)).join("")
+    + (candidate.absentMembers || []).map((member) => row(member, false)).join("");
+  form.querySelectorAll("[data-expo-score]").forEach((input) => { input.dataset.lastValid = ""; });
+  applyExpoGradesVisibility();
+  renderExpoGradesStatus();
+}
+
+// Reordena las filas ya escritas (sin perder lo tecleado) cuando se vuelve a
+// sortear el orden de exposición.
+function syncExpoGradeOrder() {
+  const flow = state.stageFlow;
+  const body = $("#expo-member-grades");
+  if (!flow || !body) return;
+  const rows = new Map([...body.querySelectorAll("[data-grade-row]")]
+    .map((item) => [Number(item.dataset.gradeRow), item]));
+  const unlisted = [...rows.values()].filter((item) => item.dataset.gradeListed !== "true");
+  flow.order.forEach((member, index) => {
+    const item = rows.get(Number(member.id));
+    if (!item) return;
+    item.querySelector("[data-grade-position]").textContent = flow.shuffleOrder ? String(index + 1) : "•";
+    body.appendChild(item);
+  });
+  unlisted.forEach((item) => {
+    item.querySelector("[data-grade-position]").textContent = "—";
+    body.appendChild(item);
+  });
+}
+
+function applyExpoGradesVisibility() {
+  const visible = $("#expo-grades-reveal").checked;
+  $("#expo-grades-form").querySelectorAll("[data-expo-score]").forEach((input) => {
+    input.type = visible ? "text" : "password";
+  });
+}
+
+$("#expo-grades-reveal").addEventListener("change", applyExpoGradesVisibility);
+
+$("#expo-grades-form").addEventListener("input", (event) => {
+  if (event.target.id === "expo-grades-reveal") return;
+  markExpoGradesDirty();
+});
+
+$("#expo-member-grades").addEventListener("change", (event) => {
+  const checkbox = event.target.closest("[data-grade-present]");
+  if (!checkbox) return;
+  checkbox.closest("tr").classList.toggle("is-absent", !checkbox.checked);
+});
+
+$("#expo-copy-group-score").addEventListener("click", () => {
+  const groupInput = $("#expo-group-score");
+  if (parseExpoScore(groupInput.value) === null) {
+    notify("Escribe primero la nota grupal (0 a 5).", true);
+    groupInput.focus();
+    return;
+  }
+  document.querySelectorAll("#expo-member-grades [data-grade-row]").forEach((item) => {
+    if (!item.querySelector("[data-grade-present]").checked) return;
+    const input = item.querySelector("[data-grade-score]");
+    input.value = groupInput.value.trim();
+    input.dataset.lastValid = input.value;
+  });
+  markExpoGradesDirty();
+});
+
+$("#expo-grades-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const flow = state.stageFlow;
+  const grading = flow?.grading;
+  if (!state.course || flow?.kind !== "group" || !grading || grading.busy) return;
+  const groupInput = $("#expo-group-score");
+  const groupScore = parseExpoScore(groupInput.value);
+  if (groupScore === null) {
+    notify("La nota grupal debe ser un número entre 0 y 5.", true);
+    groupInput.focus();
+    return;
+  }
+  const members = [];
+  let position = 0;
+  for (const item of document.querySelectorAll("#expo-member-grades [data-grade-row]")) {
+    const input = item.querySelector("[data-grade-score]");
+    const present = item.querySelector("[data-grade-present]").checked;
+    const name = item.querySelector(".expo-grade-name strong").textContent;
+    const empty = input.value.trim() === "";
+    const score = empty ? null : parseExpoScore(input.value);
+    if (!empty && score === null) {
+      notify(`La nota de ${name} debe ser un número entre 0 y 5.`, true);
+      input.focus();
+      return;
+    }
+    if (present && score === null) {
+      notify(`Falta la nota individual de ${name}. Si no expuso, desmarca «Presente».`, true);
+      input.focus();
+      return;
+    }
+    const listed = item.dataset.gradeListed === "true";
+    if (listed) position += 1;
+    members.push({
+      student_id: Number(item.dataset.gradeRow),
+      present,
+      score,
+      // El orden solo es un dato real cuando se sorteó.
+      position: listed && flow.shuffleOrder ? position : null,
+    });
+  }
+  const duration = expoDurationSeconds();
+  if (duration !== null) grading.durationSeconds = duration;
+  const comment = $("#expo-grades-comment").value.trim() || null;
+  const button = $("#expo-grades-save");
+  const basePath = `/courses/${state.course.id}/group-expositions`;
+  grading.busy = true;
+  setBusy(button, true, "Guardando...");
+  try {
+    const saved = grading.expositionId
+      ? await api(`${basePath}/${grading.expositionId}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            group_score: groupScore,
+            members,
+            comment,
+            duration_seconds: grading.durationSeconds,
+          }),
+        })
+      : await api(basePath, {
+          method: "POST",
+          body: JSON.stringify({
+            group_name: grading.groupName,
+            group_score: groupScore,
+            members,
+            group_plan_id: Number.isInteger(flow.plan?.id) ? flow.plan.id : null,
+            class_session_id: state.session?.id ?? null,
+            comment,
+            duration_seconds: grading.durationSeconds,
+          }),
+        });
+    const updating = Boolean(grading.expositionId);
+    grading.expositionId = saved.id;
+    grading.dirty = false;
+    grading.savedAt = new Date().toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
+    notify(updating ? "Notas de la exposición actualizadas." : "Notas de la exposición guardadas.");
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    grading.busy = false;
+    setBusy(button, false);
+    renderExpoGradesStatus();
+  }
 });
 
 function formatExpoClock(ms) {
