@@ -38,7 +38,8 @@ def main() -> None:
     print("Tablas creadas (o ya existentes): roles, users, auth_sessions, teacher_courses, "
           "academic_cycles, courses, students, student_state, "
           "class_sessions, syllabus_entries, session_attendance, decision_runs, selection_events, "
-          "student_participations.")
+          "student_participations, exposure_time_settings, course_group_plans, "
+          "group_expositions, group_exposition_member_scores.")
 
 
 if __name__ == "__main__":
