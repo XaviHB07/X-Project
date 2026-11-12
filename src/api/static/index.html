@@ -211,6 +211,7 @@
             <button class="workspace-tab active" id="attendance-tab" type="button" aria-selected="true">Sesión y asistencia</button>
             <button class="workspace-tab" id="participations-tab" type="button" aria-selected="false">Historial de participación</button>
             <button class="workspace-tab" id="groups-tab" type="button" aria-selected="false">Trabajo en grupos</button>
+            <button class="workspace-tab" id="materials-tab" type="button" aria-selected="false">Material académico</button>
           </nav>
 
           <div class="workspace-grid" id="attendance-view">
@@ -463,6 +464,41 @@
               <p class="form-note" id="group-validation-message" aria-live="polite"></p>
               <button class="button button-run" id="save-group-plan-button" type="button" hidden disabled>Guardar cambios</button>
             </div>
+          </section>
+
+          <section class="course-materials-panel" id="materials-view" hidden aria-labelledby="materials-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">FUENTE ACADÉMICA</p>
+                <h2 id="materials-title">Material del curso</h2>
+                <p class="form-note">Carga archivos .pptx, .docx, .xlsx o .pdf de hasta 10 MB. El texto se extrae para usarlo como fuente en funciones de IA.</p>
+              </div>
+              <button class="button button-quiet" id="refresh-materials" type="button">Actualizar</button>
+            </div>
+            <form id="material-upload-form" class="material-upload-form">
+              <div class="form-field">
+                <label class="form-label" for="material-file">Documento</label>
+                <input class="field" id="material-file" name="file" type="file" accept=".pptx,.docx,.xlsx,.pdf" required />
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="material-title">Nombre <span class="optional">OPCIONAL</span></label>
+                <input class="field" id="material-title" name="title" type="text" maxlength="255" placeholder="Se usa el nombre del archivo si se deja vacío" />
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="material-topic">Tema <span class="optional">OPCIONAL</span></label>
+                <input class="field" id="material-topic" name="topic" type="text" maxlength="255" placeholder="Ej. Derivadas" />
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="material-session">Sesión <span class="optional">OPCIONAL</span></label>
+                <select class="field" id="material-session" name="class_session_id">
+                  <option value="">Asociar solo al curso</option>
+                </select>
+              </div>
+              <button class="button button-add" id="upload-material-button" type="submit">Guardar material</button>
+            </form>
+            <p class="form-note material-status" id="material-status" role="status" aria-live="polite"></p>
+            <div class="course-material-list" id="course-material-list"></div>
+            <p class="history-none" id="course-materials-empty">Todavía no hay materiales cargados.</p>
           </section>
 
         </div>

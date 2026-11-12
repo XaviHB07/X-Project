@@ -33,6 +33,32 @@ class Course:
 
 
 @dataclass(frozen=True)
+class CourseMaterial:
+    """Material académico asociado a un curso y, opcionalmente, a una sesión."""
+
+    id: int
+    course_id: int
+    file_name: str
+    title: str
+    content_type: str
+    size_bytes: int
+    created_at: datetime
+    updated_at: datetime
+    class_session_id: Optional[int] = None
+    topic: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class CourseMaterialContent:
+    """Contenido persistido de un material, incluido el texto extraído."""
+
+    file_name: str
+    content_type: str
+    file_data: bytes
+    extracted_text: str
+
+
+@dataclass(frozen=True)
 class ExposureTimeSettings:
     """Límites de duración de una exposición dentro de un curso."""
 

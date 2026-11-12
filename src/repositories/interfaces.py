@@ -26,6 +26,8 @@ from src.domain.entities import (
     ClassSession,
     Course,
     CourseGroupPlan,
+    CourseMaterial,
+    CourseMaterialContent,
     DecisionRun,
     ExposureTimeSettings,
     GroupExposition,
@@ -92,6 +94,50 @@ class ExposureTimeSettingsRepository(ABC):
     def update(
         self, course_id: int, min_minutes: int, max_minutes: int
     ) -> ExposureTimeSettings: ...
+
+
+class CourseMaterialRepository(ABC):
+    """Persistencia de documentos académicos y su texto extraído."""
+
+    @abstractmethod
+    def create(
+        self,
+        course_id: int,
+        class_session_id: Optional[int],
+        file_name: str,
+        title: str,
+        topic: Optional[str],
+        content_type: str,
+        size_bytes: int,
+        file_data: bytes,
+        extracted_text: str,
+    ) -> CourseMaterial: ...
+
+    @abstractmethod
+    def get(self, course_id: int, material_id: int) -> Optional[CourseMaterial]: ...
+
+    @abstractmethod
+    def get_content(
+        self, course_id: int, material_id: int
+    ) -> Optional[CourseMaterialContent]: ...
+
+    @abstractmethod
+    def list_by_course(self, course_id: int) -> List[CourseMaterial]: ...
+
+    @abstractmethod
+    def replace_file(
+        self,
+        course_id: int,
+        material_id: int,
+        file_name: str,
+        content_type: str,
+        size_bytes: int,
+        file_data: bytes,
+        extracted_text: str,
+    ) -> Optional[CourseMaterial]: ...
+
+    @abstractmethod
+    def delete(self, course_id: int, material_id: int) -> bool: ...
 
 
 class AcademicCycleRepository(ABC):
@@ -528,6 +574,7 @@ class UnitOfWork(ABC):
     """
 
     courses: CourseRepository
+    course_materials: CourseMaterialRepository
     exposure_time_settings: ExposureTimeSettingsRepository
     cycles: AcademicCycleRepository
     students: StudentRepository

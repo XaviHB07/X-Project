@@ -30,6 +30,19 @@ class CourseResponse(BaseModel):
     roster_imported: bool = False
 
 
+class CourseMaterialResponse(BaseModel):
+    id: int
+    course_id: int
+    class_session_id: Optional[int] = None
+    file_name: str
+    title: str
+    topic: Optional[str] = None
+    content_type: str
+    size_bytes: int
+    created_at: datetime
+    updated_at: datetime
+
+
 class ExposureTimeSettingsRequest(BaseModel):
     min_minutes: int = Field(..., ge=1, le=240)
     max_minutes: int = Field(..., ge=1, le=240)

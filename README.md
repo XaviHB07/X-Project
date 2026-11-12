@@ -320,6 +320,12 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |GET|`/cycles`|Listar ciclos académicos|
 |POST|`/courses`|Crear un curso (opcionalmente asociado a `cycle_id`)|
 |GET|`/courses`|Listar cursos (HU-S1)|
+|GET|`/courses/{course_id}/materials`|Listar materiales académicos del curso|
+|POST|`/courses/{course_id}/materials`|Cargar PDF, PPTX, DOCX o XLSX y asociarlo al curso, tema y opcionalmente a una sesión|
+|GET|`/courses/{course_id}/materials/{material_id}/content`|Descargar el archivo original|
+|GET|`/courses/{course_id}/materials/{material_id}/text`|Consultar el texto extraído, disponible como fuente para funciones de IA|
+|PUT|`/courses/{course_id}/materials/{material_id}`|Reemplazar el archivo y actualizar el texto extraído|
+|DELETE|`/courses/{course_id}/materials/{material_id}`|Eliminar el material y su contenido|
 |GET|`/courses/{course_id}/group-plans`|Listar propuestas de grupos guardadas|
 |GET|`/courses/{course_id}/weekly-grades?cycle_id={cycle_id}`|Matriz de promedios semanales individuales y grupales para las 15 semanas|
 |GET|`/courses/{course_id}/weekly-grades/details`|Detalle de participaciones individuales por estudiante y semana|
@@ -357,6 +363,25 @@ curl -c cookies.txt -X POST http://127.0.0.1:8000/auth/login \
   -d '{"username":"admin","password":"<CONTRASENA>"}'
 curl -b cookies.txt http://127.0.0.1:8000/courses
 ```
+
+### Material académico (HU-M1)
+
+La sección **Material académico** del curso permite cargar, consultar,
+descargar, reemplazar y eliminar documentos `.pptx`, `.docx`, `.xlsx` y
+`.pdf` de hasta 10 MB. El material queda asociado al curso y puede llevar
+un tema y una sesión opcionales. Al cargar o reemplazar un archivo, el
+sistema extrae su texto para dejarlo disponible en el endpoint `/text`;
+la generación de preguntas con IA corresponde a HU-M4 y no forma parte de
+HU-M1.
+
+Los archivos originales y su texto extraído se guardan en una tabla nueva
+de PostgreSQL, no en el disco efímero del servicio web de Render. Esto
+mantiene los documentos entre reinicios y redeploys sin agregar otro
+proveedor de almacenamiento. Por ello, los documentos cuentan dentro del
+espacio disponible de la base de datos. No se admiten documentos cifrados,
+archivos dañados ni documentos Office con contenido descomprimido mayor a
+50 MB; los PDF están limitados a 500 páginas y el texto extraído a 500 000
+caracteres.
 
 #### Sprint 1: lista por Excel, sesiones y asistencia
 

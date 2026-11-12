@@ -26,9 +26,10 @@ from pathlib import Path
 import secrets
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
+from urllib.parse import quote
 
 from src.domain.entities import GroupExpositionMemberEntry, StudentGroup
 from src.api.dependencies import (
@@ -37,6 +38,7 @@ from src.api.dependencies import (
     get_group_exposition_service,
     get_group_planning_service,
     get_grade_analysis_service,
+    get_material_service,
     get_roster_service,
     get_selection_service,
     get_session_service,
@@ -55,6 +57,7 @@ from src.api.schemas import (
     AttendanceUpdateRequest,
     AvailableMethodsResponse,
     CourseCreateRequest,
+    CourseMaterialResponse,
     CourseResponse,
     ExposureTimeSettingsRequest,
     ExposureTimeSettingsResponse,
@@ -136,6 +139,12 @@ from src.services.group_planning_service import (
     InvalidGroupPlanError,
 )
 from src.services.grade_analysis_service import GradeAnalysisError, GradeAnalysisService
+from src.services.material_service import (
+    MAX_MATERIAL_FILE_BYTES,
+    CourseMaterialNotFoundError,
+    CourseMaterialService,
+    MaterialFormatError,
+)
 from src.services.roster_import import MAX_FILE_BYTES, RosterFormatError
 from src.services.roster_service import RosterAlreadyImportedError
 from src.services.session_service import SessionDetail
@@ -213,14 +222,15 @@ async def authenticate_requests(request: Request, call_next):
                 status_code=status.HTTP_403_FORBIDDEN,
             )
     response = await call_next(request)
-    if (
+    if request.method != "GET" and (
         request.url.path.startswith("/auth/")
         or request.url.path.startswith("/admin/teachers")
         or request.url.path.startswith("/admin/students")
         or request.url.path.endswith("/students/import")
         or request.url.path.endswith("/students")
         or request.url.path.endswith("/reset-password")
-    ) and request.method != "GET":
+        or "/materials" in request.url.path
+    ):
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -716,6 +726,172 @@ def get_course(course_id: int, uow: UnitOfWork = Depends(new_unit_of_work)) -> C
     if course is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Curso {course_id} no encontrado.")
     return _course_response(course)
+
+
+# --------------------------------------------------------------------------
+# Material académico (HU-M1)
+# --------------------------------------------------------------------------
+
+
+def _course_material_response(material) -> CourseMaterialResponse:
+    return CourseMaterialResponse(
+        id=material.id,
+        course_id=material.course_id,
+        class_session_id=material.class_session_id,
+        file_name=material.file_name,
+        title=material.title,
+        topic=material.topic,
+        content_type=material.content_type,
+        size_bytes=material.size_bytes,
+        created_at=material.created_at,
+        updated_at=material.updated_at,
+    )
+
+
+@app.get(
+    "/courses/{course_id}/materials",
+    response_model=List[CourseMaterialResponse],
+    tags=["material académico"],
+    dependencies=[Depends(require_course_access)],
+)
+def list_course_materials(
+    course_id: int,
+    material_service: CourseMaterialService = Depends(get_material_service),
+) -> List[CourseMaterialResponse]:
+    try:
+        return [
+            _course_material_response(material)
+            for material in material_service.list_for_course(course_id)
+        ]
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@app.post(
+    "/courses/{course_id}/materials",
+    response_model=CourseMaterialResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["material académico"],
+    dependencies=[Depends(require_course_access)],
+)
+def upload_course_material(
+    course_id: int,
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None, max_length=255),
+    topic: Optional[str] = Form(None, max_length=255),
+    class_session_id: Optional[int] = Form(None, gt=0),
+    material_service: CourseMaterialService = Depends(get_material_service),
+) -> CourseMaterialResponse:
+    file_data = file.file.read(MAX_MATERIAL_FILE_BYTES + 1)
+    try:
+        material = material_service.upload(
+            course_id=course_id,
+            file_name=file.filename or "",
+            file_data=file_data,
+            title=title,
+            topic=topic,
+            class_session_id=class_session_id,
+        )
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except SessionNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except MaterialFormatError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _course_material_response(material)
+
+
+@app.get(
+    "/courses/{course_id}/materials/{material_id}/content",
+    tags=["material académico"],
+    dependencies=[Depends(require_course_access)],
+)
+def download_course_material(
+    course_id: int,
+    material_id: int,
+    material_service: CourseMaterialService = Depends(get_material_service),
+) -> Response:
+    try:
+        content = material_service.get_content(course_id, material_id)
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except CourseMaterialNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    response = Response(
+        content=content.file_data,
+        media_type=content.content_type,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(content.file_name)}",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        },
+    )
+    return response
+
+
+@app.get(
+    "/courses/{course_id}/materials/{material_id}/text",
+    response_class=PlainTextResponse,
+    tags=["material académico"],
+    dependencies=[Depends(require_course_access)],
+)
+def read_course_material_text(
+    course_id: int,
+    material_id: int,
+    material_service: CourseMaterialService = Depends(get_material_service),
+) -> PlainTextResponse:
+    try:
+        content = material_service.get_content(course_id, material_id)
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except CourseMaterialNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return PlainTextResponse(content.extracted_text, headers={"Cache-Control": "no-store"})
+
+
+@app.put(
+    "/courses/{course_id}/materials/{material_id}",
+    response_model=CourseMaterialResponse,
+    tags=["material académico"],
+    dependencies=[Depends(require_course_access)],
+)
+def replace_course_material(
+    course_id: int,
+    material_id: int,
+    file: UploadFile = File(...),
+    material_service: CourseMaterialService = Depends(get_material_service),
+) -> CourseMaterialResponse:
+    file_data = file.file.read(MAX_MATERIAL_FILE_BYTES + 1)
+    try:
+        material = material_service.replace_file(
+            course_id, material_id, file.filename or "", file_data
+        )
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except CourseMaterialNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except MaterialFormatError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _course_material_response(material)
+
+
+@app.delete(
+    "/courses/{course_id}/materials/{material_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["material académico"],
+    dependencies=[Depends(require_course_access)],
+)
+def delete_course_material(
+    course_id: int,
+    material_id: int,
+    material_service: CourseMaterialService = Depends(get_material_service),
+) -> None:
+    try:
+        material_service.delete(course_id, material_id)
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except CourseMaterialNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
 
 # --------------------------------------------------------------------------
