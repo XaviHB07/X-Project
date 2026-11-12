@@ -48,17 +48,32 @@ class ExposureTimeSettingsResponse(BaseModel):
     updated_at: datetime
 
 
+def _clean_cycle_name(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return value
+    value = value.strip()
+    if not value:
+        raise ValueError("El nombre del ciclo no puede estar vacío.")
+    return value
+
+
 class AcademicCycleCreateRequest(BaseModel):
+    """HU-C3: datos del ciclo académico que registra el docente."""
+
     name: str = Field(..., min_length=1, max_length=255, examples=["2026-II"])
     starts_on: Optional[date] = None
+    ends_on: Optional[date] = None
 
     @field_validator("name")
     @classmethod
     def _strip_name(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("El nombre del ciclo no puede estar vacío.")
-        return value
+        return _clean_cycle_name(value)
+
+    @model_validator(mode="after")
+    def _check_range(self) -> "AcademicCycleCreateRequest":
+        if self.starts_on and self.ends_on and self.ends_on < self.starts_on:
+            raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio.")
+        return self
 
 
 class AcademicCycleResponse(BaseModel):
@@ -66,10 +81,33 @@ class AcademicCycleResponse(BaseModel):
     name: str
     created_at: datetime
     starts_on: Optional[date] = None
+    ends_on: Optional[date] = None
+    enabled: bool = True
+    owner_teacher_id: Optional[int] = None
+    # Cursos asociados: el ciclo solo puede eliminarse si es 0 (HU-C3).
+    course_count: int = 0
+    # Si el usuario actual puede modificar/eliminar el ciclo (dueño o admin).
+    can_manage: bool = False
 
 
 class AcademicCycleStartDateRequest(BaseModel):
     starts_on: date
+
+
+class AcademicCycleUpdateRequest(BaseModel):
+    """Modificación parcial del ciclo (HU-C3): solo se cambian los campos
+    enviados. Enviar `ends_on: null` borra la fecha de fin. Sigue aceptando
+    el cuerpo anterior `{"starts_on": ...}`."""
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    starts_on: Optional[date] = None
+    ends_on: Optional[date] = None
+    enabled: Optional[bool] = None
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: Optional[str]) -> Optional[str]:
+        return _clean_cycle_name(value)
 
 
 class LoginRequest(BaseModel):

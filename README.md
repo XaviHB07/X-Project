@@ -233,7 +233,17 @@ previsualizar la interfaz de Docente, pero no cambia la identidad ni sustituye
 la autorización del servidor.
 
 En el panel, **Ciclos académicos** es la sección para crear y consultar los
-ciclos. En **Sesiones y asistencia** y **Matrícula de estudiantes** se puede
+ciclos. Desde el Sprint 6 (HU-C3) el **docente** gestiona sus propios ciclos:
+los registra (nombre, fecha de inicio y fecha de fin opcional), los modifica,
+los deshabilita/habilita y los elimina. La eliminación definitiva solo
+procede si el ciclo no tiene cursos asociados; si los tiene, debe
+deshabilitarse, lo que conserva su histórico pero impide crear cursos nuevos
+en él. Cada docente solo ve y modifica sus ciclos (y los de los cursos que
+tiene asignados); el nombre es único por docente, así que dos docentes pueden
+tener cada uno su "2026-II". El Administrador conserva el acceso completo.
+API: `POST /cycles`, `PATCH /cycles/{id}`, `DELETE /cycles/{id}`, `GET /cycles`.
+Pendiente: asociar el ciclo a universidad/facultad/especialidad cuando estén
+HU-A5 a HU-A7 y HU-C2. En **Sesiones y asistencia** y **Matrícula de estudiantes** se puede
 seleccionar el ciclo y el curso de trabajo; la selección se sincroniza con
 **Curso activo** en la barra lateral. **Matrícula de estudiantes** está
 separada de la configuración de ciclos: allí se puede crear el curso y luego

@@ -58,10 +58,25 @@ class Base(DeclarativeBase):
 
 class AcademicCycleORM(Base):
     __tablename__ = "academic_cycles"
+    # HU-C3: el nombre es único por docente dueño (dos docentes pueden tener
+    # cada uno su "2026-II"). Antes del Sprint 6 era único en todo el
+    # sistema; `bootstrap._ensure_columns` retira esa restricción vieja en
+    # PostgreSQL. La unicidad de los ciclos sin dueño (NULL) se valida en
+    # el repositorio, porque SQL trata cada NULL como distinto.
+    __table_args__ = (
+        Index("uq_academic_cycles_owner_name", "owner_teacher_id", "name", unique=True),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     starts_on: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    ends_on: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
+    owner_teacher_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     courses: Mapped[List["CourseORM"]] = relationship(back_populates="cycle")

@@ -47,6 +47,7 @@ from src.repositories.interfaces import (
     CourseRepository,
     ExposureTimeSettingsRepository,
     DecisionRunRepository,
+    AcademicCycleInUseError,
     DuplicateAcademicCycleError,
     DuplicateStudentError,
     EventRepository,
@@ -206,55 +207,105 @@ class SqlAlchemyAcademicCycleRepository(AcademicCycleRepository):
     def __init__(self, session: Session):
         self._session = session
 
-    def create(self, name: str, starts_on: Optional[date] = None) -> AcademicCycle:
-        existing = self._session.execute(
-            select(AcademicCycleORM.id).where(AcademicCycleORM.name == name)
-        ).scalar_one_or_none()
-        if existing is not None:
+    def _name_taken(
+        self, name: str, owner_teacher_id: Optional[int], exclude_id: Optional[int] = None
+    ) -> bool:
+        query = select(AcademicCycleORM.id).where(AcademicCycleORM.name == name)
+        if owner_teacher_id is None:
+            query = query.where(AcademicCycleORM.owner_teacher_id.is_(None))
+        else:
+            query = query.where(AcademicCycleORM.owner_teacher_id == owner_teacher_id)
+        if exclude_id is not None:
+            query = query.where(AcademicCycleORM.id != exclude_id)
+        return self._session.execute(query.limit(1)).scalar_one_or_none() is not None
+
+    def create(
+        self,
+        name: str,
+        starts_on: Optional[date] = None,
+        ends_on: Optional[date] = None,
+        owner_teacher_id: Optional[int] = None,
+    ) -> AcademicCycle:
+        if self._name_taken(name, owner_teacher_id):
             raise DuplicateAcademicCycleError(f"El ciclo “{name}” ya existe.")
-        row = AcademicCycleORM(name=name, starts_on=starts_on)
+        row = AcademicCycleORM(
+            name=name,
+            starts_on=starts_on,
+            ends_on=ends_on,
+            enabled=True,
+            owner_teacher_id=owner_teacher_id,
+        )
         self._session.add(row)
         self._session.flush()
-        return AcademicCycle(
-            id=row.id, name=row.name, created_at=row.created_at, starts_on=row.starts_on
-        )
+        return self._to_entity(row)
 
     def get(self, cycle_id: int) -> Optional[AcademicCycle]:
         row = self._session.get(AcademicCycleORM, cycle_id)
-        if row is None:
-            return None
-        return AcademicCycle(
-            id=row.id,
-            name=row.name,
-            created_at=self._utc(row.created_at),
-            starts_on=row.starts_on,
-        )
+        return None if row is None else self._to_entity(row)
 
     def list_all(self) -> List[AcademicCycle]:
         rows = self._session.execute(
             select(AcademicCycleORM).order_by(AcademicCycleORM.id)
         ).scalars().all()
-        return [
-            AcademicCycle(
-                id=row.id,
-                name=row.name,
-                created_at=self._utc(row.created_at),
-                starts_on=row.starts_on,
-            )
-            for row in rows
-        ]
+        return [self._to_entity(row) for row in rows]
 
     def set_starts_on(self, cycle_id: int, starts_on: date) -> Optional[AcademicCycle]:
+        return self.update(cycle_id, starts_on=starts_on)
+
+    def update(
+        self,
+        cycle_id: int,
+        *,
+        name: Optional[str] = None,
+        starts_on: Optional[date] = None,
+        ends_on: Optional[date] = None,
+        enabled: Optional[bool] = None,
+        clear_ends_on: bool = False,
+    ) -> Optional[AcademicCycle]:
         row = self._session.get(AcademicCycleORM, cycle_id)
         if row is None:
             return None
-        row.starts_on = starts_on
+        if name is not None and name != row.name:
+            if self._name_taken(name, row.owner_teacher_id, exclude_id=row.id):
+                raise DuplicateAcademicCycleError(f"El ciclo “{name}” ya existe.")
+            row.name = name
+        if starts_on is not None:
+            row.starts_on = starts_on
+        if clear_ends_on:
+            row.ends_on = None
+        elif ends_on is not None:
+            row.ends_on = ends_on
+        if enabled is not None:
+            row.enabled = enabled
         self._session.flush()
+        return self._to_entity(row)
+
+    def count_courses(self, cycle_id: int) -> int:
+        return int(self._session.execute(
+            select(func.count(CourseORM.id)).where(CourseORM.cycle_id == cycle_id)
+        ).scalar_one())
+
+    def delete(self, cycle_id: int) -> bool:
+        row = self._session.get(AcademicCycleORM, cycle_id)
+        if row is None:
+            return False
+        if self.count_courses(cycle_id):
+            raise AcademicCycleInUseError(
+                "El ciclo tiene cursos asociados: deshabilítalo para conservar su histórico."
+            )
+        self._session.delete(row)
+        self._session.flush()
+        return True
+
+    def _to_entity(self, row: AcademicCycleORM) -> AcademicCycle:
         return AcademicCycle(
             id=row.id,
             name=row.name,
             created_at=self._utc(row.created_at),
             starts_on=row.starts_on,
+            ends_on=row.ends_on,
+            enabled=True if row.enabled is None else bool(row.enabled),
+            owner_teacher_id=row.owner_teacher_id,
         )
 
     @staticmethod

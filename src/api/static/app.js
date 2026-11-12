@@ -4,6 +4,7 @@ const state = {
   course: null,
   availableCourses: [],
   cycles: [],
+  editingCycleId: null,
   activeCycleId: null,
   authenticatedUser: null,
   viewAs: "administrador",
@@ -582,6 +583,56 @@ function renderRecentCourses() {
   renderWorkCourseSelectors();
 }
 
+function formatCycleDate(value) {
+  if (!value) return "";
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString("es");
+}
+
+function renderCycleRow(cycle) {
+  const enabled = cycle.enabled !== false;
+  const courseCount = cycle.course_count || 0;
+  const period = cycle.starts_on
+    ? `Del ${formatCycleDate(cycle.starts_on)}${cycle.ends_on ? ` al ${formatCycleDate(cycle.ends_on)}` : " · sin fecha de fin"}`
+    : "Sin fecha de inicio";
+  const summary = `${period} · ${courseCount} curso${courseCount === 1 ? "" : "s"}`;
+  if (state.editingCycleId === cycle.id) {
+    return `
+      <article class="cycle-row ${enabled ? "" : "is-disabled"}">
+        <span class="cycle-mark" aria-hidden="true">◷</span>
+        <form class="cycle-edit-form" data-cycle-edit-form="${cycle.id}">
+          <label class="cycle-field"><span>Nombre</span>
+            <input class="field" name="name" type="text" maxlength="255" value="${escapeHtml(cycle.name)}" required /></label>
+          <label class="cycle-field"><span>Inicio</span>
+            <input class="field" name="starts_on" type="date" value="${cycle.starts_on || ""}" required /></label>
+          <label class="cycle-field"><span>Fin (opcional)</span>
+            <input class="field" name="ends_on" type="date" value="${cycle.ends_on || ""}" /></label>
+          <button class="button button-add" type="submit">Guardar</button>
+          <button class="button button-quiet" type="button" data-cycle-cancel="${cycle.id}">Cancelar</button>
+        </form>
+      </article>`;
+  }
+  const actions = cycle.can_manage
+    ? `<div class="cycle-actions">
+        <button class="button button-quiet" type="button" data-cycle-edit="${cycle.id}">Editar</button>
+        <button class="button button-quiet" type="button" data-cycle-toggle="${cycle.id}">${enabled ? "Deshabilitar" : "Habilitar"}</button>
+        <button class="button button-quiet button-danger" type="button" data-cycle-delete="${cycle.id}"
+          ${courseCount ? `disabled title="Tiene cursos asociados: deshabilítalo para conservar su histórico."` : ""}>Eliminar</button>
+      </div>`
+    : `<div class="cycle-actions"><span class="form-note">Asignado por el administrador</span></div>`;
+  return `
+    <article class="cycle-row ${enabled ? "" : "is-disabled"}">
+      <span class="cycle-mark" aria-hidden="true">◷</span>
+      <div>
+        <strong>${escapeHtml(cycle.name)} ${enabled
+          ? '<em class="teacher-status">Habilitado</em>'
+          : '<em class="teacher-status is-inactive">Deshabilitado</em>'}</strong>
+        <span>${escapeHtml(summary)}</span>
+      </div>
+      ${actions}
+    </article>`;
+}
+
 function renderCycles(preferredCycleId = state.activeCycleId) {
   const storedCycleId = Number(localStorage.getItem("aula-active-cycle"));
   const selectedCycleId = state.cycles.some((cycle) => cycle.id === preferredCycleId)
@@ -594,31 +645,22 @@ function renderCycles(preferredCycleId = state.activeCycleId) {
     .map((cycle) => `<option value="${cycle.id}">${escapeHtml(cycle.name)}</option>`)
     .join("")}`;
   elements.activeCycle.value = selectedCycleId ? String(selectedCycleId) : "";
-  elements.courseCreationCycle.innerHTML = `<option value="">Selecciona un ciclo</option>${state.cycles
+  // HU-C3: un ciclo deshabilitado no admite cursos nuevos.
+  const enabledCycles = state.cycles.filter((cycle) => cycle.enabled !== false);
+  const previousCreationCycle = Number(elements.courseCreationCycle.value);
+  elements.courseCreationCycle.innerHTML = `<option value="">Selecciona un ciclo</option>${enabledCycles
     .map((cycle) => `<option value="${cycle.id}">${escapeHtml(cycle.name)}</option>`)
     .join("")}`;
-  if (!state.cycles.some((cycle) => cycle.id === Number(elements.courseCreationCycle.value))) {
-    elements.courseCreationCycle.value = selectedCycleId ? String(selectedCycleId) : "";
-  }
+  const creationCycle = enabledCycles.some((cycle) => cycle.id === previousCreationCycle)
+    ? previousCreationCycle
+    : enabledCycles.some((cycle) => cycle.id === selectedCycleId) ? selectedCycleId : null;
+  elements.courseCreationCycle.value = creationCycle ? String(creationCycle) : "";
   const createCourseButton = $("#create-course-form button[type=submit]");
   createCourseButton.disabled = !Number(elements.courseCreationCycle.value);
   $("#course-cycle-hint").hidden = Boolean(Number(elements.courseCreationCycle.value));
   $("#cycle-count").textContent = state.cycles.length;
   renderCourseCreation();
-  $("#cycle-list").innerHTML = state.cycles.map((cycle) => `
-    <article class="cycle-row">
-      <span class="cycle-mark" aria-hidden="true">◷</span>
-      <div>
-        <strong>${escapeHtml(cycle.name)}</strong>
-        <span>Creado ${new Date(cycle.created_at).toLocaleDateString("es")}</span>
-      </div>
-      <label class="cycle-start-control">
-        <span>Inicio del ciclo</span>
-        <input class="field" type="date" data-cycle-start="${cycle.id}" value="${cycle.starts_on || ""}" />
-      </label>
-      <button class="button button-quiet" type="button" data-save-cycle-start="${cycle.id}">Guardar fecha</button>
-    </article>
-  `).join("");
+  $("#cycle-list").innerHTML = state.cycles.map(renderCycleRow).join("");
   $("#cycle-list-empty").hidden = state.cycles.length > 0;
   renderTeacherAssignments();
   renderWorkCourseSelectors();
@@ -1058,7 +1100,8 @@ function setAppView(view) {
   if (!teacherView && (view === "daily" || view === "grades")) {
     view = "cycles";
   }
-  if (!isAdminView && ["cycles", "teachers", "studentAccounts", "createCourse"].includes(view)) {
+  // HU-C3: el docente gestiona sus propios ciclos académicos.
+  if (!isAdminView && ["teachers", "studentAccounts", "createCourse"].includes(view)) {
     view = "enrollment";
   }
   if (previousView !== view) window.scrollTo(0, 0);
@@ -1116,13 +1159,12 @@ function setAppView(view) {
   activeButton.setAttribute("aria-current", "page");
   elements.dailyViewButton.hidden = !teacherView;
   elements.gradesViewButton.hidden = !teacherView;
-  elements.cyclesViewButton.hidden = !isAdminView;
+  elements.cyclesViewButton.hidden = false;
   elements.teachersViewButton.hidden = !isAdminView;
   elements.studentAccountsViewButton.hidden = !isAdminView;
   elements.coursesViewButton.hidden = !isAdminView;
   elements.activeRole.closest(".sidebar-role").hidden = state.authenticatedUser?.role !== "administrador";
   elements.studentAccountForm.hidden = !isAdminView;
-  $("#create-cycle-form button[type=submit]").disabled = !isAdminView;
   $("#create-course-form button[type=submit]").disabled =
     !isAdminView || !Number(elements.courseCreationCycle.value);
   elements.participationsTab.hidden = teacherView;
@@ -2472,12 +2514,17 @@ $("#create-cycle-form").addEventListener("submit", async (event) => {
   const button = form.querySelector("button[type=submit]");
   const name = $("#cycle-name").value.trim();
   const startsOn = $("#cycle-starts-on").value;
+  const endsOn = $("#cycle-ends-on").value;
   if (!name || !startsOn) return;
+  if (endsOn && endsOn < startsOn) {
+    notify("La fecha de fin no puede ser anterior a la fecha de inicio.", true);
+    return;
+  }
   setBusy(button, true, "Creando...");
   try {
     const cycle = await api("/cycles", {
       method: "POST",
-      body: JSON.stringify({ name, starts_on: startsOn }),
+      body: JSON.stringify({ name, starts_on: startsOn, ends_on: endsOn || null }),
     });
     state.cycles = [...state.cycles, cycle];
     renderCycles(cycle.id);
@@ -2490,27 +2537,96 @@ $("#create-cycle-form").addEventListener("submit", async (event) => {
   }
 });
 
+function replaceCycle(updated) {
+  state.cycles = state.cycles.map((cycle) => cycle.id === updated.id ? updated : cycle);
+}
+
 $("#cycle-list").addEventListener("click", async (event) => {
-  const button = event.target.closest("[data-save-cycle-start]");
-  if (!button) return;
-  const cycleId = Number(button.dataset.saveCycleStart);
-  const input = document.querySelector(`[data-cycle-start="${cycleId}"]`);
-  if (!input?.value) {
-    notify("Selecciona la fecha de inicio del ciclo.", true);
+  const editButton = event.target.closest("[data-cycle-edit]");
+  const cancelButton = event.target.closest("[data-cycle-cancel]");
+  const toggleButton = event.target.closest("[data-cycle-toggle]");
+  const deleteButton = event.target.closest("[data-cycle-delete]");
+  if (editButton) {
+    state.editingCycleId = Number(editButton.dataset.cycleEdit);
+    renderCycles(state.activeCycleId);
+    document.querySelector(`[data-cycle-edit-form="${state.editingCycleId}"] input[name=name]`)?.focus();
     return;
   }
+  if (cancelButton) {
+    state.editingCycleId = null;
+    renderCycles(state.activeCycleId);
+    return;
+  }
+  if (toggleButton) {
+    const cycleId = Number(toggleButton.dataset.cycleToggle);
+    const cycle = state.cycles.find((item) => item.id === cycleId);
+    if (!cycle) return;
+    const enable = cycle.enabled === false;
+    if (!enable && !window.confirm(
+      `¿Deshabilitar el ciclo “${cycle.name}”? Se conserva su histórico, pero no admitirá cursos nuevos.`,
+    )) return;
+    setBusy(toggleButton, true, enable ? "Habilitando..." : "Deshabilitando...");
+    try {
+      const updated = await api(`/cycles/${cycleId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: enable }),
+      });
+      replaceCycle(updated);
+      renderCycles(state.activeCycleId);
+      notify(`Ciclo “${updated.name}” ${enable ? "habilitado" : "deshabilitado"}.`);
+    } catch (error) {
+      notify(error.message, true);
+      setBusy(toggleButton, false);
+    }
+    return;
+  }
+  if (deleteButton) {
+    const cycleId = Number(deleteButton.dataset.cycleDelete);
+    const cycle = state.cycles.find((item) => item.id === cycleId);
+    if (!cycle || !window.confirm(`¿Eliminar definitivamente el ciclo “${cycle.name}”?`)) return;
+    setBusy(deleteButton, true, "Eliminando...");
+    try {
+      await api(`/cycles/${cycleId}`, { method: "DELETE" });
+      state.cycles = state.cycles.filter((item) => item.id !== cycleId);
+      if (state.activeCycleId === cycleId) state.activeCycleId = null;
+      renderCycles(state.activeCycleId);
+      notify(`Ciclo “${cycle.name}” eliminado.`);
+    } catch (error) {
+      notify(error.message, true);
+      setBusy(deleteButton, false);
+    }
+  }
+});
+
+$("#cycle-list").addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-cycle-edit-form]");
+  if (!form) return;
+  event.preventDefault();
+  const cycleId = Number(form.dataset.cycleEditForm);
+  const name = form.elements.name.value.trim();
+  const startsOn = form.elements.starts_on.value;
+  const endsOn = form.elements.ends_on.value;
+  if (!name || !startsOn) {
+    notify("El ciclo necesita un nombre y una fecha de inicio.", true);
+    return;
+  }
+  if (endsOn && endsOn < startsOn) {
+    notify("La fecha de fin no puede ser anterior a la fecha de inicio.", true);
+    return;
+  }
+  const button = form.querySelector("button[type=submit]");
   setBusy(button, true, "Guardando...");
   try {
     const updated = await api(`/cycles/${cycleId}`, {
       method: "PATCH",
-      body: JSON.stringify({ starts_on: input.value }),
+      body: JSON.stringify({ name, starts_on: startsOn, ends_on: endsOn || null }),
     });
-    state.cycles = state.cycles.map((cycle) => cycle.id === cycleId ? updated : cycle);
+    replaceCycle(updated);
+    state.editingCycleId = null;
     renderCycles(state.activeCycleId);
-    notify(`Fecha de inicio de “${updated.name}” guardada.`);
+    notify(`Ciclo “${updated.name}” actualizado.`);
   } catch (error) {
     notify(error.message, true);
-  } finally {
     setBusy(button, false);
   }
 });
