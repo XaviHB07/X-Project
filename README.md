@@ -86,6 +86,7 @@ courses (1) ──< class\_sessions (1) ──< decision\_runs (1) ──< selec
 decision\_runs (1) ──< student\_participations >── students
 courses (1) ──< syllabus\_entries
 class\_sessions (1) ──< session\_attendance >── students
+courses (1) ──< group\_expositions (1) ──< group\_exposition\_member\_scores >── students
 ```
 
 * **`academic\_cycles`**: periodo académico que agrupa cursos.
@@ -122,6 +123,14 @@ unidad transaccional.
 considerado en cada `decision\_run`, con alpha/beta antes y después.
 * **`student\_participations`**: calificación (0 a 5) y asistencia por
 estudiante seleccionado en una decisión, con su fecha/hora de registro.
+* **`group\_expositions`**: una exposición calificada de un grupo elegido por
+ruleta o bolillero: nota grupal (0 a 5), comentario y duración cronometrada.
+Guarda una copia del nombre del grupo y de la propuesta (`group\_name`,
+`plan\_name`), porque las propuestas de `course\_group\_plans` se pueden editar
+o eliminar después; puede vincularse a la sesión de clase activa.
+* **`group\_exposition\_member\_scores`**: nota individual (0 a 5) y asistencia
+de cada integrante en esa exposición, con su lugar en el orden sorteado
+(`exposition\_order`). La nota queda vacía solo para integrantes ausentes.
 
 \---
 
