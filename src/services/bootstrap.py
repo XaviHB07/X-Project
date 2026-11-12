@@ -96,6 +96,11 @@ class AppContext:
 # PostgreSQL.
 _ADDED_COLUMNS = [
     ("academic_cycles", "starts_on", "DATE"),
+    # HU-C3 (Sprint 6): el docente gestiona sus propios ciclos. Sin
+    # `REFERENCES` por la misma razón que `students.user_id` (ver abajo).
+    ("academic_cycles", "ends_on", "DATE"),
+    ("academic_cycles", "enabled", "BOOLEAN NOT NULL DEFAULT TRUE"),
+    ("academic_cycles", "owner_teacher_id", "INTEGER"),
     ("courses", "cycle_id", "INTEGER"),
     ("courses", "roster_imported_at", "TIMESTAMP WITH TIME ZONE"),
     ("students", "active", "BOOLEAN NOT NULL DEFAULT TRUE"),
@@ -148,6 +153,36 @@ def _ensure_columns(engine) -> None:
     if "users" in existing_tables:
         with engine.begin() as conn:
             conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_dni ON users (dni)"))
+    if "academic_cycles" in existing_tables:
+        _migrate_cycle_name_uniqueness(engine)
+
+
+def _migrate_cycle_name_uniqueness(engine) -> None:
+    """HU-C3: el nombre del ciclo pasa de ser único en todo el sistema a ser
+    único por docente dueño (idempotente).
+
+    En PostgreSQL se retira la restricción `UNIQUE (name)` que creaba la
+    versión anterior. En SQLite esa restricción va dentro de la definición
+    de la tabla y no puede quitarse sin reconstruirla; como SQLite solo se
+    usa en desarrollo local, basta con borrar el archivo `.db` para tenerla
+    con el esquema nuevo (los ciclos seguirán funcionando, pero dos docentes
+    no podrán repetir un nombre hasta hacerlo).
+    """
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    with engine.begin() as conn:
+        try:
+            if engine.dialect.name == "postgresql":
+                conn.execute(text(
+                    "ALTER TABLE academic_cycles DROP CONSTRAINT IF EXISTS academic_cycles_name_key"
+                ))
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_academic_cycles_owner_name "
+                "ON academic_cycles (owner_teacher_id, name)"
+            ))
+        except SQLAlchemyError:
+            logging.exception("No se pudo migrar la unicidad de academic_cycles.name")
 
 
 def _provision_initial_admin(session_factory) -> None:

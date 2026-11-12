@@ -70,12 +70,22 @@ class ExposureTimeSettings:
 
 @dataclass(frozen=True)
 class AcademicCycle:
-    """Un periodo académico que agrupa cursos independientes."""
+    """Un periodo académico que agrupa cursos independientes.
+
+    HU-C3: el docente registra, modifica y elimina sus propios ciclos.
+    `owner_teacher_id` identifica al docente que lo creó; es `None` en los
+    ciclos creados por el Administrador (o anteriores al Sprint 6).
+    `enabled` permite dar de baja el ciclo sin borrarlo, conservando su
+    histórico: un ciclo deshabilitado no admite cursos nuevos.
+    """
 
     id: int
     name: str
     created_at: datetime
     starts_on: Optional[date] = None
+    ends_on: Optional[date] = None
+    enabled: bool = True
+    owner_teacher_id: Optional[int] = None
 
 
 @dataclass(frozen=True)

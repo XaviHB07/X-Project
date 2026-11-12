@@ -223,11 +223,10 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .cycle-create-card h2 { margin: 0 0 16px; color: var(--forest); font-family: Fraunces, Georgia, serif; font-size: 23px; font-weight: 500; }
 .cycle-create-form .form-label { display: block; margin-bottom: 7px; }
 .cycle-create-form .inline-field .field { flex: 1; }
-.cycle-create-fields { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(150px, .7fr) auto; gap: 9px; align-items: end; }
-.cycle-create-fields .form-label { grid-column: 2; grid-row: 1; }
-.cycle-create-fields input:first-of-type { grid-column: 1; grid-row: 2; }
-.cycle-create-fields input[type="date"] { grid-column: 2; grid-row: 2; }
-.cycle-create-fields button { grid-column: 3; grid-row: 2; }
+.cycle-create-fields { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(140px, .6fr) minmax(140px, .6fr) auto; gap: 9px; align-items: end; }
+.cycle-field { display: grid; gap: 7px; }
+.cycle-field .form-label { margin-bottom: 0; }
+.cycle-field small { color: #848e9c; font-weight: 400; }
 .cycle-list-card > .panel-heading { margin-bottom: 14px; }
 .cycle-list { display: grid; }
 .cycle-row { display: flex; align-items: center; gap: 12px; min-height: 72px; border-top: 1px solid #eceef1; }
@@ -235,8 +234,17 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .cycle-row div { display: grid; gap: 3px; }
 .cycle-row strong { color: var(--ink); font-size: 13px; }
 .cycle-row div span { color: #848e9c; font-size: 11px; }
-.cycle-start-control { display: grid; min-width: 165px; gap: 4px; margin-left: auto; color: var(--muted); font-size: 10px; }
-.cycle-start-control .field { height: 36px; }
+.cycle-row.is-disabled .cycle-mark { background: #f1e9e7; color: #9c4a3f; }
+.cycle-row.is-disabled strong { color: #848e9c; }
+.cycle-row .cycle-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: auto; }
+.cycle-actions .button { min-height: 32px; padding: 0 11px; font-size: 11px; }
+.cycle-actions .button { border: 1px solid var(--line); }
+.cycle-actions .button-danger { color: #9c4a3f; }
+.cycle-actions .button[disabled] { opacity: .45; cursor: not-allowed; }
+.cycle-edit-form { display: grid; flex: 1; grid-template-columns: minmax(140px, 1fr) repeat(2, minmax(130px, .7fr)) auto auto; gap: 8px; align-items: end; padding: 10px 0; }
+.cycle-edit-form .field { height: 36px; }
+.cycle-edit-form .cycle-field span { color: var(--muted); font-size: 10px; }
+@media (max-width: 860px) { .cycle-edit-form { grid-template-columns: 1fr; } }
 .teacher-assignment-card > .panel-heading { margin-bottom: 16px; }
 .teacher-assignment-card > .form-label { display: block; margin-bottom: 7px; }
 .teacher-assignment-card h3 { margin: 0 0 12px; color: var(--forest); font-size: 14px; }
@@ -744,14 +752,9 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
   .management-grid { grid-template-columns: 1fr; }
   .setup-create-card { grid-template-columns: 1fr; gap: 18px; }
   .cycle-create-fields { grid-template-columns: 1fr; }
-  .cycle-create-fields .form-label,
-  .cycle-create-fields input:first-of-type,
-  .cycle-create-fields input[type="date"],
-  .cycle-create-fields button { grid-column: 1; grid-row: auto; }
   .cycle-create-fields button { width: 100%; }
   .cycle-row { flex-wrap: wrap; padding: 12px 0; }
-  .cycle-start-control { width: 100%; margin-left: 46px; }
-  .cycle-row > .button { width: 100%; margin-left: 46px; }
+  .cycle-actions, .cycle-edit-form { width: 100%; margin-left: 46px; }
   .student-account-row { align-items: stretch; flex-direction: column; }
   .student-account-row > .button { width: 100%; }
   .student-course-cards { grid-template-columns: 1fr; }
@@ -900,8 +903,7 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
   .metric strong { font-size: 23px; }
   .setup-card, .student-cycle-group { padding: 15px; }
   .cycle-create-fields { gap: 7px; }
-  .cycle-row > .button { margin-left: 0; }
-  .cycle-start-control { margin-left: 0; }
+  .cycle-actions, .cycle-edit-form { margin-left: 0; }
   .grade-filters { padding: 12px; }
   .grade-detail-fields { grid-template-columns: 1fr; }
   .dialog-head { gap: 10px; padding-top: 18px; padding-bottom: 14px; }

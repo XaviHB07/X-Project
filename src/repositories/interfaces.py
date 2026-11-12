@@ -55,6 +55,10 @@ class DuplicateAcademicCycleError(ValueError):
     """Ya existe un ciclo académico con ese nombre."""
 
 
+class AcademicCycleInUseError(ValueError):
+    """El ciclo tiene cursos asociados y no puede eliminarse (HU-C3)."""
+
+
 class ParticipationDecisionNotFoundError(ValueError):
     """La decisión no existe o no pertenece al curso indicado."""
 
@@ -141,10 +145,22 @@ class CourseMaterialRepository(ABC):
 
 
 class AcademicCycleRepository(ABC):
-    """Persistencia de ciclos académicos que agrupan cursos."""
+    """Persistencia de ciclos académicos que agrupan cursos.
+
+    El nombre es único por dueño: dos docentes pueden tener cada uno su
+    ciclo "2026-II", pero un mismo docente no puede repetirlo. Los ciclos
+    sin dueño (creados por el Administrador) comparten un solo espacio de
+    nombres.
+    """
 
     @abstractmethod
-    def create(self, name: str, starts_on: Optional[date] = None) -> AcademicCycle: ...
+    def create(
+        self,
+        name: str,
+        starts_on: Optional[date] = None,
+        ends_on: Optional[date] = None,
+        owner_teacher_id: Optional[int] = None,
+    ) -> AcademicCycle: ...
 
     @abstractmethod
     def get(self, cycle_id: int) -> Optional[AcademicCycle]: ...
@@ -154,6 +170,31 @@ class AcademicCycleRepository(ABC):
 
     @abstractmethod
     def set_starts_on(self, cycle_id: int, starts_on: date) -> Optional[AcademicCycle]: ...
+
+    @abstractmethod
+    def update(
+        self,
+        cycle_id: int,
+        *,
+        name: Optional[str] = None,
+        starts_on: Optional[date] = None,
+        ends_on: Optional[date] = None,
+        enabled: Optional[bool] = None,
+        clear_ends_on: bool = False,
+    ) -> Optional[AcademicCycle]:
+        """Modifica solo los campos indicados (HU-C3). Devuelve `None` si el
+        ciclo no existe; lanza `DuplicateAcademicCycleError` si el nuevo
+        nombre ya lo usa otro ciclo del mismo dueño."""
+        ...
+
+    @abstractmethod
+    def count_courses(self, cycle_id: int) -> int: ...
+
+    @abstractmethod
+    def delete(self, cycle_id: int) -> bool:
+        """Elimina definitivamente el ciclo. Lanza `AcademicCycleInUseError`
+        si tiene cursos asociados; devuelve `False` si no existe."""
+        ...
 
 
 class StudentAccountRepository(ABC):

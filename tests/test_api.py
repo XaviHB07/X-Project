@@ -262,7 +262,11 @@ class TestCiclosAcademicos:
         assert client.get(f"/courses/{unassigned_course['id']}").status_code == 403
         assert client.get(f"/courses/{assigned_course['id']}/group-plans").status_code == 200
         assert client.get(f"/courses/{unassigned_course['id']}/group-plans").status_code == 403
-        assert client.post("/cycles", json={"name": "No autorizado"}).status_code == 403
+        # HU-C3 (Sprint 6): el docente ya puede registrar sus propios ciclos,
+        # pero no modificar ni eliminar los creados por el Administrador.
+        assert client.post("/cycles", json={"name": "Ciclo del docente"}).status_code == 201
+        assert client.patch(f"/cycles/{cycle['id']}", json={"name": "X"}).status_code == 403
+        assert client.delete(f"/cycles/{cycle['id']}").status_code == 403
         assert client.post("/courses", json={"name": "No autorizado"}).status_code == 403
         assert client.get("/admin/teachers").status_code == 403
 
@@ -1834,3 +1838,175 @@ class TestMaterialAcademico:
         client.cookies.clear()
         unauthenticated = client.get(f"/courses/{course_id}/materials")
         assert unauthenticated.status_code == 401
+
+
+def _login_as_teacher(client: TestClient) -> None:
+    client.cookies.clear()
+    login = client.post(
+        "/auth/login",
+        json={"username": "teacher", "password": "test-teacher-password-123"},
+    )
+    assert login.status_code == 200
+
+
+def _login_as_admin(client: TestClient) -> None:
+    client.cookies.clear()
+    login = client.post(
+        "/auth/login",
+        json={"username": "admin", "password": "test-admin-password-123"},
+    )
+    assert login.status_code == 200
+
+
+def _create_second_teacher(client: TestClient) -> None:
+    auth_service = client.app.state.app_context.auth_service
+    with auth_service._session_factory() as session:
+        teacher_role_id = session.execute(
+            select(RoleORM.id).where(RoleORM.name == "docente")
+        ).scalar_one()
+        session.add(UserORM(
+            username="teacher2",
+            full_name="Teacher Two",
+            password_hash=hash_password("test-teacher2-password-123"),
+            role_id=teacher_role_id,
+        ))
+        session.commit()
+
+
+class TestGestionCicloAcademicoDocente:
+    """HU-C3 — el docente registra, modifica y elimina sus ciclos académicos."""
+
+    def test_teacher_creates_and_lists_own_cycle(self, client: TestClient):
+        _login_as_teacher(client)
+        created = client.post(
+            "/cycles",
+            json={"name": " 2027-I ", "starts_on": "2027-03-22", "ends_on": "2027-07-17"},
+        )
+        assert created.status_code == 201
+        cycle = created.json()
+        assert cycle["name"] == "2027-I"
+        assert cycle["starts_on"] == "2027-03-22"
+        assert cycle["ends_on"] == "2027-07-17"
+        assert cycle["enabled"] is True
+        assert cycle["owner_teacher_id"] is not None
+        assert cycle["can_manage"] is True
+        assert cycle["course_count"] == 0
+        # Aparece en su lista aunque todavía no tenga cursos.
+        assert [item["id"] for item in client.get("/cycles").json()] == [cycle["id"]]
+
+    def test_end_date_before_start_is_rejected(self, client: TestClient):
+        _login_as_teacher(client)
+        bad = client.post(
+            "/cycles",
+            json={"name": "2027-I", "starts_on": "2027-07-01", "ends_on": "2027-03-01"},
+        )
+        assert bad.status_code == 422
+        cycle = client.post(
+            "/cycles", json={"name": "2027-I", "starts_on": "2027-03-01"}
+        ).json()
+        assert client.patch(
+            f"/cycles/{cycle['id']}", json={"ends_on": "2027-02-01"}
+        ).status_code == 422
+
+    def test_teacher_updates_name_dates_and_state(self, client: TestClient):
+        _login_as_teacher(client)
+        cycle = client.post(
+            "/cycles", json={"name": "2027-I", "starts_on": "2027-03-01", "ends_on": "2027-07-01"}
+        ).json()
+        updated = client.patch(
+            f"/cycles/{cycle['id']}",
+            json={"name": "2027-1", "starts_on": "2027-03-08", "enabled": False},
+        )
+        assert updated.status_code == 200
+        body = updated.json()
+        assert body["name"] == "2027-1"
+        assert body["starts_on"] == "2027-03-08"
+        assert body["ends_on"] == "2027-07-01"  # no enviado: se conserva
+        assert body["enabled"] is False
+        cleared = client.patch(f"/cycles/{cycle['id']}", json={"ends_on": None})
+        assert cleared.status_code == 200
+        assert cleared.json()["ends_on"] is None
+        assert client.patch(
+            f"/cycles/{cycle['id']}", json={"name": "   "}
+        ).status_code == 422
+
+    def test_same_name_allowed_for_different_teachers_but_not_twice(self, client: TestClient):
+        _create_second_teacher(client)
+        _login_as_teacher(client)
+        first = client.post("/cycles", json={"name": "2027-I"})
+        assert first.status_code == 201
+        assert client.post("/cycles", json={"name": "2027-I"}).status_code == 409
+        other = client.post("/cycles", json={"name": "2027-II"}).json()
+        assert client.patch(
+            f"/cycles/{other['id']}", json={"name": "2027-I"}
+        ).status_code == 409
+
+        client.cookies.clear()
+        login = client.post(
+            "/auth/login",
+            json={"username": "teacher2", "password": "test-teacher2-password-123"},
+        )
+        assert login.status_code == 200
+        assert client.post("/cycles", json={"name": "2027-I"}).status_code == 201
+
+    def test_teacher_cannot_see_or_edit_another_teachers_cycle(self, client: TestClient):
+        _create_second_teacher(client)
+        _login_as_teacher(client)
+        cycle = client.post("/cycles", json={"name": "Privado"}).json()
+
+        client.cookies.clear()
+        client.post(
+            "/auth/login",
+            json={"username": "teacher2", "password": "test-teacher2-password-123"},
+        )
+        assert client.get("/cycles").json() == []
+        assert client.patch(f"/cycles/{cycle['id']}", json={"name": "X"}).status_code == 403
+        assert client.delete(f"/cycles/{cycle['id']}").status_code == 403
+
+    def test_delete_only_when_cycle_has_no_courses(self, client: TestClient):
+        _login_as_teacher(client)
+        empty = client.post("/cycles", json={"name": "Vacío"}).json()
+        used = client.post("/cycles", json={"name": "Con cursos"}).json()
+        assert client.delete(f"/cycles/{empty['id']}").status_code == 204
+        assert client.delete(f"/cycles/{empty['id']}").status_code == 404
+
+        # Hasta HU-C4 los cursos los crea el Administrador.
+        _login_as_admin(client)
+        assert client.post(
+            "/courses", json={"name": "Curso", "cycle_id": used["id"]}
+        ).status_code == 201
+        listed = {item["id"]: item for item in client.get("/cycles").json()}
+        assert listed[used["id"]]["course_count"] == 1
+
+        _login_as_teacher(client)
+        blocked = client.delete(f"/cycles/{used['id']}")
+        assert blocked.status_code == 409
+        assert "deshabilítalo" in blocked.json()["detail"]
+        assert client.patch(
+            f"/cycles/{used['id']}", json={"enabled": False}
+        ).json()["enabled"] is False
+
+    def test_disabled_cycle_rejects_new_courses(self, client: TestClient):
+        cycle = client.post("/cycles", json={"name": "2026-I"}).json()
+        client.patch(f"/cycles/{cycle['id']}", json={"enabled": False})
+        response = client.post("/courses", json={"name": "Nuevo", "cycle_id": cycle["id"]})
+        assert response.status_code == 409
+        assert "deshabilitado" in response.json()["detail"]
+
+    def test_admin_keeps_full_access_to_teacher_cycles(self, client: TestClient):
+        _login_as_teacher(client)
+        cycle = client.post("/cycles", json={"name": "Del docente"}).json()
+        _login_as_admin(client)
+        listed = client.get("/cycles").json()
+        assert [item["id"] for item in listed] == [cycle["id"]]
+        assert listed[0]["can_manage"] is True
+        assert client.patch(
+            f"/cycles/{cycle['id']}", json={"name": "Renombrado"}
+        ).status_code == 200
+        assert client.delete(f"/cycles/{cycle['id']}").status_code == 204
+
+    def test_legacy_start_date_patch_still_works(self, client: TestClient):
+        cycle = client.post("/cycles", json={"name": "2029-I"}).json()
+        response = client.patch(f"/cycles/{cycle['id']}", json={"starts_on": "2029-03-08"})
+        assert response.status_code == 200
+        assert response.json()["starts_on"] == "2029-03-08"

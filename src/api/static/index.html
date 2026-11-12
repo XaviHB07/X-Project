@@ -538,17 +538,25 @@
         <section class="cycles-setup-page" id="cycles-setup-page" hidden aria-labelledby="course-title">
           <div class="setup-heading">
             <p class="eyebrow">PERIODOS ACADÉMICOS</p>
-            <p class="heading-meta">Crea y consulta los ciclos académicos.</p>
+            <p class="heading-meta">Registra, modifica, deshabilita o elimina tus ciclos académicos.</p>
           </div>
 
           <section class="setup-card cycle-create-card">
             <h2>Crear ciclo académico</h2>
             <form id="create-cycle-form" class="cycle-create-form">
-              <label class="form-label" for="cycle-name">Nombre del ciclo</label>
               <div class="cycle-create-fields">
-                <input id="cycle-name" class="field" type="text" maxlength="255" placeholder="Ej. 2026-II" required />
-                <label class="form-label" for="cycle-starts-on">Fecha de inicio</label>
-                <input id="cycle-starts-on" class="field" type="date" required />
+                <label class="cycle-field">
+                  <span class="form-label">Nombre del ciclo</span>
+                  <input id="cycle-name" class="field" type="text" maxlength="255" placeholder="Ej. 2026-II" required />
+                </label>
+                <label class="cycle-field">
+                  <span class="form-label">Fecha de inicio</span>
+                  <input id="cycle-starts-on" class="field" type="date" required />
+                </label>
+                <label class="cycle-field">
+                  <span class="form-label">Fecha de fin <small>(opcional)</small></span>
+                  <input id="cycle-ends-on" class="field" type="date" />
+                </label>
                 <button class="button button-add" type="submit">＋ Crear ciclo</button>
               </div>
             </form>

@@ -388,6 +388,15 @@ class AuthService:
                 query = query.join(TeacherCourseORM).where(
                     TeacherCourseORM.teacher_id == user.id
                 )
+                assigned = set(session.execute(query).scalars().all())
+                # HU-C3: el docente también ve los ciclos que él mismo
+                # registró, aunque todavía no tengan cursos.
+                owned = set(session.execute(
+                    select(AcademicCycleORM.id).where(
+                        AcademicCycleORM.owner_teacher_id == user.id
+                    )
+                ).scalars().all())
+                return sorted(assigned | owned)
             return list(session.execute(query).scalars().all())
 
     def teachers(self) -> list[dict]:

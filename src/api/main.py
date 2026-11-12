@@ -52,6 +52,7 @@ from src.api.schemas import (
     AcademicCycleCreateRequest,
     AcademicCycleResponse,
     AcademicCycleStartDateRequest,
+    AcademicCycleUpdateRequest,
     AuthenticatedUserResponse,
     AttendanceEntryResponse,
     AttendanceUpdateRequest,
@@ -108,6 +109,7 @@ from src.api.schemas import (
     SyllabusEntryResponse,
 )
 from src.repositories.interfaces import (
+    AcademicCycleInUseError,
     DuplicateAcademicCycleError,
     DuplicateStudentError,
     InvalidParticipationStudentError,
@@ -375,46 +377,143 @@ def _session_detail_response(detail: SessionDetail) -> SessionDetailResponse:
 # --------------------------------------------------------------------------
 
 
+def _require_cycle_editor(user: AuthenticatedUser) -> AuthenticatedUser:
+    """HU-C3: el docente gestiona sus ciclos; el Administrador conserva el
+    acceso completo. Los estudiantes no gestionan ciclos."""
+    if user.role not in (ROLE_ADMIN, ROLE_TEACHER):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Solo docentes y administradores gestionan ciclos."
+        )
+    return user
+
+
+def _can_manage_cycle(user: AuthenticatedUser, cycle) -> bool:
+    if user.role == ROLE_ADMIN:
+        return True
+    return user.role == ROLE_TEACHER and cycle.owner_teacher_id == user.id
+
+
+def _cycle_response(cycle, user: AuthenticatedUser, course_count: int) -> AcademicCycleResponse:
+    return AcademicCycleResponse(
+        id=cycle.id,
+        name=cycle.name,
+        created_at=cycle.created_at,
+        starts_on=cycle.starts_on,
+        ends_on=cycle.ends_on,
+        enabled=cycle.enabled,
+        owner_teacher_id=cycle.owner_teacher_id,
+        course_count=course_count,
+        can_manage=_can_manage_cycle(user, cycle),
+    )
+
+
+def _managed_cycle_or_error(uow: UnitOfWork, cycle_id: int, user: AuthenticatedUser):
+    cycle = uow.cycles.get(cycle_id)
+    if cycle is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Ciclo {cycle_id} no encontrado.")
+    if not _can_manage_cycle(user, cycle):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Solo el docente que creó el ciclo puede modificarlo."
+        )
+    return cycle
+
+
 @app.post(
     "/cycles",
     response_model=AcademicCycleResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["ciclos"],
-    dependencies=[Depends(require_admin)],
 )
 def create_cycle(
-    payload: AcademicCycleCreateRequest, uow: UnitOfWork = Depends(new_unit_of_work)
+    payload: AcademicCycleCreateRequest,
+    user: AuthenticatedUser = Depends(current_user),
+    uow: UnitOfWork = Depends(new_unit_of_work),
 ) -> AcademicCycleResponse:
+    """HU-C3: registra un ciclo académico. Si lo crea un docente, queda
+    como dueño; si lo crea el Administrador, el ciclo no tiene dueño."""
+    _require_cycle_editor(user)
+    owner_id = user.id if user.role == ROLE_TEACHER else None
     try:
         with uow:
-            cycle = uow.cycles.create(payload.name, starts_on=payload.starts_on)
+            cycle = uow.cycles.create(
+                payload.name,
+                starts_on=payload.starts_on,
+                ends_on=payload.ends_on,
+                owner_teacher_id=owner_id,
+            )
             uow.commit()
     except DuplicateAcademicCycleError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    return AcademicCycleResponse(
-        id=cycle.id, name=cycle.name, created_at=cycle.created_at, starts_on=cycle.starts_on
-    )
+    return _cycle_response(cycle, user, course_count=0)
 
 
 @app.patch(
     "/cycles/{cycle_id}",
     response_model=AcademicCycleResponse,
     tags=["ciclos"],
-    dependencies=[Depends(require_admin)],
 )
-def update_cycle_start_date(
+def update_cycle(
     cycle_id: int,
-    payload: AcademicCycleStartDateRequest,
+    payload: AcademicCycleUpdateRequest,
+    user: AuthenticatedUser = Depends(current_user),
     uow: UnitOfWork = Depends(new_unit_of_work),
 ) -> AcademicCycleResponse:
-    with uow:
-        cycle = uow.cycles.set_starts_on(cycle_id, payload.starts_on)
-        if cycle is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, f"Ciclo {cycle_id} no encontrado.")
-        uow.commit()
-    return AcademicCycleResponse(
-        id=cycle.id, name=cycle.name, created_at=cycle.created_at, starts_on=cycle.starts_on
-    )
+    """HU-C3: modifica nombre, fechas o estado (habilitado/deshabilitado)
+    del ciclo. Deshabilitar lo da de baja sin borrarlo."""
+    _require_cycle_editor(user)
+    sent = payload.model_fields_set
+    if "name" in sent and payload.name is None:
+        raise HTTPException(422, "El nombre no puede quedar vacío.")
+    if "starts_on" in sent and payload.starts_on is None:
+        raise HTTPException(
+            422, "La fecha de inicio no puede quedar vacía."
+        )
+    try:
+        with uow:
+            current = _managed_cycle_or_error(uow, cycle_id, user)
+            new_starts = payload.starts_on if "starts_on" in sent else current.starts_on
+            new_ends = payload.ends_on if "ends_on" in sent else current.ends_on
+            if new_starts and new_ends and new_ends < new_starts:
+                raise HTTPException(
+                    422,
+                    "La fecha de fin no puede ser anterior a la fecha de inicio.",
+                )
+            cycle = uow.cycles.update(
+                cycle_id,
+                name=payload.name,
+                starts_on=payload.starts_on,
+                ends_on=payload.ends_on,
+                enabled=payload.enabled,
+                clear_ends_on="ends_on" in sent and payload.ends_on is None,
+            )
+            course_count = uow.cycles.count_courses(cycle_id)
+            uow.commit()
+    except DuplicateAcademicCycleError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return _cycle_response(cycle, user, course_count)
+
+
+@app.delete(
+    "/cycles/{cycle_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["ciclos"],
+)
+def delete_cycle(
+    cycle_id: int,
+    user: AuthenticatedUser = Depends(current_user),
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> Response:
+    """HU-C3: la eliminación definitiva solo procede si el ciclo no tiene
+    cursos asociados; en otro caso debe deshabilitarse."""
+    _require_cycle_editor(user)
+    try:
+        with uow:
+            _managed_cycle_or_error(uow, cycle_id, user)
+            uow.cycles.delete(cycle_id)
+            uow.commit()
+    except AcademicCycleInUseError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get(
@@ -428,15 +527,13 @@ def list_cycles(
 ) -> List[AcademicCycleResponse]:
     with uow:
         cycles = uow.cycles.list_all()
-    allowed_ids = set(request.app.state.app_context.auth_service.cycle_ids_for_user(user))
-    if user.role != "administrador":
-        cycles = [cycle for cycle in cycles if cycle.id in allowed_ids]
-    return [
-        AcademicCycleResponse(
-            id=cycle.id, name=cycle.name, created_at=cycle.created_at, starts_on=cycle.starts_on
-        )
-        for cycle in cycles
-    ]
+        if user.role != ROLE_ADMIN:
+            allowed_ids = set(
+                request.app.state.app_context.auth_service.cycle_ids_for_user(user)
+            )
+            cycles = [cycle for cycle in cycles if cycle.id in allowed_ids]
+        counts = {cycle.id: uow.cycles.count_courses(cycle.id) for cycle in cycles}
+    return [_cycle_response(cycle, user, counts[cycle.id]) for cycle in cycles]
 
 
 @app.get(
@@ -685,10 +782,17 @@ def assign_teacher_courses(
 )
 def create_course(payload: CourseCreateRequest, uow: UnitOfWork = Depends(new_unit_of_work)) -> CourseResponse:
     with uow:
-        if payload.cycle_id is not None and uow.cycles.get(payload.cycle_id) is None:
-            raise HTTPException(
-                status.HTTP_404_NOT_FOUND, f"Ciclo {payload.cycle_id} no encontrado."
-            )
+        if payload.cycle_id is not None:
+            target_cycle = uow.cycles.get(payload.cycle_id)
+            if target_cycle is None:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND, f"Ciclo {payload.cycle_id} no encontrado."
+                )
+            if not target_cycle.enabled:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    f"El ciclo “{target_cycle.name}” está deshabilitado y no admite cursos nuevos.",
+                )
         course = uow.courses.create(payload.name, cycle_id=payload.cycle_id)
         uow.commit()
     return _course_response(course)
