@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Callable
 
 from src.repositories.interfaces import UnitOfWork
@@ -45,6 +45,9 @@ class GradeAnalysisService:
             averages = uow.participations.weekly_score_averages(
                 course_id, start_on, end_on
             )
+            group_averages = uow.group_expositions.weekly_group_score_averages(
+                course_id, start_on, end_on
+            )
 
         totals: dict[tuple[int, int], tuple[float, int]] = {}
         for student_id, session_date, average, count in averages:
@@ -53,8 +56,18 @@ class GradeAnalysisService:
                 key = (student_id, week)
                 total, previous_count = totals.get(key, (0.0, 0))
                 totals[key] = (total + average * count, previous_count + count)
+        group_totals: dict[tuple[int, int], tuple[float, int]] = {}
+        for student_id, session_date, average, count in group_averages:
+            week = ((session_date - start_on).days // 7) + 1
+            if 1 <= week <= WEEK_COUNT:
+                key = (student_id, week)
+                total, previous_count = group_totals.get(key, (0.0, 0))
+                group_totals[key] = (total + average * count, previous_count + count)
         by_student_week = {
             key: total / count for key, (total, count) in totals.items()
+        }
+        by_student_group_week = {
+            key: total / count for key, (total, count) in group_totals.items()
         }
 
         weeks = [
@@ -77,6 +90,10 @@ class GradeAnalysisService:
                     "display_name": student.display_name,
                     "averages": [
                         by_student_week.get((student.id, week))
+                        for week in range(1, WEEK_COUNT + 1)
+                    ],
+                    "group_averages": [
+                        by_student_group_week.get((student.id, week))
                         for week in range(1, WEEK_COUNT + 1)
                     ],
                 }
@@ -136,5 +153,70 @@ class GradeAnalysisService:
                     "present": record.present,
                 }
                 for record, session_date, occurred_at in details
+            ],
+        }
+
+    def weekly_group_details(
+        self, course_id: int, cycle_id: int, student_id: int, week: int
+    ) -> dict:
+        if not 1 <= week <= WEEK_COUNT:
+            raise GradeAnalysisError("La semana debe estar entre 1 y 15.")
+        with self._uow_factory() as uow:
+            course = uow.courses.get(course_id)
+            if course is None:
+                raise CourseNotFoundError(f"Curso {course_id} no encontrado.")
+            if course.cycle_id != cycle_id:
+                raise GradeAnalysisError(
+                    "El curso seleccionado no pertenece al ciclo académico indicado."
+                )
+            cycle = uow.cycles.get(cycle_id)
+            if cycle is None or cycle.starts_on is None:
+                raise GradeAnalysisError(
+                    "Configura la fecha de inicio del ciclo antes de consultar el detalle."
+                )
+            student = next(
+                (item for item in uow.students.list_by_course(course_id)
+                 if item.id == student_id),
+                None,
+            )
+            if student is None:
+                raise GradeAnalysisError(
+                    "El estudiante no pertenece al curso o no está activo."
+                )
+            start_on = cycle.starts_on + timedelta(days=(week - 1) * 7)
+            end_on = start_on + timedelta(days=6)
+            details = uow.group_expositions.weekly_group_details(
+                course_id, student_id, start_on, end_on
+            )
+        return {
+            "course_id": course_id,
+            "cycle_id": cycle_id,
+            "student_id": student_id,
+            "student_name": student.display_name,
+            "week": week,
+            "start_on": start_on,
+            "end_on": end_on,
+            "total": len(details),
+            "expositions": [
+                {
+                    "id": exposition_id,
+                    "group_name": group_name,
+                    "group_score": group_score,
+                    "comment": comment,
+                    "session_date": session_date,
+                    "recorded_at": recorded_at,
+                    "present": present,
+                    "individual_score": individual_score,
+                }
+                for (
+                    exposition_id,
+                    group_name,
+                    group_score,
+                    comment,
+                    session_date,
+                    recorded_at,
+                    present,
+                    individual_score,
+                ) in details
             ],
         }

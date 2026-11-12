@@ -65,6 +65,7 @@ from src.api.schemas import (
     GroupExpositionCreateRequest,
     GroupExpositionResponse,
     GroupExpositionUpdateRequest,
+    WeeklyGroupExpositionDetailsResponse,
     GroupPlanGenerateRequest,
     GroupPlanResponse,
     GroupPlanUpdateRequest,
@@ -1340,6 +1341,30 @@ def weekly_grade_details(
     except GradeAnalysisError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return WeeklyParticipationDetailsResponse(**result)
+
+
+@app.get(
+    "/courses/{course_id}/weekly-group-grades/details",
+    response_model=WeeklyGroupExpositionDetailsResponse,
+    tags=["análisis académico"],
+    dependencies=[Depends(require_course_access)],
+)
+def weekly_group_grade_details(
+    course_id: int,
+    cycle_id: int,
+    student_id: int,
+    week: int,
+    grade_service: GradeAnalysisService = Depends(get_grade_analysis_service),
+) -> WeeklyGroupExpositionDetailsResponse:
+    try:
+        result = grade_service.weekly_group_details(
+            course_id, cycle_id, student_id, week
+        )
+    except CourseNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except GradeAnalysisError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return WeeklyGroupExpositionDetailsResponse(**result)
 
 
 def _member_entries(members) -> List[GroupExpositionMemberEntry]:

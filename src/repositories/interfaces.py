@@ -489,6 +489,20 @@ class GroupExpositionRepository(ABC):
         ...
 
     @abstractmethod
+    def weekly_group_score_averages(
+        self, course_id: int, start_on: date, end_on: date
+    ) -> List[Tuple[int, date, float, int]]:
+        """Promedios de nota grupal por integrante y fecha efectiva."""
+        ...
+
+    @abstractmethod
+    def weekly_group_details(
+        self, course_id: int, student_id: int, start_on: date, end_on: date
+    ) -> List[Tuple[int, str, float, Optional[str], date, datetime, bool, Optional[float]]]:
+        """Notas grupales y datos de cada exposición del integrante."""
+        ...
+
+    @abstractmethod
     def detach_plan(self, plan_id: int) -> None:
         """Quita la referencia a una propuesta que se va a eliminar (las
         notas se conservan con el nombre copiado de la propuesta)."""

@@ -70,6 +70,7 @@ class TestInfraestructura:
         assert 'name="selection-target" value="group"' in page.text
         assert 'id="expo-signal"' in page.text
         assert 'id="expo-grades-form"' in page.text
+        assert 'id="grades-view"' in page.text
         assert 'id="expo-group-score"' in page.text
         assert 'id="expo-member-grades"' in page.text
         assert page.text.count('data-signal-light="') == 3
@@ -77,6 +78,9 @@ class TestInfraestructura:
         assert script.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
         assert "/sessions/select" in script.text
         assert "/group-expositions" in script.text
+        assert "weekly-group-grades/details" in script.text
+        assert "grade-subheading" in script.text
+        assert ">Individual</th><th class=\"grade-subheading\">Grupal" in script.text
         assert "Falta la nota individual de" in script.text
         assert "Amarillo · cerca del tiempo máximo" in script.text
         assert "Rojo · tiempo máximo alcanzado" in script.text
@@ -1434,6 +1438,74 @@ class TestRegistroParticipaciones:
         assert body["students"][1]["averages"][0] == 3
         assert body["students"][0]["averages"][1] == 5
         assert body["students"][0]["averages"][2:] == [None] * 13
+        assert body["students"][0]["group_averages"] == [None] * 15
+        assert body["students"][1]["group_averages"] == [None] * 15
+
+    def test_weekly_group_grade_averages_and_details_are_per_member(self, client: TestClient):
+        cycle = client.post(
+            "/cycles", json={"name": "2032-I", "starts_on": "2032-03-01"}
+        ).json()
+        course = client.post(
+            "/courses", json={"name": "Exposiciones semanales", "cycle_id": cycle["id"]}
+        ).json()
+        student_ids = [
+            client.post(
+                f"/courses/{course['id']}/students",
+                json={"external_ref": f"GE{i}", "display_name": f"Integrante {i}"},
+            ).json()["id"]
+            for i in range(2)
+        ]
+        endpoint = f"/courses/{course['id']}/group-expositions"
+        for session_date, group_score, group_name, comment in (
+            ("2032-03-02", 3, "Grupo 4", "Comentario compartido"),
+            ("2032-03-05", 5, "Grupo 2", "Muy buena exposición"),
+        ):
+            session = client.post(
+                f"/courses/{course['id']}/class-sessions",
+                json={"session_date": session_date},
+            ).json()
+            recorded = client.post(
+                endpoint,
+                json={
+                    "group_name": group_name,
+                    "group_score": group_score,
+                    "class_session_id": session["id"],
+                    "comment": comment,
+                    "members": [
+                        {"student_id": student_ids[0], "present": True, "score": 4},
+                        {"student_id": student_ids[1], "present": False, "score": None},
+                    ],
+                },
+            )
+            assert recorded.status_code == 201
+
+        matrix = client.get(
+            f"/courses/{course['id']}/weekly-grades",
+            params={"cycle_id": cycle["id"]},
+        )
+        assert matrix.status_code == 200
+        students = {item["student_id"]: item for item in matrix.json()["students"]}
+        assert students[student_ids[0]]["group_averages"][0] == 4
+        assert students[student_ids[1]]["group_averages"][0] == 4
+
+        details = client.get(
+            f"/courses/{course['id']}/weekly-group-grades/details",
+            params={
+                "cycle_id": cycle["id"],
+                "student_id": student_ids[1],
+                "week": 1,
+            },
+        )
+        assert details.status_code == 200
+        body = details.json()
+        assert body["total"] == 2
+        assert [item["group_name"] for item in body["expositions"]] == ["Grupo 4", "Grupo 2"]
+        assert [item["group_score"] for item in body["expositions"]] == [3, 5]
+        assert [item["comment"] for item in body["expositions"]] == [
+            "Comentario compartido", "Muy buena exposición"
+        ]
+        assert [item["present"] for item in body["expositions"]] == [False, False]
+        assert [item["individual_score"] for item in body["expositions"]] == [None, None]
 
     def test_records_question_and_comment_and_they_are_optional(self, client: TestClient):
         course_id, _, decision = self._decision(client)

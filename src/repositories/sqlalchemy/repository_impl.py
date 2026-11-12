@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import func, select, update
+from sqlalchemy import Date, cast, func, select, update
 from sqlalchemy.orm import Session
 
 from src.domain.entities import (
@@ -1150,6 +1150,84 @@ class SqlAlchemyGroupExpositionRepository(GroupExpositionRepository):
             .limit(limit)
         ).scalars().all()
         return [self._to_exposition(row) for row in rows]
+
+    def _effective_session_date(self):
+        created_at_date = (
+            func.date(GroupExpositionORM.created_at)
+            if self._session.get_bind().dialect.name == "sqlite"
+            else cast(GroupExpositionORM.created_at, Date)
+        )
+        return func.coalesce(
+            ClassSessionORM.session_date,
+            created_at_date,
+        )
+
+    def weekly_group_score_averages(
+        self, course_id: int, start_on: date, end_on: date
+    ) -> List[Tuple[int, date, float, int]]:
+        effective_date = self._effective_session_date()
+        rows = self._session.execute(
+            select(
+                GroupExpositionMemberScoreORM.student_id,
+                effective_date,
+                func.avg(GroupExpositionORM.group_score),
+                func.count(GroupExpositionORM.id),
+            )
+            .join(
+                GroupExpositionORM,
+                GroupExpositionORM.id == GroupExpositionMemberScoreORM.exposition_id,
+            )
+            .outerjoin(
+                ClassSessionORM,
+                ClassSessionORM.id == GroupExpositionORM.class_session_id,
+            )
+            .where(
+                GroupExpositionORM.course_id == course_id,
+                effective_date >= start_on,
+                effective_date <= end_on,
+            )
+            .group_by(GroupExpositionMemberScoreORM.student_id, effective_date)
+        ).all()
+        return [
+            (student_id, session_date, float(average), int(count))
+            for student_id, session_date, average, count in rows
+        ]
+
+    def weekly_group_details(
+        self, course_id: int, student_id: int, start_on: date, end_on: date
+    ) -> List[Tuple[int, str, float, Optional[str], date, datetime, bool, Optional[float]]]:
+        effective_date = self._effective_session_date()
+        rows = self._session.execute(
+            select(GroupExpositionORM, GroupExpositionMemberScoreORM, effective_date)
+            .join(
+                GroupExpositionMemberScoreORM,
+                GroupExpositionMemberScoreORM.exposition_id == GroupExpositionORM.id,
+            )
+            .outerjoin(
+                ClassSessionORM,
+                ClassSessionORM.id == GroupExpositionORM.class_session_id,
+            )
+            .where(
+                GroupExpositionORM.course_id == course_id,
+                GroupExpositionMemberScoreORM.student_id == student_id,
+                effective_date >= start_on,
+                effective_date <= end_on,
+            )
+            .order_by(effective_date, GroupExpositionORM.created_at, GroupExpositionORM.id)
+        ).all()
+        return [
+            (
+                exposition.id,
+                exposition.group_name,
+                exposition.group_score,
+                exposition.comment,
+                session_date,
+                exposition.created_at,
+                member.present,
+                member.score,
+            )
+            for exposition, member, session_date in rows
+        ]
 
     def detach_plan(self, plan_id: int) -> None:
         self._session.execute(

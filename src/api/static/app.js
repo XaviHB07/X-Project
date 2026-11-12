@@ -868,20 +868,35 @@ function gradeCellStyle(value) {
 }
 
 function renderGradeMatrix(matrix) {
-  elements.gradeMatrixHead.innerHTML = `<tr><th class="grade-student-heading">Estudiante</th>${matrix.weeks
-    .map((week) => `<th><span>${week.label}</span><small>${formatGradeRange(week.start_on, week.end_on)}</small></th>`).join("")}</tr>`;
+  elements.gradeMatrixHead.innerHTML = `
+    <tr>
+      <th class="grade-student-heading" rowspan="2">Estudiante</th>
+      ${matrix.weeks.map((week) => `<th class="grade-week-heading" colspan="2"><span>${week.label}</span><small>${formatGradeRange(week.start_on, week.end_on)}</small></th>`).join("")}
+    </tr>
+    <tr>${matrix.weeks.map(() => '<th class="grade-subheading">Individual</th><th class="grade-subheading">Grupal</th>').join("")}</tr>`;
+  const renderCell = (value, studentId, week, type) => value === null
+    ? '<td class="grade-missing" title="Sin nota registrada">-</td>'
+    : `<td class="grade-value" style="${gradeCellStyle(value)}"><button class="grade-cell-button" type="button" data-grade-student="${studentId}" data-grade-week="${week}" data-grade-type="${type}" title="Ver detalle de nota ${type === "group" ? "grupal" : "individual"} de la Semana ${week}">${Number(value).toFixed(2)}</button></td>`;
   elements.gradeMatrixBody.innerHTML = matrix.students.map((student) => `
     <tr>
       <th class="grade-student-name"><span>${escapeHtml(student.display_name)}</span><small>${escapeHtml(student.external_ref)}</small></th>
-      ${student.averages.map((value, index) => value === null
-        ? '<td class="grade-missing" title="Sin participación">-</td>'
-        : `<td class="grade-value" style="${gradeCellStyle(value)}"><button class="grade-cell-button" type="button" data-grade-student="${student.student_id}" data-grade-week="${index + 1}" title="Ver participaciones de la Semana ${index + 1}">${Number(value).toFixed(2)}</button></td>`).join("")}
+      ${student.averages.map((value, index) => `
+        ${renderCell(value, student.student_id, index + 1, "individual")}
+        ${renderCell(student.group_averages[index], student.student_id, index + 1, "group")}
+      `).join("")}
     </tr>`).join("");
   elements.gradeMatrixScroll.hidden = false;
   elements.gradeLegend.hidden = false;
 }
 
+function formatGradeValue(value) {
+  return value === null || value === undefined
+    ? "—"
+    : Number(value).toLocaleString("es", { maximumFractionDigits: 2 });
+}
+
 function renderGradeDetails(details) {
+  elements.gradeDetailDialog.classList.remove("is-group-detail");
   elements.gradeDetailTitle.textContent = details.student_name;
   elements.gradeDetailSubtitle.textContent =
     `Semana ${details.week} · ${formatGradeRange(details.start_on, details.end_on)}`;
@@ -895,7 +910,7 @@ function renderGradeDetails(details) {
       </div>
       <dl class="grade-detail-fields">
         <div><dt>Pregunta</dt><dd>${escapeHtml(item.question || "—")}</dd></div>
-        <div><dt>Nota (0 a 5)</dt><dd>${Number(item.score).toLocaleString("es", { maximumFractionDigits: 2 })}</dd></div>
+        <div><dt>Nota individual (0 a 5)</dt><dd>${formatGradeValue(item.score)}</dd></div>
         <div><dt>Comentario</dt><dd>${escapeHtml(item.comment || "—")}</dd></div>
         <div><dt>Presente</dt><dd><span class="attendance-badge ${item.present ? "is-present" : "is-absent"}">${item.present ? "Sí" : "No"}</span></dd></div>
       </dl>
@@ -903,7 +918,31 @@ function renderGradeDetails(details) {
   elements.gradeDetailDialog.showModal();
 }
 
-async function loadGradeDetails(studentId, week) {
+function renderGroupGradeDetails(details) {
+  elements.gradeDetailDialog.classList.add("is-group-detail");
+  elements.gradeDetailTitle.textContent = details.student_name;
+  elements.gradeDetailSubtitle.textContent =
+    `Nota grupal · Semana ${details.week} · ${formatGradeRange(details.start_on, details.end_on)}`;
+  elements.gradeDetailSummary.innerHTML =
+    `<strong>${details.total}</strong><span>exposición${details.total === 1 ? "" : "es"} grupal${details.total === 1 ? "" : "es"} registradas</span>`;
+  elements.gradeDetailList.innerHTML = details.expositions.map((item, index) => `
+    <article class="grade-detail-card">
+      <div class="grade-detail-card-heading">
+        <h3>${escapeHtml(item.group_name || `Grupo ${index + 1}`)}</h3>
+        <time datetime="${item.recorded_at}">${escapeHtml(formatDate(item.recorded_at))}</time>
+      </div>
+      <dl class="grade-detail-fields">
+        <div><dt>Nota grupal (0 a 5)</dt><dd>${formatGradeValue(item.group_score)}</dd></div>
+        <div><dt>Nota individual del integrante</dt><dd>${formatGradeValue(item.individual_score)}</dd></div>
+        <div><dt>Comentario del grupo</dt><dd>${escapeHtml(item.comment || "—")}</dd></div>
+        <div><dt>Presente</dt><dd><span class="attendance-badge ${item.present ? "is-present" : "is-absent"}">${item.present ? "Sí" : "No"}</span></dd></div>
+        <div><dt>Fecha de exposición</dt><dd>${escapeHtml(formatDay(item.session_date))}</dd></div>
+      </dl>
+    </article>`).join("");
+  elements.gradeDetailDialog.showModal();
+}
+
+async function loadGradeDetails(studentId, week, gradeType) {
   const cycleId = Number(elements.gradeCycle.value) || state.gradeCycleId;
   const courseId = state.gradeMatrix?.course_id;
   if (!cycleId || !courseId) return;
@@ -913,10 +952,14 @@ async function loadGradeDetails(studentId, week) {
   elements.gradeDetailList.innerHTML = "";
   elements.gradeDetailDialog.showModal();
   try {
+    const endpoint = gradeType === "group"
+      ? "weekly-group-grades/details"
+      : "weekly-grades/details";
     const details = await api(
-      `/courses/${courseId}/weekly-grades/details?cycle_id=${cycleId}&student_id=${studentId}&week=${week}`,
+      `/courses/${courseId}/${endpoint}?cycle_id=${cycleId}&student_id=${studentId}&week=${week}`,
     );
-    renderGradeDetails(details);
+    if (gradeType === "group") renderGroupGradeDetails(details);
+    else renderGradeDetails(details);
   } catch (error) {
     elements.gradeDetailDialog.close();
     notify(error.message, true);
@@ -3960,7 +4003,11 @@ elements.gradeCourse.addEventListener("change", loadGradeMatrix);
 elements.gradeMatrixBody.addEventListener("click", (event) => {
   const button = event.target.closest("[data-grade-student]");
   if (!button) return;
-  loadGradeDetails(Number(button.dataset.gradeStudent), Number(button.dataset.gradeWeek));
+  loadGradeDetails(
+    Number(button.dataset.gradeStudent),
+    Number(button.dataset.gradeWeek),
+    button.dataset.gradeType,
+  );
 });
 $("#grade-detail-close").addEventListener("click", () => elements.gradeDetailDialog.close());
 elements.gradeDetailDialog.addEventListener("click", (event) => {

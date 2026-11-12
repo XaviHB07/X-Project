@@ -321,7 +321,9 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |POST|`/courses`|Crear un curso (opcionalmente asociado a `cycle_id`)|
 |GET|`/courses`|Listar cursos (HU-S1)|
 |GET|`/courses/{course_id}/group-plans`|Listar propuestas de grupos guardadas|
-|GET|`/courses/{course_id}/weekly-grades?cycle_id={cycle_id}`|Matriz semanal de promedios de notas para las 15 semanas del ciclo|
+|GET|`/courses/{course_id}/weekly-grades?cycle_id={cycle_id}`|Matriz de promedios semanales individuales y grupales para las 15 semanas|
+|GET|`/courses/{course_id}/weekly-grades/details`|Detalle de participaciones individuales por estudiante y semana|
+|GET|`/courses/{course_id}/weekly-group-grades/details`|Detalle de notas grupales por estudiante y semana|
 |POST|`/courses/{course_id}/group-plans`|Generar un borrador aleatorio por tamaño máximo de grupo (no persiste)|
 |POST|`/courses/{course_id}/group-plans/manual`|Generar un borrador equilibrado por cantidad de grupos (no persiste)|
 |POST|`/courses/{course_id}/group-plans/confirm`|Confirmar y guardar el borrador después de editarlo|

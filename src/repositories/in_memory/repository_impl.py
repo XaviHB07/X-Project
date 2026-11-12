@@ -839,6 +839,61 @@ class InMemoryGroupExpositionRepository(GroupExpositionRepository):
         expositions.sort(key=lambda item: (item.created_at, item.id), reverse=True)
         return expositions[:limit]
 
+    def _effective_date(self, exposition: GroupExposition) -> date:
+        if exposition.class_session_id is not None:
+            session = self._db.class_sessions.get(exposition.class_session_id)
+            if session is not None and session.session_date is not None:
+                return session.session_date
+        return exposition.created_at.date()
+
+    def weekly_group_score_averages(
+        self, course_id: int, start_on: date, end_on: date
+    ) -> List[Tuple[int, date, float, int]]:
+        grouped: Dict[Tuple[int, date], List[float]] = {}
+        for exposition in self._db.group_expositions.values():
+            if exposition.course_id != course_id:
+                continue
+            session_date = self._effective_date(exposition)
+            if not start_on <= session_date <= end_on:
+                continue
+            for member in exposition.members:
+                grouped.setdefault((member.student_id, session_date), []).append(
+                    exposition.group_score
+                )
+        return [
+            (student_id, session_date, sum(scores) / len(scores), len(scores))
+            for (student_id, session_date), scores in grouped.items()
+        ]
+
+    def weekly_group_details(
+        self, course_id: int, student_id: int, start_on: date, end_on: date
+    ) -> List[Tuple[int, str, float, Optional[str], date, datetime, bool, Optional[float]]]:
+        details = []
+        for exposition in self._db.group_expositions.values():
+            if exposition.course_id != course_id:
+                continue
+            session_date = self._effective_date(exposition)
+            if not start_on <= session_date <= end_on:
+                continue
+            member = next(
+                (item for item in exposition.members if item.student_id == student_id),
+                None,
+            )
+            if member is not None:
+                details.append(
+                    (
+                        exposition.id,
+                        exposition.group_name,
+                        exposition.group_score,
+                        exposition.comment,
+                        session_date,
+                        exposition.created_at,
+                        member.present,
+                        member.score,
+                    )
+                )
+        return sorted(details, key=lambda item: (item[4], item[5], item[0]))
+
     def detach_plan(self, plan_id: int) -> None:
         for exposition_id, exposition in list(self._db.group_expositions.items()):
             if exposition.group_plan_id == plan_id:

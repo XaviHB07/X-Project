@@ -560,6 +560,7 @@ class StudentWeeklyGradesResponse(BaseModel):
     external_ref: str
     display_name: str
     averages: List[Optional[float]]
+    group_averages: List[Optional[float]]
 
 
 class WeeklyGradesResponse(BaseModel):
@@ -638,6 +639,29 @@ class WeeklyParticipationDetailsResponse(BaseModel):
     end_on: date
     total: int
     participations: List[WeeklyParticipationDetailResponse]
+
+
+class WeeklyGroupExpositionDetailResponse(BaseModel):
+    id: int
+    group_name: str
+    group_score: float
+    comment: Optional[str] = None
+    session_date: date
+    recorded_at: datetime
+    present: bool
+    individual_score: Optional[float] = None
+
+
+class WeeklyGroupExpositionDetailsResponse(BaseModel):
+    course_id: int
+    cycle_id: int
+    student_id: int
+    student_name: str
+    week: int
+    start_on: date
+    end_on: date
+    total: int
+    expositions: List[WeeklyGroupExpositionDetailResponse]
 
 
 class AvailableMethodsResponse(BaseModel):
