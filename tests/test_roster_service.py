@@ -123,7 +123,7 @@ class TestImport:
 
         assert len(first.created_accounts) == 1
         assert first.created_accounts[0]["username"] == "A1"
-        assert len(first.created_accounts[0]["temporary_password"]) >= 12
+        assert first.created_accounts[0]["temporary_password"] == "A1"
         assert second.created_accounts == []
         assert roster(uow_factory, course_a)[0].user_id == roster(uow_factory, course_b)[0].user_id
         assert roster(uow_factory, course_a)[0].times_repeated == "0"

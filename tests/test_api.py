@@ -9,8 +9,14 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from src.repositories.sqlalchemy.models import AuthSessionORM, RoleORM, TeacherCourseORM, UserORM
-from src.services.auth_service import hash_password
+from src.repositories.sqlalchemy.models import (
+    AuthSessionORM,
+    RoleORM,
+    StudentORM,
+    TeacherCourseORM,
+    UserORM,
+)
+from src.services.auth_service import hash_password, verify_password
 
 
 @pytest.fixture()
@@ -175,7 +181,7 @@ class TestInfraestructura:
             json={"external_ref": "A1", "display_name": "Ana"},
         )
         assert created.json()["account_username"] == "A1"
-        assert created.json()["temporary_password"]
+        assert created.json()["temporary_password"] == "A1"
         assert created.headers["cache-control"] == "no-store"
         student_id = created.json()["id"]
         updated = client.patch(
@@ -883,7 +889,14 @@ class TestImportacionExcel:
         assert len(body["created_accounts"]) == 1
         account = body["created_accounts"][0]
         assert account["email"] == "ana@uni.edu.pe"
-        assert len(account["temporary_password"]) >= 12
+        assert account["temporary_password"] == account["username"] == "A1"
+        with client.app.state.app_context.auth_service._session_factory() as session:
+            student_account = session.execute(
+                select(UserORM).where(UserORM.username == "A1")
+            ).scalar_one()
+            assert student_account.password_hash != "A1"
+            assert verify_password("A1", student_account.password_hash)
+            assert student_account.must_change_password is True
         assert (student["roster_number"], student["specialty"]) == ("5", "I2")
         assert (student["student_condition"], student["times_repeated"]) == ("Regular", "1")
         assert student["user_id"] is not None
@@ -1151,6 +1164,125 @@ class TestSesionesYAsistencia:
 
 
 class TestStudentAccountsAndPortal:
+    def test_student_portal_and_teacher_grade_visibility(self, client: TestClient):
+        course_id = new_course(client, "Curso sin ciclo")
+        imported = upload(
+            client,
+            course_id,
+            [["CODIGO", "ALUMNO"], ["STU001", "Ana Torres"]],
+        )
+        credential = imported.json()["created_accounts"][0]
+        student_id = client.get(f"/courses/{course_id}/students").json()[0]["id"]
+        decision = client.post(
+            f"/courses/{course_id}/sessions/select",
+            json={"present_student_ids": [student_id], "k": 1, "method": "roulette"},
+        ).json()
+        participation_url = (
+            f"/courses/{course_id}/decision-runs/"
+            f"{decision['decision_run_id']}/participations"
+        )
+        invalid_difficulty = client.post(
+            participation_url,
+            json={
+                "participations": [
+                    {
+                        "student_id": student_id,
+                        "score": 4.5,
+                        "present": True,
+                        "difficulty": 6,
+                    }
+                ]
+            },
+        )
+        assert invalid_difficulty.status_code == 422
+
+        saved = client.post(
+            participation_url,
+            json={
+                "participations": [
+                    {
+                        "student_id": student_id,
+                        "score": 4.5,
+                        "present": True,
+                        "difficulty": 5,
+                        "question": "¿Cómo se resuelve?",
+                        "comment": "Buen desarrollo",
+                    }
+                ]
+            },
+        )
+        assert saved.status_code == 201
+        assert saved.json()[0]["grade_visible"] is False
+        assert saved.json()[0]["score"] == 4.5
+
+        teachers = client.get("/admin/teachers").json()
+        teacher_id = teachers[0]["id"]
+        assigned = client.put(
+            f"/admin/teachers/{teacher_id}/courses",
+            json={"course_ids": [course_id]},
+        )
+        assert assigned.status_code == 200
+        client.cookies.clear()
+        student_login = client.post(
+            "/auth/login",
+            json={
+                "username": credential["username"],
+                "password": credential["temporary_password"],
+            },
+        )
+        assert student_login.status_code == 200
+        assert student_login.json()["must_change_password"] is True
+        assert client.post(
+            "/auth/change-password",
+            json={"new_password": "ana-portal-password-123"},
+        ).status_code == 200
+        hidden_history = client.get("/student/history")
+        assert hidden_history.status_code == 200
+        assert hidden_history.json()[0]["score"] is None
+        assert hidden_history.json()[0]["grade_visible"] is False
+        assert hidden_history.json()[0]["difficulty"] == 5
+        assert client.get(f"/courses/{course_id}/participations").status_code == 403
+
+        client.cookies.clear()
+        teacher_login = client.post(
+            "/auth/login",
+            json={"username": "teacher", "password": "test-teacher-password-123"},
+        )
+        assert teacher_login.status_code == 200
+        participation = client.get(f"/courses/{course_id}/participations").json()[0]
+        assert participation["difficulty"] == 5
+        published = client.patch(
+            f"/courses/{course_id}/participations/{participation['id']}/visibility",
+            json={"grade_visible": True},
+        )
+        assert published.status_code == 200
+        assert published.json()["score"] == 4.5
+
+        client.cookies.clear()
+        student_login = client.post(
+            "/auth/login",
+            json={
+                "username": credential["username"],
+                "password": "ana-portal-password-123",
+            },
+        )
+        assert student_login.status_code == 200
+
+        courses = client.get("/student/courses")
+        assert [item["course_id"] for item in courses.json()] == [course_id]
+        weeks = client.get(f"/student/courses/{course_id}/weeks")
+        assert weeks.status_code == 200
+        assert weeks.json()["weeks"] == []
+        assert len(weeks.json()["unassigned_sessions"]) == 1
+        assert client.get(f"/courses/{course_id}/participations").status_code == 403
+        history = client.get("/student/history")
+        assert history.status_code == 200
+        assert history.json()[0]["score"] == 4.5
+        assert history.json()[0]["grade_visible"] is True
+        assert history.json()[0]["difficulty"] == 5
+        assert history.json()[0]["question"] == "¿Cómo se resuelve?"
+        assert history.json()[0]["comment"] == "Buen desarrollo"
+
     def test_admin_can_register_list_and_reset_student_account(self, client: TestClient):
         created = client.post(
             "/admin/students",
@@ -1162,7 +1294,7 @@ class TestStudentAccountsAndPortal:
         assert account["username"] == "2024001"
         assert account["email"] == "ana@uni.edu.pe"
         assert account["role"] == "estudiante"
-        assert "temporary_password" in account
+        assert account["temporary_password"] == account["username"]
         assert "temporary_password" not in client.get("/admin/students").text
         duplicate_username = client.post(
             "/admin/students",
@@ -1198,6 +1330,7 @@ class TestStudentAccountsAndPortal:
             course["id"],
             [["codigo", "nombre", "CORREO UNI"], ["A1", "Ana Torres", "ana@example.edu"]],
         ).json()
+        own_student_id = client.get(f"/courses/{course['id']}/students").json()[0]["id"]
         credential = imported["created_accounts"][0]
 
         for session_date in ("2030-03-01", "2030-03-08", "2030-06-14", "2030-06-21"):
@@ -1225,6 +1358,7 @@ class TestStudentAccountsAndPortal:
         assert [item["course_id"] for item in courses.json()] == [course["id"]]
         assert client.get("/courses").status_code == 403
         assert client.get(f"/courses/{course['id']}/students").status_code == 403
+        assert client.get(f"/students/{own_student_id}/state").status_code == 403
         assert client.get(f"/student/courses/{other_course}/weeks").status_code == 404
         weeks = client.get(f"/student/courses/{course['id']}/weeks")
         assert weeks.status_code == 200
@@ -1249,13 +1383,14 @@ class TestStudentAccountsAndPortal:
         credential = imported.json()["created_accounts"][0]
         assert credential["username"] == "000123"
         assert credential["email"] is None
-        assert credential["temporary_password"]
+        assert credential["temporary_password"] == "000123"
         client.cookies.clear()
         login = client.post(
             "/auth/login",
             json={"username": "000123", "password": credential["temporary_password"]},
         )
         assert login.status_code == 200
+        assert login.json()["must_change_password"] is True
 
     def test_import_reuses_email_account_and_sets_roster_code_as_username(self, client: TestClient):
         created = client.post(
@@ -1330,9 +1465,25 @@ class TestMigracionDeBaseAnterior:
 
             students = client.get("/courses/1/students").json()
             assert [(s["display_name"], s["active"]) for s in students] == [("Estudiante previo", True)]
+            with auth_service._session_factory() as session:
+                student = session.execute(
+                    select(StudentORM).where(StudentORM.id == 1)
+                ).scalar_one()
+                student_account = session.get(UserORM, student.user_id)
+                assert student_account.username == "OLD1"
+                assert student_account.password_hash != "OLD1"
+                assert verify_password("OLD1", student_account.password_hash)
+                assert student_account.must_change_password is True
             created = client.post("/courses/1/class-sessions", json={"topic": "Tema nuevo"})
             assert created.status_code == 201
             assert created.json()["topic"] == "Tema nuevo"
+            client.cookies.clear()
+            student_login = client.post(
+                "/auth/login", json={"username": "OLD1", "password": "OLD1"}
+            )
+            assert student_login.status_code == 200
+            assert student_login.json()["role"] == "estudiante"
+            assert student_login.json()["must_change_password"] is True
 
 
 class TestRegistroParticipaciones:

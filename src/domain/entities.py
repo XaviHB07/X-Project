@@ -254,6 +254,8 @@ class StudentParticipation:
     created_at: datetime
     external_ref: str
     display_name: str
+    difficulty: int = 3
+    grade_visible: bool = False
     question: Optional[str] = None
     comment: Optional[str] = None
 

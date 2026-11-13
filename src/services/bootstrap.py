@@ -123,6 +123,8 @@ _ADDED_COLUMNS = [
     ("class_sessions", "topic", "VARCHAR(255)"),
     ("student_participations", "question", "TEXT"),
     ("student_participations", "comment", "TEXT"),
+    ("student_participations", "difficulty", "INTEGER NOT NULL DEFAULT 3"),
+    ("student_participations", "grade_visible", "BOOLEAN NOT NULL DEFAULT FALSE"),
 ]
 
 
@@ -251,6 +253,14 @@ def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bo
                 if role_name not in existing_names:
                     session.add(RoleORM(name=role_name))
             session.commit()
+        provisioned_students = AuthService(
+            session_factory
+        ).provision_existing_student_accounts()
+        if provisioned_students:
+            logging.info(
+                "Se crearon %s cuentas para estudiantes existentes.",
+                provisioned_students,
+            )
         _provision_initial_admin(session_factory)
 
     event_bus = EventBus()

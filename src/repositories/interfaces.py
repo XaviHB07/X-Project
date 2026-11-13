@@ -473,18 +473,27 @@ class ParticipationRepository(ABC):
         course_id: int,
         decision_run_id: int,
         score_and_presence_by_student: Dict[int, Tuple[float, bool]],
-        details_by_student: Optional[Dict[int, Tuple[Optional[str], Optional[str]]]] = None,
+        details_by_student: Optional[
+            Dict[int, Tuple[Optional[str], Optional[str], int, bool]]
+        ] = None,
     ) -> List[StudentParticipation]:
         """Guarda o actualiza la participación de estudiantes de una decisión.
 
-        `details_by_student` mapea student_id -> (pregunta, comentario), ambos
-        opcionales. Si se omite un estudiante, su pregunta/comentario quedan vacíos.
+        `details_by_student` mapea student_id -> (pregunta, comentario,
+        dificultad, visibilidad de nota).
         """
         ...
 
     @abstractmethod
     def list_by_course(self, course_id: int, limit: int = 200) -> List[StudentParticipation]:
         """Historial más reciente primero."""
+        ...
+
+    @abstractmethod
+    def set_grade_visibility(
+        self, course_id: int, participation_id: int, visible: bool
+    ) -> Optional[StudentParticipation]:
+        """Cambia la visibilidad de una nota solo si pertenece al curso."""
         ...
 
     @abstractmethod

@@ -375,6 +375,10 @@ class StudentParticipationORM(Base):
     __table_args__ = (
         UniqueConstraint("decision_run_id", "student_id", name="uq_participation_run_student"),
         CheckConstraint("score >= 0 AND score <= 5", name="ck_participation_score_range"),
+        CheckConstraint(
+            "difficulty >= 1 AND difficulty <= 5",
+            name="ck_participation_difficulty_range",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -384,6 +388,10 @@ class StudentParticipationORM(Base):
     student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), nullable=False)
     score: Mapped[float] = mapped_column(Float, nullable=False)
     present: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    difficulty: Mapped[int] = mapped_column(Integer, nullable=False, default=3, server_default="3")
+    grade_visible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     question: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

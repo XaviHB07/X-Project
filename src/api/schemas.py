@@ -451,9 +451,24 @@ class StudentWeekResponse(BaseModel):
 
 class StudentWeeksResponse(BaseModel):
     course_id: int
-    cycle_starts_on: date
+    cycle_starts_on: Optional[date] = None
     weeks: List[StudentWeekResponse]
     unassigned_sessions: List[SessionSummaryResponse] = Field(default_factory=list)
+
+
+class StudentParticipationHistoryResponse(BaseModel):
+    id: int
+    course_id: int
+    course_name: str
+    session_date: Optional[date] = None
+    topic: Optional[str] = None
+    score: Optional[float] = None
+    grade_visible: bool
+    difficulty: int
+    present: bool
+    question: Optional[str] = None
+    comment: Optional[str] = None
+    created_at: datetime
 
 
 class AttendanceMark(BaseModel):
@@ -534,6 +549,8 @@ class ParticipationEntryRequest(BaseModel):
     student_id: int = Field(..., gt=0)
     score: float = Field(..., ge=0, le=5)
     present: bool
+    difficulty: int = Field(default=3, ge=1, le=5)
+    grade_visible: bool = False
     question: Optional[str] = Field(None, max_length=1000)
     comment: Optional[str] = Field(None, max_length=1000)
 
@@ -550,9 +567,15 @@ class ParticipationResponse(BaseModel):
     display_name: str
     score: float
     present: bool
+    difficulty: int = Field(..., ge=1, le=5)
+    grade_visible: bool
     created_at: datetime
     question: Optional[str] = None
     comment: Optional[str] = None
+
+
+class ParticipationGradeVisibilityRequest(BaseModel):
+    grade_visible: bool
 
 
 class StudentGroupRequest(BaseModel):

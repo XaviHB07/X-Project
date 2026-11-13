@@ -1028,6 +1028,8 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
             created_at=row.created_at,
             external_ref=student.external_ref,
             display_name=student.display_name,
+            difficulty=row.difficulty,
+            grade_visible=row.grade_visible,
             question=row.question,
             comment=row.comment,
         )
@@ -1037,7 +1039,9 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
         course_id: int,
         decision_run_id: int,
         score_and_presence_by_student: Dict[int, Tuple[float, bool]],
-        details_by_student: Optional[Dict[int, Tuple[Optional[str], Optional[str]]]] = None,
+        details_by_student: Optional[
+            Dict[int, Tuple[Optional[str], Optional[str], int, bool]]
+        ] = None,
     ) -> List[StudentParticipation]:
         details_by_student = details_by_student or {}
         decision_exists = self._session.execute(
@@ -1077,7 +1081,9 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
             ).scalars()
         }
         for student_id, (score, present) in score_and_presence_by_student.items():
-            question, comment = details_by_student.get(student_id, (None, None))
+            question, comment, difficulty, grade_visible = details_by_student.get(
+                student_id, (None, None, 3, False)
+            )
             row = existing_rows.get(student_id)
             if row is None:
                 row = StudentParticipationORM(
@@ -1085,6 +1091,8 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
                     student_id=student_id,
                     score=score,
                     present=present,
+                    difficulty=difficulty,
+                    grade_visible=grade_visible,
                     question=question,
                     comment=comment,
                 )
@@ -1092,6 +1100,8 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
             else:
                 row.score = score
                 row.present = present
+                row.difficulty = difficulty
+                row.grade_visible = grade_visible
                 row.question = question
                 row.comment = comment
 
@@ -1123,6 +1133,29 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
             .limit(limit)
         ).all()
         return [self._to_participation(participation, student) for participation, student in rows]
+
+    def set_grade_visibility(
+        self, course_id: int, participation_id: int, visible: bool
+    ) -> Optional[StudentParticipation]:
+        row = self._session.execute(
+            select(StudentParticipationORM, StudentORM)
+            .join(StudentORM, StudentORM.id == StudentParticipationORM.student_id)
+            .join(
+                DecisionRunORM,
+                DecisionRunORM.id == StudentParticipationORM.decision_run_id,
+            )
+            .join(ClassSessionORM, ClassSessionORM.id == DecisionRunORM.class_session_id)
+            .where(
+                StudentParticipationORM.id == participation_id,
+                ClassSessionORM.course_id == course_id,
+            )
+        ).first()
+        if row is None:
+            return None
+        participation, student = row
+        participation.grade_visible = visible
+        self._session.flush()
+        return self._to_participation(participation, student)
 
     def weekly_score_averages(
         self, course_id: int, start_on: date, end_on: date

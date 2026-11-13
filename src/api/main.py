@@ -23,7 +23,6 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 import os
 from pathlib import Path
-import secrets
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
@@ -76,6 +75,7 @@ from src.api.schemas import (
     ManualGroupPlanRequest,
     LoginRequest,
     ParticipationBatchRequest,
+    ParticipationGradeVisibilityRequest,
     ParticipationResponse,
     RosterImportResponse,
     RosterRowErrorResponse,
@@ -93,6 +93,7 @@ from src.api.schemas import (
     StudentAccountCreatedResponse,
     StudentAccountResponse,
     StudentCourseResponse,
+    StudentParticipationHistoryResponse,
     StudentWeekResponse,
     StudentWeeksResponse,
     StudentStateResponse,
@@ -122,7 +123,7 @@ from src.services.auth_service import (
     ROLE_ADMIN,
     ROLE_STUDENT,
     ROLE_TEACHER,
-    hash_password,
+    hash_initial_student_password,
 )
 from src.services.errors import (
     CourseNotFoundError,
@@ -571,13 +572,9 @@ def list_student_course_weeks(
     with uow:
         course = uow.courses.get(course_id)
         cycle = uow.cycles.get(course.cycle_id) if course and course.cycle_id else None
-    if course is None or cycle is None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "El curso no está asociado a un ciclo académico.")
-    if cycle.starts_on is None:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "El administrador debe configurar la fecha de inicio del ciclo para mostrar las semanas.",
-        )
+    if course is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No se encontró el curso matriculado.")
+    cycle_starts_on = cycle.starts_on if cycle else None
     sessions = session_service.list_sessions(course_id)
     grouped: list[list[SessionSummaryResponse]] = [[] for _ in range(16)]
     unassigned: list[SessionSummaryResponse] = []
@@ -590,10 +587,10 @@ def list_student_course_weeks(
             label=item.label,
             created_at=item.created_at,
         )
-        if item.session_date is None:
+        if item.session_date is None or cycle_starts_on is None:
             unassigned.append(session)
             continue
-        day_offset = (item.session_date - cycle.starts_on).days
+        day_offset = (item.session_date - cycle_starts_on).days
         week_number = day_offset // 7 + 1
         if 1 <= week_number <= 16:
             grouped[week_number - 1].append(session)
@@ -601,13 +598,35 @@ def list_student_course_weeks(
             unassigned.append(session)
     return StudentWeeksResponse(
         course_id=course_id,
-        cycle_starts_on=cycle.starts_on,
-        weeks=[
-            StudentWeekResponse(week_number=index + 1, sessions=week_sessions)
-            for index, week_sessions in enumerate(grouped)
-        ],
+        cycle_starts_on=cycle_starts_on,
+        weeks=(
+            [
+                StudentWeekResponse(week_number=index + 1, sessions=week_sessions)
+                for index, week_sessions in enumerate(grouped)
+            ]
+            if cycle_starts_on is not None
+            else []
+        ),
         unassigned_sessions=unassigned,
     )
+
+
+@app.get(
+    "/student/history",
+    response_model=List[StudentParticipationHistoryResponse],
+    tags=["estudiantes"],
+    dependencies=[Depends(current_user)],
+)
+def list_student_participation_history(
+    request: Request,
+    user: AuthenticatedUser = Depends(current_user),
+) -> List[StudentParticipationHistoryResponse]:
+    if user.role != ROLE_STUDENT:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Este recurso es exclusivo para estudiantes.")
+    history = request.app.state.app_context.auth_service.student_participation_history(
+        user.id
+    )
+    return [StudentParticipationHistoryResponse(**entry) for entry in history]
 
 
 @app.get(
@@ -1062,12 +1081,12 @@ def enroll_student(
             )
         temporary_password = None
         if account is None:
-            temporary_password = secrets.token_urlsafe(18)
+            temporary_password = payload.external_ref
             account = uow.student_accounts.create_student(
                 username=payload.external_ref,
                 full_name=payload.display_name,
                 email=normalized_email,
-                password_hash=hash_password(temporary_password),
+                password_hash=hash_initial_student_password(temporary_password),
             )
         elif account.username != payload.external_ref:
             account = uow.student_accounts.update_username(account.id, payload.external_ref)
@@ -1546,6 +1565,8 @@ def record_participations(
                     item.student_id: (
                         (item.question or "").strip() or None,
                         (item.comment or "").strip() or None,
+                        item.difficulty,
+                        item.grade_visible,
                     )
                     for item in payload.participations
                 },
@@ -1562,7 +1583,7 @@ def record_participations(
     "/courses/{course_id}/participations",
     response_model=List[ParticipationResponse],
     tags=["participación"],
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_course_access)],
 )
 def list_course_participations(
     course_id: int,
@@ -1577,6 +1598,31 @@ def list_course_participations(
     with uow:
         records = uow.participations.list_by_course(course_id, limit=limit)
     return [ParticipationResponse(**record.__dict__) for record in records]
+
+
+@app.patch(
+    "/courses/{course_id}/participations/{participation_id}/visibility",
+    response_model=ParticipationResponse,
+    tags=["participación"],
+    dependencies=[Depends(require_course_access)],
+)
+def update_participation_grade_visibility(
+    course_id: int,
+    participation_id: int,
+    payload: ParticipationGradeVisibilityRequest,
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> ParticipationResponse:
+    with uow:
+        record = uow.participations.set_grade_visibility(
+            course_id, participation_id, payload.grade_visible
+        )
+        if record is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "No se encontró la participación en el curso indicado.",
+            )
+        uow.commit()
+    return ParticipationResponse(**record.__dict__)
 
 
 @app.get(

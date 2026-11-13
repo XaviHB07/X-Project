@@ -98,18 +98,22 @@ asociado al ciclo; la matrícula y edición individual siguen disponibles.
   La matrícula conserva los campos del Excel (NRO, código, alumno, ESP,
   condición, correo UNI y veces repetidas) y se vincula a una cuenta global.
 * **Cuentas de estudiante**: cada cuenta usa como nombre de usuario el código
-  del alumno (`CODIGO` del Excel o el código solicitado en el registro manual).
-  La importación reutiliza la cuenta por correo cuando existe, o por código
-  cuando el correo falta; al reutilizar una cuenta actualiza su usuario al
-  código del Excel sin cambiar su contraseña. Si no encuentra ninguna, crea
-  una cuenta y genera una contraseña temporal de un solo vistazo. Las
-  credenciales se comparten manualmente por un canal privado; el alumno debe
-  cambiar la contraseña al primer ingreso. La vista de administrador permite
-  registrar cuentas y restablecer accesos.
-* **Portal de estudiante**: muestra únicamente los cursos donde la cuenta
-  tiene matrícula activa. El administrador define la fecha inicial del ciclo;
-  las sesiones se ordenan en 16 semanas consecutivas de siete días desde esa
-  fecha. Las sesiones sin fecha o fuera del periodo aparecen aparte.
+  alfanumérico del alumno (`CODIGO` del Excel o el código solicitado en el
+  registro manual). Las cuentas nuevas se crean con el código como contraseña
+  inicial; en la base de datos se almacena únicamente su hash PBKDF2, nunca el
+  texto de la contraseña. El estudiante debe elegir una contraseña personal
+  (mínimo 12 caracteres) al primer ingreso. La importación reutiliza una cuenta
+  por correo o por código cuando existe, sin cambiar su contraseña; también
+  crea y asocia cuentas para matrículas históricas que aún no tengan una al
+  iniciar la aplicación. La vista de administrador permite registrar cuentas
+  y restablecer accesos.
+* **Portal de estudiante**: solo aparece para el rol estudiante y muestra
+  navegación a **Mis cursos**, **Mi historial** y **Solicitar revisión**.
+  Mis cursos incluye matrículas activas aunque el curso todavía no tenga ciclo
+  académico; cuando existe ciclo, las sesiones se ordenan en 16 semanas
+  consecutivas de siete días desde su fecha inicial. Las sesiones sin fecha o
+  fuera del periodo aparecen aparte. Solicitar revisión es informativo por
+  ahora y no crea solicitudes.
 * **`student\_state`**: el estado bayesiano mutable — `alpha`, `beta`,
 `n\_present`, `n\_selected`. Es la tabla que sufre escrituras
 concurrentes; por eso está separada de `students`.
@@ -121,8 +125,12 @@ unidad transaccional.
 * **`session\_attendance`**: marca presente/ausente de cada estudiante en cada sesión (HU-S2).
 * **`selection\_events`**: log de auditoría, un registro por estudiante
 considerado en cada `decision\_run`, con alpha/beta antes y después.
-* **`student\_participations`**: calificación (0 a 5) y asistencia por
-estudiante seleccionado en una decisión, con su fecha/hora de registro.
+* **`student\_participations`**: calificación (0 a 5), asistencia, dificultad
+(1–5) y comentario por estudiante seleccionado en una decisión, con su
+fecha/hora de registro. La nota conserva su valor real y empieza oculta
+(`grade_visible = false`); el docente puede publicarla o volver a ocultarla
+por participación. El historial privado del estudiante no devuelve el valor
+de una nota hasta que esté publicada.
 * **`group\_expositions`**: una exposición calificada de un grupo elegido por
 ruleta o bolillero: nota grupal (0 a 5), comentario y duración cronometrada.
 Guarda una copia del nombre del grupo y de la propuesta (`group\_name`,
@@ -319,6 +327,9 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |GET|`/auth/me`|Consultar la cuenta autenticada|
 |POST|`/auth/change-password`|Configurar una contraseña nueva, requerida después de un reset|
 |POST|`/auth/logout`|Cerrar sesión|
+|GET|`/student/courses`|Estudiante: listar solo sus cursos con matrícula activa|
+|GET|`/student/courses/{course_id}/weeks`|Estudiante: consultar sesiones solo de un curso propio|
+|GET|`/student/history`|Estudiante: consultar su propio historial; notas no publicadas se devuelven ocultas|
 |GET|`/methods`|Estrategias de selección disponibles|
 |GET|`/admin/teachers`|Administrador: listar docentes y cursos asignados|
 |POST|`/admin/teachers`|Administrador: registrar docente, asignar cursos y devolver una contraseña temporal de un solo vistazo|
@@ -346,8 +357,8 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |PUT|`/courses/{course_id}/group-plans/{plan_id}`|Editar y guardar una distribución manual|
 |DELETE|`/courses/{course_id}/group-plans/{plan_id}`|Eliminar una propuesta de grupos|
 |GET|`/courses/{id}`|Obtener un curso|
-|POST|`/courses/{id}/students`|Matricular estudiante y crear cuenta con usuario igual al código (teléfono y correo opcionales)|
-|POST|`/courses/{id}/students/import`|**HU-C1**: cargar la lista desde un Excel `.xlsx` (una vez por curso asociado a ciclo); crea o reutiliza las cuentas usando código y correo|
+|POST|`/courses/{id}/students`|Matricular estudiante y crear cuenta con usuario y contraseña inicial iguales al código (hash; cambio obligatorio al ingresar)|
+|POST|`/courses/{id}/students/import`|**HU-C1**: cargar la lista desde un Excel `.xlsx` (una vez por curso asociado a ciclo); crea o reutiliza cuentas con usuario/código inicial iguales y completa cuentas faltantes de matrículas existentes|
 |GET|`/courses/{id}/students`|Listar estudiantes activos (`?include_inactive=true` incluye retirados)|
 |PATCH|`/students/{id}`|**HU-C1**: editar datos, retirar o reincorporar|
 |GET|`/students/{id}/state`|Estado bayesiano actual (alpha, beta, contadores)|
@@ -362,6 +373,7 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |POST|`/courses/{id}/sessions/select`|**Ejecutar una selección real**. Sin `present_student_ids`, usa la asistencia de `class_session_id`|
 |POST|`/courses/{id}/decision-runs/{run_id}/participations`|Guardar nota (0–5) y asistencia de los estudiantes seleccionados|
 |GET|`/courses/{id}/participations`|Consultar el historial de notas y asistencia del curso|
+|PATCH|`/courses/{id}/participations/{participation_id}/visibility`|Docente del curso o administrador: publicar/ocultar la nota de una participación|
 |GET|`/courses/{id}/fairness-metrics`|Gini / CV / std / cobertura del curso|
 
 Las rutas funcionales requieren sesión autenticada. Para probar la API con

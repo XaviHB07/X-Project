@@ -4,13 +4,12 @@ mantener la lista (editar / retirar estudiantes).
 
 from __future__ import annotations
 
-import secrets
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
 from src.domain.entities import Student
 from src.repositories.interfaces import UnitOfWork
-from src.services.auth_service import ROLE_STUDENT, hash_password
+from src.services.auth_service import ROLE_STUDENT, hash_initial_student_password
 from src.services.errors import CourseNotFoundError, StudentNotFoundError
 from src.services.roster_import import RowError, parse_roster_xlsx
 
@@ -129,12 +128,12 @@ class RosterService:
                     else None
                 ) or uow.student_accounts.get_by_username(row.external_ref)
                 if account is None:
-                    temporary_password = secrets.token_urlsafe(18)
+                    temporary_password = row.external_ref
                     account = uow.student_accounts.create_student(
                         username=row.external_ref,
                         full_name=row.display_name,
                         email=email,
-                        password_hash=hash_password(temporary_password),
+                        password_hash=hash_initial_student_password(temporary_password),
                     )
                     result.created_accounts.append(
                         {

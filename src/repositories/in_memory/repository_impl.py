@@ -771,7 +771,9 @@ class InMemoryParticipationRepository(ParticipationRepository):
         course_id: int,
         decision_run_id: int,
         score_and_presence_by_student: Dict[int, Tuple[float, bool]],
-        details_by_student: Optional[Dict[int, Tuple[Optional[str], Optional[str]]]] = None,
+        details_by_student: Optional[
+            Dict[int, Tuple[Optional[str], Optional[str], int, bool]]
+        ] = None,
     ) -> List[StudentParticipation]:
         details_by_student = details_by_student or {}
         run = self._db.decision_runs.get(decision_run_id)
@@ -793,7 +795,9 @@ class InMemoryParticipationRepository(ParticipationRepository):
         records = []
         for student_id, (score, present) in score_and_presence_by_student.items():
             student = self._db.students[student_id]
-            question, comment = details_by_student.get(student_id, (None, None))
+            question, comment, difficulty, grade_visible = details_by_student.get(
+                student_id, (None, None, 3, False)
+            )
             key = (decision_run_id, student_id)
             record = self._db.participations.get(key)
             if record is None:
@@ -806,12 +810,20 @@ class InMemoryParticipationRepository(ParticipationRepository):
                     created_at=_utcnow(),
                     external_ref=student.external_ref,
                     display_name=student.display_name,
+                    difficulty=difficulty,
+                    grade_visible=grade_visible,
                     question=question,
                     comment=comment,
                 )
             else:
                 record = replace(
-                    record, score=score, present=present, question=question, comment=comment
+                    record,
+                    score=score,
+                    present=present,
+                    difficulty=difficulty,
+                    grade_visible=grade_visible,
+                    question=question,
+                    comment=comment,
                 )
             self._db.participations[key] = record
             records.append(record)
@@ -827,6 +839,21 @@ class InMemoryParticipationRepository(ParticipationRepository):
         ]
         records.sort(key=lambda record: (record.created_at, record.id), reverse=True)
         return records[:limit]
+
+    def set_grade_visibility(
+        self, course_id: int, participation_id: int, visible: bool
+    ) -> Optional[StudentParticipation]:
+        for key, record in self._db.participations.items():
+            if record.id != participation_id:
+                continue
+            run = self._db.decision_runs.get(record.decision_run_id)
+            session = self._db.class_sessions.get(run.class_session_id) if run else None
+            if session is None or session.course_id != course_id:
+                return None
+            updated = replace(record, grade_visible=visible)
+            self._db.participations[key] = updated
+            return updated
+        return None
 
     def weekly_score_averages(
         self, course_id: int, start_on: date, end_on: date

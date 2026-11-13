@@ -16,8 +16,11 @@ from sqlalchemy.orm import Session
 from src.repositories.sqlalchemy.models import (
     AcademicCycleORM,
     AuthSessionORM,
+    ClassSessionORM,
     CourseORM,
+    DecisionRunORM,
     RoleORM,
+    StudentParticipationORM,
     StudentORM,
     TeacherCourseORM,
     UserORM,
@@ -44,6 +47,17 @@ class AuthenticatedUser:
 def hash_password(password: str) -> str:
     if len(password) < 12:
         raise ValueError("La contraseña debe tener al menos 12 caracteres.")
+    return _hash_password(password)
+
+
+def hash_initial_student_password(student_code: str) -> str:
+    """Hash de la clave inicial basada en código, que puede tener menos de 12 caracteres."""
+    if not student_code:
+        raise ValueError("El código del estudiante no puede estar vacío.")
+    return _hash_password(student_code)
+
+
+def _hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac(
         "sha256", password.encode("utf-8"), salt, PASSWORD_ITERATIONS
@@ -165,7 +179,7 @@ class AuthService:
         email = email.strip().lower()
         if not username or not full_name or not email:
             raise ValueError("Código, nombre y correo son obligatorios.")
-        temporary_password = secrets.token_urlsafe(18)
+        temporary_password = username
         with self._session_factory() as session:
             if session.execute(
                 select(UserORM.id).where(UserORM.username == username)
@@ -182,7 +196,7 @@ class AuthService:
                 username=username,
                 full_name=full_name,
                 email=email,
-                password_hash=hash_password(temporary_password),
+                password_hash=hash_initial_student_password(temporary_password),
                 must_change_password=True,
                 role_id=student_role_id,
             )
@@ -195,6 +209,106 @@ class AuthService:
             )
             session.commit()
             return self._student_response(session, student), temporary_password
+
+    def provision_existing_student_accounts(self) -> int:
+        """Crea y asocia cuentas para matrículas históricas que aún no tienen usuario.
+
+        La contraseña inicial es el código de matrícula y se guarda únicamente
+        como hash. Las cuentas nuevas deben cambiarla al iniciar sesión.
+        """
+        with self._session_factory() as session:
+            student_role_id = session.execute(
+                select(RoleORM.id).where(RoleORM.name == ROLE_STUDENT)
+            ).scalar_one()
+            students = session.execute(
+                select(StudentORM)
+                .where(StudentORM.user_id.is_(None))
+                .order_by(StudentORM.id)
+            ).scalars().all()
+            if not students:
+                return 0
+            users = session.execute(
+                select(UserORM).join(RoleORM)
+            ).scalars().all()
+            users_by_username = {user.username: user for user in users}
+            users_by_email = {
+                user.email.strip().lower(): user
+                for user in users
+                if user.email and user.email.strip()
+            }
+            provisioned = 0
+
+            for student in students:
+                username = student.external_ref.strip()
+                if not username:
+                    raise RuntimeError(
+                        f"El estudiante {student.id} no tiene código para crear su cuenta."
+                    )
+                if len(username) > 120:
+                    raise RuntimeError(
+                        f"El código del estudiante {student.id} supera los 120 "
+                        "caracteres permitidos para el usuario."
+                    )
+                email = student.email.strip().lower() if student.email else None
+                email_user = users_by_email.get(email) if email else None
+                username_user = users_by_username.get(username)
+                if (
+                    email_user is not None
+                    and username_user is not None
+                    and email_user.id != username_user.id
+                ):
+                    raise RuntimeError(
+                        f"El correo y el código del estudiante {student.id} "
+                        "pertenecen a cuentas diferentes."
+                    )
+
+                account = email_user or username_user
+                if account is not None and account.role.name != ROLE_STUDENT:
+                    raise RuntimeError(
+                        f"El código del estudiante {student.id} ya pertenece "
+                        "a una cuenta que no es de estudiante."
+                    )
+                if (
+                    account is not None
+                    and account.email
+                    and email
+                    and account.email.strip().lower() != email
+                ):
+                    raise RuntimeError(
+                        f"El código del estudiante {student.id} ya está asociado "
+                        "a otro correo."
+                    )
+
+                if account is None:
+                    account = UserORM(
+                        username=username,
+                        full_name=student.display_name,
+                        email=email,
+                        password_hash=hash_initial_student_password(username),
+                        must_change_password=True,
+                        role_id=student_role_id,
+                    )
+                    session.add(account)
+                    session.flush()
+                    provisioned += 1
+                elif account.username != username:
+                    conflicting_account = users_by_username.get(username)
+                    if conflicting_account is not None and conflicting_account.id != account.id:
+                        raise RuntimeError(
+                            f"El código del estudiante {student.id} ya está "
+                            "asociado a otra cuenta."
+                        )
+                    users_by_username.pop(account.username, None)
+                    account.username = username
+                    users_by_username[username] = account
+
+                if account.email is None and email:
+                    account.email = email
+                    users_by_email[email] = account
+                student.user_id = account.id
+
+            session.commit()
+            return provisioned
 
     def reset_student_password(self, student_id: int) -> str:
         temporary_password = secrets.token_urlsafe(18)
@@ -250,7 +364,6 @@ class AuthService:
                 .where(
                     StudentORM.user_id == student_id,
                     StudentORM.active.is_(True),
-                    CourseORM.cycle_id.is_not(None),
                 )
                 .distinct()
                 .order_by(AcademicCycleORM.id, CourseORM.name, CourseORM.id)
@@ -264,6 +377,64 @@ class AuthService:
                     "cycle_starts_on": cycle.starts_on if cycle else None,
                 }
                 for course, cycle in rows
+            ]
+
+    def student_participation_history(self, student_user_id: int) -> list[dict]:
+        """Historial propio; oculta el valor de notas no publicadas."""
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(
+                    StudentParticipationORM,
+                    StudentORM.course_id,
+                    CourseORM.name,
+                    ClassSessionORM.session_date,
+                    ClassSessionORM.topic,
+                )
+                .join(
+                    StudentORM,
+                    StudentORM.id == StudentParticipationORM.student_id,
+                )
+                .join(
+                    DecisionRunORM,
+                    DecisionRunORM.id == StudentParticipationORM.decision_run_id,
+                )
+                .join(
+                    ClassSessionORM,
+                    ClassSessionORM.id == DecisionRunORM.class_session_id,
+                )
+                .join(CourseORM, CourseORM.id == StudentORM.course_id)
+                .where(
+                    StudentORM.user_id == student_user_id,
+                    StudentORM.active.is_(True),
+                )
+                .order_by(
+                    StudentParticipationORM.created_at.desc(),
+                    StudentParticipationORM.id.desc(),
+                )
+                .limit(200)
+            ).all()
+            return [
+                {
+                    "id": participation.id,
+                    "course_id": course_id,
+                    "course_name": course_name,
+                    "session_date": session_date,
+                    "topic": topic,
+                    "score": participation.score if participation.grade_visible else None,
+                    "grade_visible": participation.grade_visible,
+                    "difficulty": participation.difficulty,
+                    "present": participation.present,
+                    "question": participation.question,
+                    "comment": participation.comment,
+                    "created_at": participation.created_at,
+                }
+                for (
+                    participation,
+                    course_id,
+                    course_name,
+                    session_date,
+                    topic,
+                ) in rows
             ]
 
     def reset_teacher_password(self, teacher_id: int) -> str:

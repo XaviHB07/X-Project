@@ -14,7 +14,7 @@
         <span class="brand-mark login-mark" aria-hidden="true">A</span>
         <p class="eyebrow">AULA / SELECCIÓN JUSTA</p>
         <h1 id="login-title">Iniciar sesión</h1>
-        <p class="login-copy">Ingresa con la cuenta que te asignó el administrador.</p>
+        <p class="login-copy">Estudiantes: usen su código como usuario y contraseña inicial. Deberán crear una contraseña personal al ingresar.</p>
         <form id="login-form">
           <label class="form-label" for="login-username">Usuario o correo</label>
           <input class="field" id="login-username" name="username" autocomplete="username" required />
@@ -43,7 +43,13 @@
 
         <nav class="app-navigation" aria-label="Navegación principal">
           <button class="app-navigation-button" id="student-courses-view-button" type="button" hidden>
-            <span aria-hidden="true">▦</span> Cursos
+            <span aria-hidden="true">▦</span> Mis cursos
+          </button>
+          <button class="app-navigation-button" id="student-history-view-button" type="button" hidden>
+            <span aria-hidden="true">◷</span> Mi historial
+          </button>
+          <button class="app-navigation-button" id="student-review-view-button" type="button" hidden>
+            <span aria-hidden="true">✉</span> Solicitar revisión
           </button>
           <button class="app-navigation-button active" id="daily-view-button" type="button" aria-current="page">
             <span aria-hidden="true">▦</span> Sesiones y asistencia
@@ -123,22 +129,36 @@
         <section class="student-portal" id="student-portal" hidden aria-labelledby="student-portal-title">
           <div class="student-portal-heading">
             <p class="eyebrow">PORTAL DEL ESTUDIANTE</p>
-            <h1 id="student-portal-title">Mis cursos</h1>
-            <p class="heading-meta">Tus cursos están organizados por ciclo académico.</p>
+            <h1 id="student-portal-title">Portal del estudiante</h1>
+            <p class="heading-meta">Consulta tus cursos, participaciones y opciones de revisión.</p>
           </div>
-          <div id="student-course-index" class="student-course-index"></div>
-          <section id="student-course-detail" class="student-course-detail" hidden>
-            <button id="student-course-back" class="text-button" type="button">← Volver a mis cursos</button>
-            <div class="student-course-detail-heading">
-              <div>
-                <p class="eyebrow" id="student-detail-cycle"></p>
-                <h2 id="student-detail-title"></h2>
+          <div id="student-courses-view">
+            <h2 class="student-portal-section-title">Mis cursos</h2>
+            <p class="heading-meta">Tus cursos están organizados por ciclo académico.</p>
+            <div id="student-course-index" class="student-course-index"></div>
+            <section id="student-course-detail" class="student-course-detail" hidden>
+              <button id="student-course-back" class="text-button" type="button">← Volver a mis cursos</button>
+              <div class="student-course-detail-heading">
+                <div>
+                  <p class="eyebrow" id="student-detail-cycle"></p>
+                  <h2 id="student-detail-title"></h2>
+                </div>
               </div>
-            </div>
-            <div id="student-weeks" class="student-weeks"></div>
-            <div id="student-unassigned-sessions" class="student-unassigned-sessions" hidden></div>
+              <div id="student-weeks" class="student-weeks"></div>
+              <div id="student-unassigned-sessions" class="student-unassigned-sessions" hidden></div>
+            </section>
+            <p id="student-courses-empty" class="setup-empty" hidden>No tienes cursos matriculados en este momento.</p>
+          </div>
+          <section id="student-history-view" class="student-history-view" hidden aria-labelledby="student-history-title">
+            <h2 class="student-portal-section-title" id="student-history-title">Mi historial</h2>
+            <p class="heading-meta">Tus participaciones y notas publicadas por el docente.</p>
+            <div id="student-history-list" class="student-history-list"></div>
+            <p id="student-history-empty" class="setup-empty" hidden></p>
           </section>
-          <p id="student-courses-empty" class="setup-empty" hidden>No tienes cursos matriculados en este momento.</p>
+          <section id="student-review-view" class="student-review-view" hidden aria-labelledby="student-review-title">
+            <h2 class="student-portal-section-title" id="student-review-title">Solicitar revisión</h2>
+            <p class="student-review-note">La opción para enviar solicitudes de revisión estará disponible en una próxima etapa.</p>
+          </section>
         </section>
 
         <section class="work-course-picker" id="daily-course-picker" aria-label="Seleccionar ciclo y curso de trabajo">
@@ -376,7 +396,7 @@
             </div>
             <div class="participation-table-wrap">
               <table class="participation-table">
-                <thead><tr><th>Código</th><th>Estudiante</th><th>Pregunta</th><th>Nota</th><th>Comentario</th><th>Fecha y hora</th><th>Asistencia</th></tr></thead>
+                <thead><tr><th>Código</th><th>Estudiante</th><th>Pregunta</th><th>Nota</th><th>Dificultad</th><th>Visible al estudiante</th><th>Comentario</th><th>Fecha y hora</th><th>Asistencia</th></tr></thead>
                 <tbody id="participation-history-body"></tbody>
               </table>
             </div>
@@ -959,6 +979,22 @@
                 <input id="stage-score" class="field participation-score" type="password" inputmode="decimal"
                   autocomplete="new-password" maxlength="6" pattern="[0-9]+([.,][0-9]+)?" aria-label="Nota de 0 a 5" required />
               </div>
+            </div>
+            <div class="stage-pick-grade-options">
+              <label class="stage-pick-field" for="stage-difficulty">
+                <span class="form-label">Dificultad (1 muy baja · 5 muy alta)</span>
+                <select id="stage-difficulty" class="field">
+                  <option value="1">1 · Muy baja</option>
+                  <option value="2">2 · Baja</option>
+                  <option value="3" selected>3 · Media</option>
+                  <option value="4">4 · Alta</option>
+                  <option value="5">5 · Muy alta</option>
+                </select>
+              </label>
+              <label class="participation-grade-visible" for="stage-grade-visible">
+                <input id="stage-grade-visible" type="checkbox" />
+                Mostrar nota al estudiante
+              </label>
             </div>
             <div class="stage-pick-field">
               <label class="form-label" for="stage-comment">Comentario <span class="optional">OPCIONAL</span></label>

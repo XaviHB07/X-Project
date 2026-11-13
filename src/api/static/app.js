@@ -13,6 +13,7 @@ const state = {
   studentAccounts: [],
   studentCourses: [],
   selectedStudentCourse: null,
+  studentPortalView: "courses",
   appView: "daily",
   courseView: "attendance",
   groupPlans: [],
@@ -79,6 +80,8 @@ const elements = {
   studentAccountsPage: $("#student-accounts-page"),
   studentPortal: $("#student-portal"),
   studentCoursesViewButton: $("#student-courses-view-button"),
+  studentHistoryViewButton: $("#student-history-view-button"),
+  studentReviewViewButton: $("#student-review-view-button"),
   dailyViewButton: $("#daily-view-button"),
   gradesViewButton: $("#grades-view-button"),
   cyclesViewButton: $("#cycles-view-button"),
@@ -193,6 +196,11 @@ const elements = {
   studentCourseIndex: $("#student-course-index"),
   studentCourseDetail: $("#student-course-detail"),
   studentWeeks: $("#student-weeks"),
+  studentCoursesView: $("#student-courses-view"),
+  studentHistoryView: $("#student-history-view"),
+  studentReviewView: $("#student-review-view"),
+  studentHistoryList: $("#student-history-list"),
+  studentHistoryEmpty: $("#student-history-empty"),
 };
 
 function escapeHtml(value) {
@@ -276,6 +284,7 @@ async function loadAuthenticatedData(user) {
   elements.appShell.hidden = false;
   if (user.role === "estudiante") {
     state.appView = "studentPortal";
+    state.studentPortalView = "courses";
     setAppView(state.appView);
     try {
       state.studentCourses = await api("/student/courses");
@@ -424,7 +433,7 @@ function renderStudentPortal() {
         ${group.courses.map((course) => `
           <button class="student-course-card" type="button" data-open-student-course="${course.course_id}">
             <span class="student-course-icon" aria-hidden="true">▦</span>
-            <span><strong>${escapeHtml(course.course_name)}</strong><small>Ver sesiones por semana</small></span>
+            <span><strong>${escapeHtml(course.course_name)}</strong><small>Ver sesiones del curso</small></span>
             <span aria-hidden="true">→</span>
           </button>
         `).join("")}
@@ -434,6 +443,30 @@ function renderStudentPortal() {
   $("#student-courses-empty").hidden = state.studentCourses.length > 0;
   elements.studentCourseIndex.hidden = state.studentCourses.length === 0;
   elements.studentCourseDetail.hidden = true;
+}
+
+function setStudentPortalView(view) {
+  const views = {
+    courses: elements.studentCoursesView,
+    history: elements.studentHistoryView,
+    review: elements.studentReviewView,
+  };
+  if (!views[view]) return;
+  state.studentPortalView = view;
+  Object.entries(views).forEach(([name, section]) => {
+    section.hidden = name !== view;
+  });
+  [
+    [elements.studentCoursesViewButton, "courses"],
+    [elements.studentHistoryViewButton, "history"],
+    [elements.studentReviewViewButton, "review"],
+  ].forEach(([button, name]) => {
+    const active = name === view;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  if (view === "history") loadStudentHistory();
 }
 
 async function openStudentCourse(event) {
@@ -478,14 +511,49 @@ function renderStudentWeeks(data) {
   const container = $("#student-unassigned-sessions");
   container.hidden = unassigned.length === 0;
   container.innerHTML = unassigned.length ? `
-    <h3>Sesiones fuera de las 16 semanas</h3>
-    <p class="form-note">Estas sesiones no tienen fecha o están fuera del periodo del ciclo.</p>
+    <h3>${data.cycle_starts_on ? "Sesiones fuera de las 16 semanas" : "Sesiones del curso"}</h3>
+    <p class="form-note">${data.cycle_starts_on
+      ? "Estas sesiones no tienen fecha o están fuera del periodo del ciclo."
+      : "Este curso no tiene un ciclo con fecha de inicio configurada, por eso no se agrupan por semana."}</p>
     <ul>${unassigned.map((session) => `
       <li>${escapeHtml(session.topic || session.label || "Sesión de clase")} · ${
         session.session_date
           ? new Date(`${session.session_date}T00:00:00`).toLocaleDateString("es")
           : "sin fecha"
       }</li>`).join("")}</ul>` : "";
+}
+
+async function loadStudentHistory() {
+  elements.studentHistoryEmpty.hidden = false;
+  elements.studentHistoryEmpty.textContent = "Cargando tu historial…";
+  try {
+    const records = await api("/student/history");
+    elements.studentHistoryList.innerHTML = records.map((record) => `
+      <article class="student-history-item">
+        <div class="student-history-item-heading">
+          <div><strong>${escapeHtml(record.course_name)}</strong>
+            <span>${escapeHtml(record.topic || "Participación")}</span></div>
+          <time>${escapeHtml(record.session_date
+            ? formatDay(record.session_date)
+            : formatDate(record.created_at))}</time>
+        </div>
+        <dl>
+          <div><dt>Nota</dt><dd>${record.grade_visible && record.score !== null
+            ? formatGradeValue(record.score)
+            : "Pendiente de publicación"}</dd></div>
+          <div><dt>Dificultad</dt><dd>${record.difficulty} de 5</dd></div>
+          <div><dt>Presencia</dt><dd>${record.present ? "Presente" : "Ausente"}</dd></div>
+          <div><dt>Pregunta</dt><dd>${escapeHtml(record.question || "—")}</dd></div>
+          <div class="student-history-comment"><dt>Comentario</dt><dd>${escapeHtml(record.comment || "—")}</dd></div>
+        </dl>
+      </article>`).join("");
+    elements.studentHistoryEmpty.hidden = records.length > 0;
+    elements.studentHistoryEmpty.textContent = "Todavía no tienes participaciones registradas.";
+  } catch (error) {
+    elements.studentHistoryList.innerHTML = "";
+    elements.studentHistoryEmpty.textContent = error.message;
+    elements.studentHistoryEmpty.hidden = false;
+  }
 }
 
 function filterCourseOptions(searchInput, optionsContainer) {
@@ -1065,8 +1133,9 @@ function setAppView(view) {
     elements.studentPortal.hidden = false;
     document.querySelector(".app-navigation").hidden = false;
     elements.studentCoursesViewButton.hidden = false;
-    elements.studentCoursesViewButton.classList.add("active");
-    elements.studentCoursesViewButton.setAttribute("aria-current", "page");
+    elements.studentHistoryViewButton.hidden = false;
+    elements.studentReviewViewButton.hidden = false;
+    setStudentPortalView(state.studentPortalView);
     [
       elements.dailyViewButton,
       elements.gradesViewButton,
@@ -1098,9 +1167,15 @@ function setAppView(view) {
     return;
   }
   elements.studentPortal.hidden = true;
-  elements.studentCoursesViewButton.hidden = true;
-  elements.studentCoursesViewButton.classList.remove("active");
-  elements.studentCoursesViewButton.removeAttribute("aria-current");
+  [
+    elements.studentCoursesViewButton,
+    elements.studentHistoryViewButton,
+    elements.studentReviewViewButton,
+  ].forEach((button) => {
+    button.hidden = true;
+    button.classList.remove("active");
+    button.removeAttribute("aria-current");
+  });
   elements.dailyViewButton.hidden = false;
   elements.enrollmentViewButton.hidden = false;
   document.querySelector(".topbar").hidden = false;
@@ -1182,7 +1257,6 @@ function setAppView(view) {
   elements.studentAccountForm.hidden = !isAdminView;
   $("#create-course-form button[type=submit]").disabled =
     !isAdminView || !Number(elements.courseCreationCycle.value);
-  elements.participationsTab.hidden = teacherView;
   elements.sidebarUser.textContent = `${state.authenticatedUser?.full_name || ""} · ${
     state.authenticatedUser?.role === "administrador" ? "Administrador" : "Docente"
   }`;
@@ -1230,12 +1304,6 @@ function setAppView(view) {
 }
 
 function setCourseView(view) {
-  if (
-    (state.authenticatedUser?.role === "docente" || state.viewAs === "docente")
-    && view === "participations"
-  ) {
-    view = "attendance";
-  }
   state.courseView = view;
   const attendance = view === "attendance";
   const participations = view === "participations";
@@ -1533,6 +1601,11 @@ async function loadParticipationHistory() {
         <td>${escapeHtml(record.display_name)}</td>
         <td class="participation-note">${escapeHtml(record.question || "—")}</td>
         <td>${Number(record.score).toLocaleString("es", { maximumFractionDigits: 2 })}</td>
+        <td>${record.difficulty} de 5</td>
+        <td><label class="participation-grade-visible">
+          <input type="checkbox" data-participation-visibility="${record.id}" ${record.grade_visible ? "checked" : ""} />
+          <span>${record.grade_visible ? "Publicada" : "Oculta"}</span>
+        </label></td>
         <td class="participation-note">${escapeHtml(record.comment || "—")}</td>
         <td>${escapeHtml(formatDate(record.created_at))}</td>
         <td><span class="attendance-badge ${record.present ? "is-present" : "is-absent"}">${record.present ? "Presente" : "Ausente"}</span></td>
@@ -1991,6 +2064,20 @@ function renderSelectionResult(result) {
       <label class="participation-attendance" for="participation-present-${id}">
         <input id="participation-present-${id}" data-presence-id="${id}" type="checkbox" ${wasPresent ? "checked" : ""} />
         Presente
+      </label>
+      <label class="participation-extra-field" for="participation-difficulty-${id}">
+        <span>Dificultad</span>
+        <select class="field" id="participation-difficulty-${id}" data-difficulty-id="${id}">
+          <option value="1">1 · Muy baja</option>
+          <option value="2">2 · Baja</option>
+          <option value="3" selected>3 · Media</option>
+          <option value="4">4 · Alta</option>
+          <option value="5">5 · Muy alta</option>
+        </select>
+      </label>
+      <label class="participation-grade-visible" for="participation-visible-${id}">
+        <input id="participation-visible-${id}" data-grade-visible-id="${id}" type="checkbox" />
+        Mostrar nota al estudiante
       </label>
     </article>`;
   }).join("");
@@ -2767,7 +2854,7 @@ elements.studentAccountForm.addEventListener("submit", async (event) => {
     elements.studentAccountForm.reset();
     showTemporaryPassword(
       temporary_password,
-      `Contraseña temporal de ${account.full_name}. Comparte el usuario y la contraseña por un canal privado.`,
+      `Contraseña inicial igual al código de ${account.full_name}. Deberá cambiarla al ingresar.`,
       account.username,
     );
   } catch (error) {
@@ -3089,7 +3176,7 @@ $("#enroll-form").addEventListener("submit", async (event) => {
     if (student.temporary_password) {
       showTemporaryPassword(
         student.temporary_password,
-        `Acceso creado para ${student.display_name}. La persona deberá cambiar la contraseña al ingresar.`,
+        `La contraseña inicial de ${student.display_name} es su código. Deberá cambiarla al ingresar.`,
         student.account_username,
       );
     } else {
@@ -3891,6 +3978,8 @@ $("#stage-pick-form").addEventListener("submit", async (event) => {
           present: $("#stage-present").checked,
           question: $("#stage-question").value.trim() || null,
           comment: $("#stage-comment").value.trim() || null,
+          difficulty: Number($("#stage-difficulty").value),
+          grade_visible: $("#stage-grade-visible").checked,
         }],
       }),
     });
@@ -3940,10 +4029,13 @@ $("#participation-form").addEventListener("submit", async (event) => {
   const scores = [...document.querySelectorAll("[data-score-id]")];
   const participations = scores.map((input) => {
     const rawScore = input.value.trim().replace(",", ".");
+    const studentId = Number(input.dataset.scoreId);
     return {
-      student_id: Number(input.dataset.scoreId),
+      student_id: studentId,
       score: Number(rawScore),
-      present: document.querySelector(`[data-presence-id="${input.dataset.scoreId}"]`).checked,
+      present: document.querySelector(`[data-presence-id="${studentId}"]`).checked,
+      difficulty: Number(document.querySelector(`[data-difficulty-id="${studentId}"]`).value),
+      grade_visible: document.querySelector(`[data-grade-visible-id="${studentId}"]`).checked,
     };
   });
   if (participations.some((item) => !Number.isFinite(item.score) || item.score < 0 || item.score > 5)) {
@@ -4048,7 +4140,7 @@ function renderImportResult(result) {
   const accounts = (result.created_accounts || []).map((account) => `
     <li><strong>${escapeHtml(account.full_name)}</strong> · ${escapeHtml(account.email || "Sin correo")}
       · Usuario: <code>${escapeHtml(account.username)}</code>
-      · Contraseña temporal: <code>${escapeHtml(account.temporary_password)}</code></li>
+      · Contraseña inicial (código): <code>${escapeHtml(account.temporary_password)}</code></li>
   `).join("");
   const updatedAccounts = (result.updated_accounts || []).map((account) => `
     <li>Fila ${account.row_number}: <strong>${escapeHtml(account.full_name)}</strong>
@@ -4058,7 +4150,7 @@ function renderImportResult(result) {
   elements.importResult.innerHTML = `<strong>${result.total_rows} fila${result.total_rows === 1 ? "" : "s"} leída${result.total_rows === 1 ? "" : "s"}:</strong> ${parts.join(" · ")}`
     + (errors ? `<p class="import-errors-title">${result.errors.length} fila${result.errors.length === 1 ? "" : "s"} con problemas (no se importaron):</p><ul>${errors}</ul>` : "")
     + (warnings ? `<p class="import-errors-title">Observaciones</p><ul>${warnings}</ul>` : "")
-    + (accounts ? `<div class="import-account-credentials"><p><strong>Contraseñas temporales</strong> · Cópialas ahora; no volverán a mostrarse.</p><button class="button button-quiet" id="copy-import-passwords" type="button">Copiar accesos</button><ul>${accounts}</ul></div>` : "")
+    + (accounts ? `<div class="import-account-credentials"><p><strong>Contraseñas iniciales (código del estudiante)</strong> · Se deben cambiar al primer ingreso.</p><button class="button button-quiet" id="copy-import-passwords" type="button">Copiar accesos</button><ul>${accounts}</ul></div>` : "")
     + (updatedAccounts ? `<div class="import-account-credentials"><p><strong>Usuarios de cuentas existentes</strong> · La contraseña no cambió.</p><ul>${updatedAccounts}</ul></div>` : "");
   elements.importResult.classList.toggle("has-errors", result.errors.length > 0);
   elements.importResult.hidden = false;
@@ -4173,8 +4265,10 @@ elements.studentCoursesViewButton.addEventListener("click", () => {
   state.selectedStudentCourse = null;
   elements.studentCourseIndex.hidden = false;
   elements.studentCourseDetail.hidden = true;
-  setAppView("studentPortal");
+  setStudentPortalView("courses");
 });
+elements.studentHistoryViewButton.addEventListener("click", () => setStudentPortalView("history"));
+elements.studentReviewViewButton.addEventListener("click", () => setStudentPortalView("review"));
 $("#student-course-back").addEventListener("click", () => {
   state.selectedStudentCourse = null;
   elements.studentCourseDetail.hidden = true;
@@ -4410,6 +4504,29 @@ elements.deleteGroupPlanButton.addEventListener("click", deleteGroupPlan);
 elements.editGroupPlanButton.addEventListener("click", startGroupPlanEditing);
 elements.cancelGroupEditsButton.addEventListener("click", cancelGroupPlanEditing);
 $("#refresh-participations").addEventListener("click", loadParticipationHistory);
+elements.participationHistoryBody.addEventListener("change", async (event) => {
+  const checkbox = event.target.closest("[data-participation-visibility]");
+  if (!checkbox || !state.course) return;
+  const previous = !checkbox.checked;
+  checkbox.disabled = true;
+  try {
+    const updated = await api(
+      `/courses/${state.course.id}/participations/${checkbox.dataset.participationVisibility}/visibility`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ grade_visible: checkbox.checked }),
+      },
+    );
+    const label = checkbox.closest("label");
+    label.querySelector("span").textContent = updated.grade_visible ? "Publicada" : "Oculta";
+    notify(updated.grade_visible ? "Nota publicada al estudiante." : "Nota oculta al estudiante.");
+  } catch (error) {
+    checkbox.checked = previous;
+    notify(error.message, true);
+  } finally {
+    checkbox.disabled = false;
+  }
+});
 elements.activeRole.addEventListener("change", () => {
   if (state.authenticatedUser?.role !== "administrador") return;
   state.viewAs = elements.activeRole.value;
