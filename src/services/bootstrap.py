@@ -125,6 +125,7 @@ _ADDED_COLUMNS = [
     ("student_participations", "comment", "TEXT"),
     ("student_participations", "difficulty", "INTEGER NOT NULL DEFAULT 3"),
     ("student_participations", "grade_visible", "BOOLEAN NOT NULL DEFAULT FALSE"),
+    ("student_participations", "voided", "BOOLEAN NOT NULL DEFAULT FALSE"),
 ]
 
 
@@ -187,6 +188,88 @@ def _migrate_cycle_name_uniqueness(engine) -> None:
             logging.exception("No se pudo migrar la unicidad de academic_cycles.name")
 
 
+def _migrate_review_request_targets(engine) -> None:
+    """Permite asociar una revisión a una participación o a una evaluación."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    if "student_review_requests" not in inspector.get_table_names():
+        return
+    columns = {column["name"]: column for column in inspector.get_columns("student_review_requests")}
+    if (
+        columns.get("evaluation_result_id", {}).get("nullable", False)
+        and "resolution_comment" in columns
+        and columns["participation_id"]["nullable"]
+    ):
+        return
+
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS student_review_requests_new"))
+            conn.execute(text(
+                "CREATE TABLE student_review_requests_new ("
+                "id INTEGER NOT NULL PRIMARY KEY, "
+                "participation_id INTEGER NULL REFERENCES student_participations(id), "
+                "evaluation_result_id INTEGER NULL REFERENCES student_evaluation_results(id), "
+                "student_user_id INTEGER NOT NULL REFERENCES users(id), "
+                "course_id INTEGER NOT NULL REFERENCES courses(id), "
+                "reason TEXT NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'pending', "
+                "resolution_comment TEXT NULL, created_at DATETIME NOT NULL, "
+                "updated_at DATETIME NOT NULL, "
+                "CONSTRAINT ck_student_review_request_status "
+                "CHECK (status IN ('pending', 'in_review', 'resolved')), "
+                "CONSTRAINT ck_student_review_request_target CHECK ("
+                "(participation_id IS NOT NULL AND evaluation_result_id IS NULL) OR "
+                "(participation_id IS NULL AND evaluation_result_id IS NOT NULL))"
+                ")"
+            ))
+            resolution_column = (
+                "resolution_comment" if "resolution_comment" in columns else "NULL"
+            )
+            conn.execute(text(
+                "INSERT INTO student_review_requests_new "
+                "(id, participation_id, evaluation_result_id, student_user_id, course_id, "
+                "reason, status, resolution_comment, created_at, updated_at) "
+                "SELECT id, participation_id, NULL, student_user_id, course_id, reason, "
+                f"status, {resolution_column}, created_at, updated_at "
+                "FROM student_review_requests"
+            ))
+            conn.execute(text("DROP TABLE student_review_requests"))
+            conn.execute(text(
+                "ALTER TABLE student_review_requests_new RENAME TO student_review_requests"
+            ))
+            conn.execute(text(
+                "CREATE INDEX ix_student_review_requests_student_created "
+                "ON student_review_requests (student_user_id, created_at)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX ix_student_review_requests_course_status "
+                "ON student_review_requests (course_id, status)"
+            ))
+        return
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE student_review_requests "
+            "ALTER COLUMN participation_id DROP NOT NULL"
+        ))
+        conn.execute(text(
+            "ALTER TABLE student_review_requests "
+            "ADD COLUMN IF NOT EXISTS evaluation_result_id INTEGER NULL "
+            "REFERENCES student_evaluation_results(id)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE student_review_requests "
+            "ADD COLUMN IF NOT EXISTS resolution_comment TEXT NULL"
+        ))
+        conn.execute(text(
+            "ALTER TABLE student_review_requests "
+            "ADD CONSTRAINT ck_student_review_request_target CHECK ("
+            "(participation_id IS NOT NULL AND evaluation_result_id IS NULL) OR "
+            "(participation_id IS NULL AND evaluation_result_id IS NOT NULL))"
+        ))
+
+
 def _provision_initial_admin(session_factory) -> None:
     username = os.environ.get("ADMIN_USERNAME")
     password = os.environ.get("ADMIN_PASSWORD")
@@ -246,6 +329,7 @@ def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bo
         # funcionando sin perder datos.
         _ensure_columns(session_factory.engine)
         Base.metadata.create_all(session_factory.engine)
+        _migrate_review_request_targets(session_factory.engine)
         with session_factory() as session:
             existing_roles = set(session.query(RoleORM.name).all())
             existing_names = {name for (name,) in existing_roles}

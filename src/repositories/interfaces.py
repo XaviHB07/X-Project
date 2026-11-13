@@ -25,6 +25,7 @@ from src.domain.entities import (
     AcademicCycle,
     ClassSession,
     Course,
+    CourseEvaluation,
     CourseGroupPlan,
     CourseMaterial,
     CourseMaterialContent,
@@ -32,10 +33,13 @@ from src.domain.entities import (
     ExposureTimeSettings,
     GroupExposition,
     GroupExpositionMemberEntry,
+    EvaluationStudentRecord,
     Student,
     StudentAccount,
+    StudentEvaluationHistory,
     StudentGroup,
     StudentParticipation,
+    StudentReviewRequest,
     SyllabusEntry,
 )
 from src.domain.value_objects import (
@@ -497,6 +501,13 @@ class ParticipationRepository(ABC):
         ...
 
     @abstractmethod
+    def set_voided(
+        self, course_id: int, participation_id: int, voided: bool
+    ) -> Optional[StudentParticipation]:
+        """Anula o restaura una participación dentro del curso indicado."""
+        ...
+
+    @abstractmethod
     def weekly_score_averages(
         self, course_id: int, start_on: date, end_on: date
     ) -> List[Tuple[int, date, float, int]]:
@@ -512,6 +523,70 @@ class ParticipationRepository(ABC):
         La fecha corresponde a la sesión y la fecha-hora al momento de la
         selección registrada en la decisión.
         """
+        ...
+
+
+class StudentReviewRequestRepository(ABC):
+    @abstractmethod
+    def create_for_visible_target(
+        self,
+        student_user_id: int,
+        participation_id: Optional[int],
+        evaluation_result_id: Optional[int],
+        reason: str,
+    ) -> Optional[StudentReviewRequest]:
+        """Crea una solicitud para un resultado propio, activo y publicado."""
+        ...
+
+    @abstractmethod
+    def list_for_student(self, student_user_id: int) -> List[StudentReviewRequest]:
+        ...
+
+    @abstractmethod
+    def list_by_course(self, course_id: int) -> List[StudentReviewRequest]:
+        ...
+
+    @abstractmethod
+    def update_resolution(
+        self,
+        course_id: int,
+        request_id: int,
+        status: str,
+        resolution_comment: Optional[str],
+        revised_score: Optional[float],
+    ) -> Optional[StudentReviewRequest]:
+        ...
+
+
+class CourseEvaluationRepository(ABC):
+    @abstractmethod
+    def create(self, course_id: int, title: str) -> CourseEvaluation: ...
+
+    @abstractmethod
+    def list_by_course(self, course_id: int) -> List[CourseEvaluation]: ...
+
+    @abstractmethod
+    def list_students(
+        self, course_id: int, evaluation_id: int
+    ) -> Optional[List[EvaluationStudentRecord]]:
+        """Devuelve la lista activa del curso con el resultado guardado, si existe."""
+        ...
+
+    @abstractmethod
+    def save_student_result(
+        self,
+        course_id: int,
+        evaluation_id: int,
+        student_id: int,
+        score: Optional[float],
+        feedback: Optional[str],
+        grade_visible: bool,
+    ) -> Optional[EvaluationStudentRecord]:
+        ...
+
+    @abstractmethod
+    def list_for_student(self, student_user_id: int) -> List[StudentEvaluationHistory]:
+        """Evaluaciones publicadas para el portal del estudiante."""
         ...
 
 
@@ -635,6 +710,8 @@ class UnitOfWork(ABC):
     decision_runs: DecisionRunRepository
     events: EventRepository
     participations: ParticipationRepository
+    evaluations: CourseEvaluationRepository
+    review_requests: StudentReviewRequestRepository
     group_plans: GroupPlanRepository
     group_expositions: GroupExpositionRepository
     student_accounts: StudentAccountRepository

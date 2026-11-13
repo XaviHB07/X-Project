@@ -406,6 +406,7 @@ class AuthService:
                 .where(
                     StudentORM.user_id == student_user_id,
                     StudentORM.active.is_(True),
+                    StudentParticipationORM.voided.is_(False),
                 )
                 .order_by(
                     StudentParticipationORM.created_at.desc(),
@@ -420,12 +421,20 @@ class AuthService:
                     "course_name": course_name,
                     "session_date": session_date,
                     "topic": topic,
-                    "score": participation.score if participation.grade_visible else None,
+                    **(
+                        {"score": participation.score}
+                        if participation.grade_visible
+                        else {}
+                    ),
                     "grade_visible": participation.grade_visible,
                     "difficulty": participation.difficulty,
                     "present": participation.present,
                     "question": participation.question,
-                    "comment": participation.comment,
+                    **(
+                        {"comment": participation.comment}
+                        if participation.grade_visible
+                        else {}
+                    ),
                     "created_at": participation.created_at,
                 }
                 for (

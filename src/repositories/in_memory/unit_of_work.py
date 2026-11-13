@@ -17,6 +17,7 @@ from src.repositories.in_memory.repository_impl import (
     InMemoryClassSessionRepository,
     InMemoryCourseRepository,
     InMemoryCourseMaterialRepository,
+    InMemoryCourseEvaluationRepository,
     InMemoryDatabase,
     InMemoryExposureTimeSettingsRepository,
     InMemoryDecisionRunRepository,
@@ -24,6 +25,7 @@ from src.repositories.in_memory.repository_impl import (
     InMemoryGroupExpositionRepository,
     InMemoryGroupPlanRepository,
     InMemoryParticipationRepository,
+    InMemoryStudentReviewRequestRepository,
     InMemoryStudentRepository,
     InMemoryStudentAccountRepository,
     InMemoryStudentStateRepository,
@@ -53,6 +55,8 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.decision_runs = InMemoryDecisionRunRepository(self._db)
         self.events = InMemoryEventRepository(self._db)
         self.participations = InMemoryParticipationRepository(self._db)
+        self.evaluations = InMemoryCourseEvaluationRepository(self._db)
+        self.review_requests = InMemoryStudentReviewRequestRepository(self._db)
         self.group_plans = InMemoryGroupPlanRepository(self._db)
         self.group_expositions = InMemoryGroupExpositionRepository(self._db)
         return self

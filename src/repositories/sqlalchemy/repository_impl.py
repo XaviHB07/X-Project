@@ -22,6 +22,7 @@ from src.domain.entities import (
     AttendanceRecord,
     ClassSession,
     Course,
+    CourseEvaluation,
     CourseGroupPlan,
     CourseMaterial,
     CourseMaterialContent,
@@ -32,8 +33,11 @@ from src.domain.entities import (
     GroupExpositionMemberScore,
     Student,
     StudentAccount,
+    StudentEvaluationHistory,
+    EvaluationStudentRecord,
     StudentGroup,
     StudentParticipation,
+    StudentReviewRequest,
     SyllabusEntry,
 )
 from src.domain.value_objects import (
@@ -59,6 +63,8 @@ from src.repositories.interfaces import (
     InvalidParticipationStudentError,
     ParticipationDecisionNotFoundError,
     ParticipationRepository,
+    CourseEvaluationRepository,
+    StudentReviewRequestRepository,
     StudentRepository,
     StudentAccountRepository,
     StudentStateRepository,
@@ -68,6 +74,7 @@ from src.repositories.sqlalchemy.models import (
     AcademicCycleORM,
     ClassSessionORM,
     CourseORM,
+    CourseEvaluationORM,
     CourseGroupPlanORM,
     CourseMaterialORM,
     ExposureTimeSettingsORM,
@@ -79,6 +86,8 @@ from src.repositories.sqlalchemy.models import (
     StudentORM,
     StudentStateORM,
     StudentParticipationORM,
+    StudentEvaluationResultORM,
+    StudentReviewRequestORM,
     RoleORM,
     UserORM,
     SyllabusEntryORM,
@@ -1032,6 +1041,7 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
             grade_visible=row.grade_visible,
             question=row.question,
             comment=row.comment,
+            voided=row.voided,
         )
 
     def record_many(
@@ -1157,6 +1167,26 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
         self._session.flush()
         return self._to_participation(participation, student)
 
+    def set_voided(
+        self, course_id: int, participation_id: int, voided: bool
+    ) -> Optional[StudentParticipation]:
+        row = self._session.execute(
+            select(StudentParticipationORM, StudentORM)
+            .join(StudentORM, StudentORM.id == StudentParticipationORM.student_id)
+            .join(DecisionRunORM, DecisionRunORM.id == StudentParticipationORM.decision_run_id)
+            .join(ClassSessionORM, ClassSessionORM.id == DecisionRunORM.class_session_id)
+            .where(
+                StudentParticipationORM.id == participation_id,
+                ClassSessionORM.course_id == course_id,
+            )
+        ).first()
+        if row is None:
+            return None
+        participation, student = row
+        participation.voided = voided
+        self._session.flush()
+        return self._to_participation(participation, student)
+
     def weekly_score_averages(
         self, course_id: int, start_on: date, end_on: date
     ) -> List[Tuple[int, date, float, int]]:
@@ -1173,6 +1203,7 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
                 ClassSessionORM.course_id == course_id,
                 ClassSessionORM.session_date >= start_on,
                 ClassSessionORM.session_date <= end_on,
+                StudentParticipationORM.voided.is_(False),
             )
             .group_by(StudentParticipationORM.student_id, ClassSessionORM.session_date)
         ).all()
@@ -1195,6 +1226,7 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
                 StudentParticipationORM.student_id == student_id,
                 ClassSessionORM.session_date >= start_on,
                 ClassSessionORM.session_date <= end_on,
+                StudentParticipationORM.voided.is_(False),
             )
             .order_by(DecisionRunORM.created_at.asc(), StudentParticipationORM.id.asc())
         ).all()
@@ -1203,6 +1235,347 @@ class SqlAlchemyParticipationRepository(ParticipationRepository):
             for participation, student, session, run in rows
             if session.session_date is not None
         ]
+
+
+class SqlAlchemyCourseEvaluationRepository(CourseEvaluationRepository):
+    def __init__(self, session: Session):
+        self._session = session
+
+    @staticmethod
+    def _to_evaluation(row: CourseEvaluationORM) -> CourseEvaluation:
+        return CourseEvaluation(
+            id=row.id,
+            course_id=row.course_id,
+            title=row.title,
+            created_at=row.created_at,
+        )
+
+    @staticmethod
+    def _to_student_record(
+        student: StudentORM,
+        result: Optional[StudentEvaluationResultORM],
+        evaluation_id: int,
+    ) -> EvaluationStudentRecord:
+        return EvaluationStudentRecord(
+            result_id=result.id if result else None,
+            evaluation_id=evaluation_id,
+            student_id=student.id,
+            external_ref=student.external_ref,
+            display_name=student.display_name,
+            score=result.score if result else None,
+            feedback=result.feedback if result else None,
+            grade_visible=result.grade_visible if result else False,
+        )
+
+    def create(self, course_id: int, title: str) -> CourseEvaluation:
+        row = CourseEvaluationORM(course_id=course_id, title=title)
+        self._session.add(row)
+        self._session.flush()
+        return self._to_evaluation(row)
+
+    def list_by_course(self, course_id: int) -> List[CourseEvaluation]:
+        rows = self._session.execute(
+            select(CourseEvaluationORM)
+            .where(CourseEvaluationORM.course_id == course_id)
+            .order_by(CourseEvaluationORM.created_at.desc(), CourseEvaluationORM.id.desc())
+        ).scalars()
+        return [self._to_evaluation(row) for row in rows]
+
+    def list_students(
+        self, course_id: int, evaluation_id: int
+    ) -> Optional[List[EvaluationStudentRecord]]:
+        exists = self._session.execute(
+            select(CourseEvaluationORM.id).where(
+                CourseEvaluationORM.id == evaluation_id,
+                CourseEvaluationORM.course_id == course_id,
+            )
+        ).scalar_one_or_none()
+        if exists is None:
+            return None
+        rows = self._session.execute(
+            select(StudentORM, StudentEvaluationResultORM)
+            .outerjoin(
+                StudentEvaluationResultORM,
+                (StudentEvaluationResultORM.student_id == StudentORM.id)
+                & (StudentEvaluationResultORM.evaluation_id == evaluation_id),
+            )
+            .where(StudentORM.course_id == course_id, StudentORM.active.is_(True))
+            .order_by(StudentORM.display_name, StudentORM.id)
+        ).all()
+        return [
+            self._to_student_record(student, result, evaluation_id)
+            for student, result in rows
+        ]
+
+    def save_student_result(
+        self,
+        course_id: int,
+        evaluation_id: int,
+        student_id: int,
+        score: Optional[float],
+        feedback: Optional[str],
+        grade_visible: bool,
+    ) -> Optional[EvaluationStudentRecord]:
+        valid = self._session.execute(
+            select(StudentORM.id)
+            .join(
+                CourseEvaluationORM,
+                CourseEvaluationORM.course_id == StudentORM.course_id,
+            )
+            .where(
+                CourseEvaluationORM.id == evaluation_id,
+                CourseEvaluationORM.course_id == course_id,
+                StudentORM.id == student_id,
+                StudentORM.active.is_(True),
+            )
+        ).scalar_one_or_none()
+        if valid is None:
+            return None
+        result = self._session.execute(
+            select(StudentEvaluationResultORM).where(
+                StudentEvaluationResultORM.evaluation_id == evaluation_id,
+                StudentEvaluationResultORM.student_id == student_id,
+            )
+        ).scalar_one_or_none()
+        if result is None:
+            result = StudentEvaluationResultORM(
+                evaluation_id=evaluation_id,
+                student_id=student_id,
+                score=score,
+                feedback=feedback,
+                grade_visible=grade_visible,
+            )
+            self._session.add(result)
+        else:
+            result.score = score
+            result.feedback = feedback
+            result.grade_visible = grade_visible
+        self._session.flush()
+        student = self._session.get(StudentORM, student_id)
+        return self._to_student_record(student, result, evaluation_id)
+
+    def list_for_student(self, student_user_id: int) -> List[StudentEvaluationHistory]:
+        rows = self._session.execute(
+            select(
+                StudentEvaluationResultORM,
+                CourseEvaluationORM,
+                CourseORM.name,
+            )
+            .join(
+                CourseEvaluationORM,
+                CourseEvaluationORM.id == StudentEvaluationResultORM.evaluation_id,
+            )
+            .join(CourseORM, CourseORM.id == CourseEvaluationORM.course_id)
+            .join(StudentORM, StudentORM.id == StudentEvaluationResultORM.student_id)
+            .where(
+                StudentORM.user_id == student_user_id,
+                StudentORM.active.is_(True),
+                StudentEvaluationResultORM.grade_visible.is_(True),
+            )
+            .order_by(CourseEvaluationORM.created_at.desc(), CourseEvaluationORM.id.desc())
+        ).all()
+        return [
+            StudentEvaluationHistory(
+                result_id=result.id,
+                evaluation_id=evaluation.id,
+                course_id=evaluation.course_id,
+                course_name=course_name,
+                title=evaluation.title,
+                score=result.score,
+                feedback=result.feedback,
+                created_at=evaluation.created_at,
+            )
+            for result, evaluation, course_name in rows
+        ]
+
+
+class SqlAlchemyStudentReviewRequestRepository(StudentReviewRequestRepository):
+    def __init__(self, session: Session):
+        self._session = session
+
+    def _request_query(self):
+        return (
+            select(
+                StudentReviewRequestORM,
+                CourseORM.name,
+                StudentORM.display_name,
+                UserORM.username,
+                func.coalesce(ClassSessionORM.topic, CourseEvaluationORM.title, "Participación"),
+                func.coalesce(
+                    StudentParticipationORM.score, StudentEvaluationResultORM.score
+                ),
+            )
+            .join(CourseORM, CourseORM.id == StudentReviewRequestORM.course_id)
+            .outerjoin(
+                StudentParticipationORM,
+                StudentParticipationORM.id == StudentReviewRequestORM.participation_id,
+            )
+            .outerjoin(
+                DecisionRunORM,
+                DecisionRunORM.id == StudentParticipationORM.decision_run_id,
+            )
+            .outerjoin(ClassSessionORM, ClassSessionORM.id == DecisionRunORM.class_session_id)
+            .outerjoin(
+                StudentEvaluationResultORM,
+                StudentEvaluationResultORM.id == StudentReviewRequestORM.evaluation_result_id,
+            )
+            .outerjoin(
+                CourseEvaluationORM,
+                CourseEvaluationORM.id == StudentEvaluationResultORM.evaluation_id,
+            )
+            .join(
+                StudentORM,
+                StudentORM.id == func.coalesce(
+                    StudentParticipationORM.student_id,
+                    StudentEvaluationResultORM.student_id,
+                ),
+            )
+            .outerjoin(UserORM, UserORM.id == StudentORM.user_id)
+        )
+
+    @staticmethod
+    def _to_entity(row) -> StudentReviewRequest:
+        (
+            request,
+            course_name,
+            student_name,
+            student_username,
+            target_name,
+            target_score,
+        ) = row
+        return StudentReviewRequest(
+            id=request.id,
+            participation_id=request.participation_id,
+            evaluation_result_id=request.evaluation_result_id,
+            student_user_id=request.student_user_id,
+            course_id=request.course_id,
+            course_name=course_name,
+            student_name=student_name,
+            student_username=student_username or "",
+            reason=request.reason,
+            status=request.status,
+            target_name=target_name or "Evaluación",
+            target_score=target_score,
+            resolution_comment=request.resolution_comment,
+            created_at=request.created_at,
+            updated_at=request.updated_at,
+        )
+
+    def create_for_visible_target(
+        self,
+        student_user_id: int,
+        participation_id: Optional[int],
+        evaluation_result_id: Optional[int],
+        reason: str,
+    ) -> Optional[StudentReviewRequest]:
+        if (participation_id is None) == (evaluation_result_id is None):
+            return None
+        if participation_id is not None:
+            target = self._session.execute(
+                select(StudentParticipationORM, CourseORM.id)
+                .join(StudentORM, StudentORM.id == StudentParticipationORM.student_id)
+                .join(DecisionRunORM, DecisionRunORM.id == StudentParticipationORM.decision_run_id)
+                .join(ClassSessionORM, ClassSessionORM.id == DecisionRunORM.class_session_id)
+                .join(CourseORM, CourseORM.id == ClassSessionORM.course_id)
+                .where(
+                    StudentParticipationORM.id == participation_id,
+                    StudentORM.user_id == student_user_id,
+                    StudentORM.active.is_(True),
+                    StudentParticipationORM.grade_visible.is_(True),
+                    StudentParticipationORM.voided.is_(False),
+                )
+            ).first()
+            if target is None:
+                return None
+            course_id = target[1]
+        else:
+            target = self._session.execute(
+                select(StudentEvaluationResultORM, CourseEvaluationORM.course_id)
+                .join(
+                    CourseEvaluationORM,
+                    CourseEvaluationORM.id == StudentEvaluationResultORM.evaluation_id,
+                )
+                .join(StudentORM, StudentORM.id == StudentEvaluationResultORM.student_id)
+                .where(
+                    StudentEvaluationResultORM.id == evaluation_result_id,
+                    StudentORM.user_id == student_user_id,
+                    StudentORM.active.is_(True),
+                    StudentEvaluationResultORM.grade_visible.is_(True),
+                )
+            ).first()
+            if target is None:
+                return None
+            course_id = target[1]
+        row = StudentReviewRequestORM(
+            participation_id=participation_id,
+            evaluation_result_id=evaluation_result_id,
+            student_user_id=student_user_id,
+            course_id=course_id,
+            reason=reason,
+            status="pending",
+        )
+        self._session.add(row)
+        self._session.flush()
+        return self._to_entity(
+            self._session.execute(
+                self._request_query().where(StudentReviewRequestORM.id == row.id)
+            ).one()
+        )
+
+    def list_for_student(self, student_user_id: int) -> List[StudentReviewRequest]:
+        rows = self._session.execute(
+            self._request_query()
+            .where(StudentReviewRequestORM.student_user_id == student_user_id)
+            .order_by(
+                StudentReviewRequestORM.created_at.desc(),
+                StudentReviewRequestORM.id.desc(),
+            )
+        ).all()
+        return [self._to_entity(row) for row in rows]
+
+    def list_by_course(self, course_id: int) -> List[StudentReviewRequest]:
+        rows = self._session.execute(
+            self._request_query()
+            .where(StudentReviewRequestORM.course_id == course_id)
+            .order_by(
+                StudentReviewRequestORM.created_at.desc(),
+                StudentReviewRequestORM.id.desc(),
+            )
+        ).all()
+        return [self._to_entity(row) for row in rows]
+
+    def update_resolution(
+        self,
+        course_id: int,
+        request_id: int,
+        status: str,
+        resolution_comment: Optional[str],
+        revised_score: Optional[float],
+    ) -> Optional[StudentReviewRequest]:
+        request = self._session.execute(
+            select(StudentReviewRequestORM).where(
+                StudentReviewRequestORM.course_id == course_id,
+                StudentReviewRequestORM.id == request_id,
+            )
+        ).scalar_one_or_none()
+        if request is None:
+            return None
+        target = (
+            self._session.get(StudentParticipationORM, request.participation_id)
+            if request.participation_id is not None
+            else self._session.get(StudentEvaluationResultORM, request.evaluation_result_id)
+        )
+        if revised_score is not None and target is not None:
+            target.score = revised_score
+        request.status = status
+        request.resolution_comment = resolution_comment
+        request.updated_at = datetime.now(timezone.utc)
+        self._session.flush()
+        return self._to_entity(
+            self._session.execute(
+                self._request_query().where(StudentReviewRequestORM.id == request.id)
+            ).one()
+        )
 
 
 class SqlAlchemyGroupPlanRepository(GroupPlanRepository):

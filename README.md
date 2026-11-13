@@ -112,8 +112,10 @@ asociado al ciclo; la matrícula y edición individual siguen disponibles.
   Mis cursos incluye matrículas activas aunque el curso todavía no tenga ciclo
   académico; cuando existe ciclo, las sesiones se ordenan en 16 semanas
   consecutivas de siete días desde su fecha inicial. Las sesiones sin fecha o
-  fuera del periodo aparecen aparte. Solicitar revisión es informativo por
-  ahora y no crea solicitudes.
+  fuera del periodo aparecen aparte. Mi historial muestra solo participaciones
+  propias no anuladas; la nota se omite de la respuesta del servidor mientras
+  no esté publicada. Solicitar revisión permite pedir explicación de una nota
+  publicada y consultar el estado de la solicitud.
 * **`student\_state`**: el estado bayesiano mutable — `alpha`, `beta`,
 `n\_present`, `n\_selected`. Es la tabla que sufre escrituras
 concurrentes; por eso está separada de `students`.
@@ -329,7 +331,15 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |POST|`/auth/logout`|Cerrar sesión|
 |GET|`/student/courses`|Estudiante: listar solo sus cursos con matrícula activa|
 |GET|`/student/courses/{course_id}/weeks`|Estudiante: consultar sesiones solo de un curso propio|
-|GET|`/student/history`|Estudiante: consultar su propio historial; notas no publicadas se devuelven ocultas|
+|GET|`/student/history`|Estudiante: fecha, pregunta, dificultad y solo notas publicadas de sus participaciones no anuladas|
+|GET|`/student/evaluations`|Estudiante: consultar evaluaciones y feedback publicado|
+|POST|`/student/review-requests`|Estudiante: solicitar revisión de una participación o resultado de evaluación propio publicado|
+|GET|`/student/review-requests`|Estudiante: consultar sus solicitudes y estado|
+|GET|`/courses/{course_id}/review-requests`|Docente del curso o administrador: listar solicitudes|
+|PATCH|`/courses/{course_id}/review-requests/{request_id}`|Docente del curso o administrador: responder y cerrar la revisión, con ajuste opcional de nota (escala 0–5)|
+|GET/POST|`/courses/{course_id}/evaluations`|Docente del curso o administrador: listar y crear exámenes u otras evaluaciones|
+|GET|`/courses/{course_id}/evaluations/{evaluation_id}/students`|Listar alumnos del curso y sus resultados/feedback guardados|
+|PATCH|`/courses/{course_id}/evaluations/{evaluation_id}/students/{student_id}`|Guardar nota opcional, feedback opcional y publicación individual|
 |GET|`/methods`|Estrategias de selección disponibles|
 |GET|`/admin/teachers`|Administrador: listar docentes y cursos asignados|
 |POST|`/admin/teachers`|Administrador: registrar docente, asignar cursos y devolver una contraseña temporal de un solo vistazo|
@@ -374,6 +384,7 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |POST|`/courses/{id}/decision-runs/{run_id}/participations`|Guardar nota (0–5) y asistencia de los estudiantes seleccionados|
 |GET|`/courses/{id}/participations`|Consultar el historial de notas y asistencia del curso|
 |PATCH|`/courses/{id}/participations/{participation_id}/visibility`|Docente del curso o administrador: publicar/ocultar la nota de una participación|
+|PATCH|`/courses/{id}/participations/{participation_id}/void`|Docente del curso o administrador: anular/restaurar una participación|
 |GET|`/courses/{id}/fairness-metrics`|Gini / CV / std / cobertura del curso|
 
 Las rutas funcionales requieren sesión autenticada. Para probar la API con
