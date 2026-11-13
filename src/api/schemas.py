@@ -12,7 +12,7 @@ dominio.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -471,6 +471,122 @@ class StudentParticipationHistoryResponse(BaseModel):
     created_at: datetime
 
 
+class StudentEvaluationCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+
+    @field_validator("title")
+    @classmethod
+    def _clean_title(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("El nombre de la evaluación no puede estar vacío.")
+        return cleaned
+
+
+class StudentEvaluationResponse(BaseModel):
+    id: int
+    course_id: int
+    title: str
+    created_at: datetime
+
+
+class EvaluationStudentResponse(BaseModel):
+    result_id: Optional[int]
+    evaluation_id: int
+    student_id: int
+    external_ref: str
+    display_name: str
+    score: Optional[float] = Field(None, ge=0, le=5)
+    feedback: Optional[str] = None
+    grade_visible: bool
+
+
+class EvaluationStudentResultUpdate(BaseModel):
+    score: Optional[float] = Field(None, ge=0, le=5)
+    feedback: Optional[str] = Field(None, max_length=4000)
+    grade_visible: bool = False
+
+    @field_validator("feedback")
+    @classmethod
+    def _clean_feedback(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return value.strip() or None
+
+    @model_validator(mode="after")
+    def _published_result_has_content(self):
+        if self.grade_visible and self.score is None and not self.feedback:
+            raise ValueError("Agrega una nota o feedback antes de publicar el resultado.")
+        return self
+
+
+class StudentEvaluationHistoryResponse(BaseModel):
+    result_id: int
+    evaluation_id: int
+    course_id: int
+    course_name: str
+    title: str
+    score: Optional[float] = None
+    feedback: Optional[str] = None
+    created_at: datetime
+
+
+class StudentReviewRequestCreate(BaseModel):
+    participation_id: Optional[int] = Field(None, gt=0)
+    evaluation_result_id: Optional[int] = Field(None, gt=0)
+    reason: str = Field(..., min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def _one_target(self):
+        if (self.participation_id is None) == (self.evaluation_result_id is None):
+            raise ValueError("Indica una sola participación o evaluación para revisar.")
+        return self
+
+    @field_validator("reason")
+    @classmethod
+    def _clean_reason(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("El motivo no puede estar vacío.")
+        return cleaned
+
+
+class StudentReviewRequestStatusUpdate(BaseModel):
+    status: Literal["pending", "in_review", "resolved"]
+    resolution_comment: Optional[str] = Field(None, max_length=4000)
+    revised_score: Optional[float] = Field(None, ge=0, le=5)
+
+    @field_validator("resolution_comment")
+    @classmethod
+    def _clean_resolution_comment(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return value.strip() or None
+
+    @model_validator(mode="after")
+    def _resolved_requires_comment(self):
+        if self.status == "resolved" and not self.resolution_comment:
+            raise ValueError("Escribe la resolución antes de cerrar la solicitud.")
+        return self
+
+
+class StudentReviewRequestResponse(BaseModel):
+    id: int
+    participation_id: Optional[int]
+    evaluation_result_id: Optional[int]
+    course_id: int
+    course_name: str
+    student_name: str
+    student_username: str
+    reason: str
+    status: Literal["pending", "in_review", "resolved"]
+    target_name: str
+    target_score: Optional[float] = None
+    resolution_comment: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class AttendanceMark(BaseModel):
     student_id: int = Field(..., gt=0)
     present: bool
@@ -572,6 +688,11 @@ class ParticipationResponse(BaseModel):
     created_at: datetime
     question: Optional[str] = None
     comment: Optional[str] = None
+    voided: bool = False
+
+
+class ParticipationVoidedRequest(BaseModel):
+    voided: bool
 
 
 class ParticipationGradeVisibilityRequest(BaseModel):

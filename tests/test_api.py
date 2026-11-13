@@ -1238,7 +1238,8 @@ class TestStudentAccountsAndPortal:
         ).status_code == 200
         hidden_history = client.get("/student/history")
         assert hidden_history.status_code == 200
-        assert hidden_history.json()[0]["score"] is None
+        assert "score" not in hidden_history.json()[0]
+        assert "comment" not in hidden_history.json()[0]
         assert hidden_history.json()[0]["grade_visible"] is False
         assert hidden_history.json()[0]["difficulty"] == 5
         assert client.get(f"/courses/{course_id}/participations").status_code == 403
@@ -1282,6 +1283,258 @@ class TestStudentAccountsAndPortal:
         assert history.json()[0]["difficulty"] == 5
         assert history.json()[0]["question"] == "¿Cómo se resuelve?"
         assert history.json()[0]["comment"] == "Buen desarrollo"
+
+    def test_student_history_review_requests_and_voided_participations(self, client: TestClient):
+        course_id = new_course(client, "Curso de revisiones")
+        imported = upload(
+            client,
+            course_id,
+            [["CODIGO", "ALUMNO"], ["STU-A", "Ana Torres"], ["STU-B", "Bruno Díaz"]],
+        ).json()
+        students = client.get(f"/courses/{course_id}/students").json()
+        student_ids = [student["id"] for student in students]
+        decision = client.post(
+            f"/courses/{course_id}/sessions/select",
+            json={"present_student_ids": student_ids, "k": 2, "method": "roulette"},
+        ).json()
+        saved = client.post(
+            f"/courses/{course_id}/decision-runs/{decision['decision_run_id']}/participations",
+            json={
+                "participations": [
+                    {
+                        "student_id": student["id"],
+                        "score": 4,
+                        "present": True,
+                        "difficulty": 2,
+                        "grade_visible": True,
+                        "question": "Pregunta de prueba",
+                    }
+                    for student in students
+                ]
+            },
+        )
+        assert saved.status_code == 201
+        participation_by_student = {
+            entry["student_id"]: entry["id"] for entry in saved.json()
+        }
+
+        teacher_id = client.get("/admin/teachers").json()[0]["id"]
+        assert client.put(
+            f"/admin/teachers/{teacher_id}/courses",
+            json={"course_ids": [course_id]},
+        ).status_code == 200
+
+        client.cookies.clear()
+        ana_login = client.post(
+            "/auth/login",
+            json={
+                "username": imported["created_accounts"][0]["username"],
+                "password": imported["created_accounts"][0]["temporary_password"],
+            },
+        )
+        assert ana_login.status_code == 200
+        assert client.post(
+            "/auth/change-password", json={"new_password": "ana-review-password-123"}
+        ).status_code == 200
+        history = client.get("/student/history")
+        assert history.status_code == 200
+        assert len(history.json()) == 1
+        own_participation_id = participation_by_student[student_ids[0]]
+        other_participation_id = participation_by_student[student_ids[1]]
+        assert history.json()[0]["id"] == own_participation_id
+        assert history.json()[0]["score"] == 4
+        assert history.json()[0]["question"] == "Pregunta de prueba"
+        assert history.json()[0]["difficulty"] == 2
+
+        forbidden_request = client.post(
+            "/student/review-requests",
+            json={"participation_id": other_participation_id, "reason": "No es mía"},
+        )
+        assert forbidden_request.status_code == 404
+        blank_request = client.post(
+            "/student/review-requests",
+            json={"participation_id": own_participation_id, "reason": "   "},
+        )
+        assert blank_request.status_code == 422
+        created_request = client.post(
+            "/student/review-requests",
+            json={
+                "participation_id": own_participation_id,
+                "reason": "Quisiera entender el criterio de esta nota.",
+            },
+        )
+        assert created_request.status_code == 201
+        assert created_request.headers["cache-control"] == "no-store"
+        assert created_request.json()["status"] == "pending"
+        assert created_request.json()["student_name"] == "Ana Torres"
+        assert len(client.get("/student/review-requests").json()) == 1
+
+        client.cookies.clear()
+        assert client.post(
+            "/auth/login",
+            json={"username": "teacher", "password": "test-teacher-password-123"},
+        ).status_code == 200
+        requests = client.get(f"/courses/{course_id}/review-requests")
+        assert requests.status_code == 200
+        assert len(requests.json()) == 1
+        updated_request = client.patch(
+            f"/courses/{course_id}/review-requests/{created_request.json()['id']}",
+            json={"status": "in_review"},
+        )
+        assert updated_request.status_code == 200
+        assert updated_request.json()["status"] == "in_review"
+        voided = client.patch(
+            f"/courses/{course_id}/participations/{own_participation_id}/void",
+            json={"voided": True},
+        )
+        assert voided.status_code == 200
+        assert voided.json()["voided"] is True
+
+        client.cookies.clear()
+        assert client.post(
+            "/auth/login",
+            json={"username": "STU-A", "password": "ana-review-password-123"},
+        ).status_code == 200
+        assert client.get("/student/history").json() == []
+        assert client.post(
+            "/student/review-requests",
+            json={"participation_id": own_participation_id, "reason": "Revisar nota"},
+        ).status_code == 404
+        assert client.get("/student/review-requests").json()[0]["status"] == "in_review"
+
+    def test_course_evaluations_feedback_and_final_review_resolution(self, client: TestClient):
+        course_id = new_course(client, "Curso de evaluaciones")
+        imported = upload(
+            client,
+            course_id,
+            [["CODIGO", "ALUMNO"], ["STU-E1", "Elena Demo"], ["STU-E2", "Luis Demo"]],
+        ).json()
+        students = client.get(f"/courses/{course_id}/students").json()
+        student_id = students[0]["id"]
+        teacher_id = client.get("/admin/teachers").json()[0]["id"]
+        assert client.put(
+            f"/admin/teachers/{teacher_id}/courses",
+            json={"course_ids": [course_id]},
+        ).status_code == 200
+
+        created = client.post(
+            f"/courses/{course_id}/evaluations",
+            json={"title": " Examen   Parcial "},
+        )
+        assert created.status_code == 201
+        evaluation = created.json()
+        assert evaluation["title"] == "Examen Parcial"
+
+        roster = client.get(
+            f"/courses/{course_id}/evaluations/{evaluation['id']}/students"
+        )
+        assert roster.status_code == 200
+        assert len(roster.json()) == 2
+        result = client.patch(
+            f"/courses/{course_id}/evaluations/{evaluation['id']}/students/{student_id}",
+            json={
+                "score": 3.5,
+                "feedback": "Justifica el segundo paso.",
+                "grade_visible": True,
+            },
+        )
+        assert result.status_code == 200
+        result_id = result.json()["result_id"]
+        assert result_id
+        assert client.patch(
+            f"/courses/{course_id}/evaluations/{evaluation['id']}/students/{student_id}",
+            json={"score": 5.1, "grade_visible": True},
+        ).status_code == 422
+
+        client.cookies.clear()
+        login = client.post(
+            "/auth/login",
+            json={
+                "username": imported["created_accounts"][0]["username"],
+                "password": imported["created_accounts"][0]["temporary_password"],
+            },
+        )
+        assert login.status_code == 200
+        assert client.post(
+            "/auth/change-password",
+            json={"new_password": "student-evaluation-password-123"},
+        ).status_code == 200
+        history = client.get("/student/evaluations")
+        assert history.status_code == 200
+        assert history.json()[0]["score"] == 3.5
+        assert history.json()[0]["feedback"] == "Justifica el segundo paso."
+
+        client.cookies.clear()
+        second_student = imported["created_accounts"][1]
+        assert client.post(
+            "/auth/login",
+            json={
+                "username": second_student["username"],
+                "password": second_student["temporary_password"],
+            },
+        ).status_code == 200
+        assert client.post(
+            "/auth/change-password",
+            json={"new_password": "second-evaluation-password-123"},
+        ).status_code == 200
+        assert client.get("/student/evaluations").json() == []
+
+        client.cookies.clear()
+        assert client.post(
+            "/auth/login",
+            json={
+                "username": imported["created_accounts"][0]["username"],
+                "password": "student-evaluation-password-123",
+            },
+        ).status_code == 200
+        request = client.post(
+            "/student/review-requests",
+            json={
+                "evaluation_result_id": result_id,
+                "reason": "Solicito revisar el puntaje del examen.",
+            },
+        )
+        assert request.status_code == 201
+        assert request.json()["target_name"] == "Examen Parcial"
+        assert request.json()["target_score"] == 3.5
+        client.cookies.clear()
+        assert client.post(
+            "/auth/login",
+            json={"username": "teacher", "password": "test-teacher-password-123"},
+        ).status_code == 200
+        assert client.patch(
+            f"/courses/{course_id}/review-requests/{request.json()['id']}",
+            json={"status": "resolved"},
+        ).status_code == 422
+        resolved = client.patch(
+            f"/courses/{course_id}/review-requests/{request.json()['id']}",
+            json={
+                "status": "resolved",
+                "resolution_comment": "Se revisó el desarrollo y se ajustó el puntaje.",
+                "revised_score": 4,
+            },
+        )
+        assert resolved.status_code == 200
+        assert resolved.json()["target_score"] == 4
+        assert resolved.json()["resolution_comment"] == (
+            "Se revisó el desarrollo y se ajustó el puntaje."
+        )
+
+        client.cookies.clear()
+        assert client.post(
+            "/auth/login",
+            json={
+                "username": imported["created_accounts"][0]["username"],
+                "password": "student-evaluation-password-123",
+            },
+        ).status_code == 200
+        student_request = client.get("/student/review-requests").json()[0]
+        assert student_request["status"] == "resolved"
+        assert student_request["resolution_comment"] == (
+            "Se revisó el desarrollo y se ajustó el puntaje."
+        )
+        assert student_request["target_score"] == 4
+        assert client.get("/student/evaluations").json()[0]["score"] == 4
 
     def test_admin_can_register_list_and_reset_student_account(self, client: TestClient):
         created = client.post(

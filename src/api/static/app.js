@@ -16,6 +16,7 @@ const state = {
   studentPortalView: "courses",
   appView: "daily",
   courseView: "attendance",
+  selectedEvaluationId: null,
   groupPlans: [],
   materials: [],
   gradeCycleId: null,
@@ -154,6 +155,13 @@ const elements = {
   participationsView: $("#participations-view"),
   participationHistoryBody: $("#participation-history-body"),
   participationHistoryEmpty: $("#participation-history-empty"),
+  courseEvaluationForm: $("#course-evaluation-form"),
+  courseEvaluationTitle: $("#course-evaluation-title"),
+  courseEvaluationList: $("#course-evaluation-list"),
+  courseEvaluationEmpty: $("#course-evaluation-empty"),
+  courseEvaluationRoster: $("#course-evaluation-roster"),
+  studentEvaluationList: $("#student-evaluation-list"),
+  studentEvaluationEmpty: $("#student-evaluation-empty"),
   groupsView: $("#groups-view"),
   groupPlanSelect: $("#group-plan-select"),
   groupEditor: $("#group-editor"),
@@ -201,6 +209,12 @@ const elements = {
   studentReviewView: $("#student-review-view"),
   studentHistoryList: $("#student-history-list"),
   studentHistoryEmpty: $("#student-history-empty"),
+  studentReviewForm: $("#student-review-form"),
+  studentReviewParticipation: $("#student-review-participation"),
+  studentReviewList: $("#student-review-list"),
+  studentReviewEmpty: $("#student-review-empty"),
+  courseReviewRequestList: $("#course-review-request-list"),
+  courseReviewRequestEmpty: $("#course-review-request-empty"),
 };
 
 function escapeHtml(value) {
@@ -467,6 +481,7 @@ function setStudentPortalView(view) {
     else button.removeAttribute("aria-current");
   });
   if (view === "history") loadStudentHistory();
+  if (view === "review") loadStudentReviewData();
 }
 
 async function openStudentCourse(event) {
@@ -527,7 +542,10 @@ async function loadStudentHistory() {
   elements.studentHistoryEmpty.hidden = false;
   elements.studentHistoryEmpty.textContent = "Cargando tu historial…";
   try {
-    const records = await api("/student/history");
+    const [records, evaluations] = await Promise.all([
+      api("/student/history"),
+      api("/student/evaluations"),
+    ]);
     elements.studentHistoryList.innerHTML = records.map((record) => `
       <article class="student-history-item">
         <div class="student-history-item-heading">
@@ -538,7 +556,7 @@ async function loadStudentHistory() {
             : formatDate(record.created_at))}</time>
         </div>
         <dl>
-          <div><dt>Nota</dt><dd>${record.grade_visible && record.score !== null
+          <div><dt>Nota</dt><dd>${record.grade_visible && record.score !== undefined
             ? formatGradeValue(record.score)
             : "Pendiente de publicación"}</dd></div>
           <div><dt>Dificultad</dt><dd>${record.difficulty} de 5</dd></div>
@@ -549,10 +567,198 @@ async function loadStudentHistory() {
       </article>`).join("");
     elements.studentHistoryEmpty.hidden = records.length > 0;
     elements.studentHistoryEmpty.textContent = "Todavía no tienes participaciones registradas.";
+    elements.studentEvaluationList.innerHTML = evaluations.map((record) => `
+      <article class="student-history-item">
+        <div class="student-history-item-heading">
+          <div><strong>${escapeHtml(record.course_name)}</strong>
+            <span>${escapeHtml(record.title)}</span></div>
+          <time>${escapeHtml(formatDate(record.created_at))}</time>
+        </div>
+        <dl>
+          ${record.score !== null && record.score !== undefined
+            ? `<div><dt>Nota</dt><dd>${formatGradeValue(record.score)}</dd></div>` : ""}
+          <div class="student-history-comment"><dt>Retroalimentación</dt>
+            <dd>${escapeHtml(record.feedback || "Sin comentarios")}</dd></div>
+        </dl>
+      </article>`).join("");
+    elements.studentEvaluationEmpty.hidden = evaluations.length > 0;
+    elements.studentEvaluationEmpty.textContent = "Todavía no tienes evaluaciones publicadas.";
   } catch (error) {
     elements.studentHistoryList.innerHTML = "";
     elements.studentHistoryEmpty.textContent = error.message;
     elements.studentHistoryEmpty.hidden = false;
+    elements.studentEvaluationList.innerHTML = "";
+    elements.studentEvaluationEmpty.hidden = true;
+  }
+}
+
+function reviewStatusLabel(status) {
+  return ({
+    pending: "Pendiente",
+    in_review: "En revisión",
+    resolved: "Atendida",
+  })[status] || status;
+}
+
+function renderStudentReviewRequests(records) {
+  elements.studentReviewList.innerHTML = records.map((record) => `
+    <article class="student-review-request">
+      <div><strong>${escapeHtml(record.course_name)} · ${escapeHtml(record.student_name)}</strong>
+        <span>${escapeHtml(record.target_name)} · ${escapeHtml(record.reason)}</span>
+        ${record.resolution_comment
+          ? `<span class="review-resolution"><strong>Resolución:</strong> ${escapeHtml(record.resolution_comment)}</span>` : ""}
+        ${record.status === "resolved" && record.target_score !== null
+          ? `<small>Nota final: ${formatGradeValue(record.target_score)}</small>` : ""}</div>
+      <div class="student-review-request-meta">
+        <time>${escapeHtml(formatDate(record.created_at))}</time>
+        <strong class="review-status review-status-${record.status}">${reviewStatusLabel(record.status)}</strong>
+      </div>
+    </article>`).join("");
+  elements.studentReviewEmpty.hidden = records.length > 0;
+  elements.studentReviewEmpty.textContent = "Todavía no tienes solicitudes de revisión.";
+}
+
+async function loadStudentReviewData() {
+  const status = $("#student-review-status");
+  status.textContent = "Cargando notas publicadas y solicitudes…";
+  elements.studentReviewParticipation.innerHTML = '<option value="">Cargando…</option>';
+  try {
+    const [history, evaluations, requests] = await Promise.all([
+      api("/student/history"),
+      api("/student/evaluations"),
+      api("/student/review-requests"),
+    ]);
+    const eligible = [
+      ...history.filter((record) => record.grade_visible && record.score !== undefined)
+        .map((record) => ({
+          value: `p:${record.id}`,
+          label: `${record.course_name} · ${record.topic || "Participación"} · ${record.session_date ? formatDay(record.session_date) : formatDate(record.created_at)} · ${formatGradeValue(record.score)}`,
+        })),
+      ...evaluations.map((record) => ({
+        value: `e:${record.result_id}`,
+        label: `${record.course_name} · ${record.title} · ${formatDate(record.created_at)}${record.score !== null ? ` · ${formatGradeValue(record.score)}` : ""}`,
+      })),
+    ];
+    elements.studentReviewParticipation.innerHTML = eligible.length
+      ? `<option value="">Selecciona una nota publicada</option>${eligible.map((record) => `
+        <option value="${record.value}">${escapeHtml(record.label)}</option>
+      `).join("")}`
+      : '<option value="">No tienes notas publicadas disponibles</option>';
+    elements.studentReviewParticipation.disabled = eligible.length === 0;
+    renderStudentReviewRequests(requests);
+    status.textContent = "";
+  } catch (error) {
+    elements.studentReviewParticipation.innerHTML = '<option value="">No se pudieron cargar las notas</option>';
+    elements.studentReviewParticipation.disabled = true;
+    status.textContent = error.message;
+  }
+}
+
+async function loadCourseReviewRequests() {
+  if (!state.course) return;
+  elements.courseReviewRequestEmpty.hidden = false;
+  elements.courseReviewRequestEmpty.textContent = "Cargando solicitudes…";
+  try {
+    const requests = await api(`/courses/${state.course.id}/review-requests`);
+    elements.courseReviewRequestList.innerHTML = requests.map((record) => `
+      <form class="student-review-request teacher-review-request ${record.status === "resolved" ? "is-resolved" : ""}"
+        data-review-request-update="${record.id}" data-request-status="${record.status}">
+        <div><strong>${escapeHtml(record.student_name)} · ${escapeHtml(record.student_username)}</strong>
+          <span>${escapeHtml(record.target_name)} · Nota actual: ${record.target_score === null ? "sin calificación" : formatGradeValue(record.target_score)}</span>
+          <span>Solicitud: ${escapeHtml(record.reason)}</span>
+          <strong class="review-status review-status-${record.status}">${reviewStatusLabel(record.status)}</strong>
+          ${record.status === "resolved"
+            ? `<div class="review-resolution"><strong>Resolución enviada</strong><span>${escapeHtml(record.resolution_comment || "")}</span></div>
+              <button class="button button-quiet" type="button" data-edit-resolution>Editar resolución</button>`
+            : record.resolution_comment
+              ? `<small>Respuesta guardada: ${escapeHtml(record.resolution_comment)}</small>` : ""}
+        </div>
+        <div class="teacher-review-controls" ${record.status === "resolved" ? "hidden" : ""}>
+          ${record.status === "resolved"
+            ? '<input type="hidden" name="status" value="resolved" />'
+            : `<label class="review-request-status-label">Estado
+              <select class="field" name="status">
+                <option value="pending" ${record.status === "pending" ? "selected" : ""}>Pendiente</option>
+                <option value="in_review" ${record.status === "in_review" ? "selected" : ""}>En revisión</option>
+                <option value="resolved">Atendida</option>
+              </select>
+            </label>`}
+          <label class="review-request-status-label">Ajustar nota <span class="optional">OPCIONAL, 0 A 5</span>
+            <input class="field" name="revised_score" type="number" min="0" max="5" step="0.01" placeholder="${record.target_score === null ? "Sin cambio" : escapeHtml(String(record.target_score))}" />
+          </label>
+          <label class="review-request-status-label">Respuesta al estudiante
+            <textarea class="field" name="resolution_comment" rows="3" maxlength="4000" placeholder="Explica la resolución">${escapeHtml(record.resolution_comment || "")}</textarea>
+          </label>
+          <button class="button button-add" type="submit">${record.status === "resolved" ? "Guardar cambios" : "Guardar respuesta"}</button>
+        </div>
+      </form>`).join("");
+    elements.courseReviewRequestEmpty.hidden = requests.length > 0;
+    elements.courseReviewRequestEmpty.textContent = "Este curso no tiene solicitudes de revisión.";
+  } catch (error) {
+    elements.courseReviewRequestList.innerHTML = "";
+    elements.courseReviewRequestEmpty.textContent = error.message;
+    elements.courseReviewRequestEmpty.hidden = false;
+  }
+}
+
+async function loadCourseEvaluations() {
+  if (!state.course) return;
+  elements.courseEvaluationEmpty.hidden = false;
+  elements.courseEvaluationEmpty.textContent = "Cargando evaluaciones…";
+  try {
+    const records = await api(`/courses/${state.course.id}/evaluations`);
+    elements.courseEvaluationList.innerHTML = records.map((record) => `
+      <button class="course-evaluation-item ${Number(state.selectedEvaluationId) === record.id ? "active" : ""}"
+        type="button" data-open-evaluation="${record.id}">
+        <strong>${escapeHtml(record.title)}</strong><time>${escapeHtml(formatDate(record.created_at))}</time>
+      </button>`).join("");
+    elements.courseEvaluationEmpty.hidden = records.length > 0;
+    elements.courseEvaluationEmpty.textContent = "Todavía no hay evaluaciones para este curso.";
+    if (state.selectedEvaluationId && records.some((item) => item.id === Number(state.selectedEvaluationId))) {
+      await loadEvaluationRoster(state.selectedEvaluationId);
+    } else {
+      state.selectedEvaluationId = null;
+      elements.courseEvaluationRoster.hidden = true;
+      elements.courseEvaluationRoster.innerHTML = "";
+    }
+  } catch (error) {
+    elements.courseEvaluationList.innerHTML = "";
+    elements.courseEvaluationEmpty.textContent = error.message;
+    elements.courseEvaluationEmpty.hidden = false;
+  }
+}
+
+async function loadEvaluationRoster(evaluationId) {
+  if (!state.course) return;
+  try {
+    const records = await api(
+      `/courses/${state.course.id}/evaluations/${evaluationId}/students`,
+    );
+    elements.courseEvaluationRoster.innerHTML = `
+      <h4>Resultados por alumno</h4>
+      ${records.length ? records.map((record) => `
+        <form class="evaluation-student-result" data-evaluation-result="${record.student_id}">
+          <div class="evaluation-student-heading">
+            <strong>${escapeHtml(record.display_name)}</strong>
+            <span>${escapeHtml(record.external_ref)}</span>
+          </div>
+          <label>Nota <span class="optional">OPCIONAL, 0 A 5</span>
+            <input class="field" name="score" type="number" min="0" max="5" step="0.01"
+              value="${record.score ?? ""}" />
+          </label>
+          <label>Feedback <span class="optional">OPCIONAL</span>
+            <textarea class="field" name="feedback" rows="2" maxlength="4000">${escapeHtml(record.feedback || "")}</textarea>
+          </label>
+          <label class="evaluation-publish-control">
+            <input name="grade_visible" type="checkbox" ${record.grade_visible ? "checked" : ""} />
+            Publicar al estudiante
+          </label>
+          <button class="button button-quiet" type="submit">Guardar</button>
+        </form>`).join("") : '<p class="history-none">No hay alumnos activos matriculados en este curso.</p>'}`;
+    elements.courseEvaluationRoster.hidden = false;
+  } catch (error) {
+    elements.courseEvaluationRoster.innerHTML = `<p class="history-none">${escapeHtml(error.message)}</p>`;
+    elements.courseEvaluationRoster.hidden = false;
   }
 }
 
@@ -1603,12 +1809,15 @@ async function loadParticipationHistory() {
         <td>${Number(record.score).toLocaleString("es", { maximumFractionDigits: 2 })}</td>
         <td>${record.difficulty} de 5</td>
         <td><label class="participation-grade-visible">
-          <input type="checkbox" data-participation-visibility="${record.id}" ${record.grade_visible ? "checked" : ""} />
-          <span>${record.grade_visible ? "Publicada" : "Oculta"}</span>
+          <input type="checkbox" data-participation-visibility="${record.id}" ${record.grade_visible ? "checked" : ""} ${record.voided ? "disabled" : ""} />
+          <span>${record.voided ? "Anulada" : record.grade_visible ? "Publicada" : "Oculta"}</span>
         </label></td>
         <td class="participation-note">${escapeHtml(record.comment || "—")}</td>
         <td>${escapeHtml(formatDate(record.created_at))}</td>
         <td><span class="attendance-badge ${record.present ? "is-present" : "is-absent"}">${record.present ? "Presente" : "Ausente"}</span></td>
+        <td><button class="button button-quiet" type="button" data-void-participation="${record.id}" data-voided="${record.voided}">
+          ${record.voided ? "Restaurar" : "Anular"}
+        </button></td>
       </tr>`).join("");
     elements.participationHistoryEmpty.hidden = records.length > 0;
     if (!records.length) elements.participationHistoryEmpty.textContent = "Todavía no hay participaciones registradas.";
@@ -1617,6 +1826,8 @@ async function loadParticipationHistory() {
     elements.participationHistoryEmpty.textContent = error.message;
     elements.participationHistoryEmpty.hidden = false;
   }
+  await loadCourseReviewRequests();
+  await loadCourseEvaluations();
 }
 
 function ensureDraftRosterCoverage() {
@@ -4269,6 +4480,38 @@ elements.studentCoursesViewButton.addEventListener("click", () => {
 });
 elements.studentHistoryViewButton.addEventListener("click", () => setStudentPortalView("history"));
 elements.studentReviewViewButton.addEventListener("click", () => setStudentPortalView("review"));
+elements.studentReviewForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const [targetType, rawTargetId] = elements.studentReviewParticipation.value.split(":");
+  const targetId = Number(rawTargetId);
+  const reason = $("#student-review-reason").value.trim();
+  if (!targetId || !reason) {
+    $("#student-review-status").textContent = "Selecciona una nota publicada e indica el motivo.";
+    return;
+  }
+  const button = $("#student-review-submit");
+  setBusy(button, true, "Enviando…");
+  $("#student-review-status").textContent = "";
+  try {
+    await api("/student/review-requests", {
+      method: "POST",
+      body: JSON.stringify({
+        ...(targetType === "e"
+          ? { evaluation_result_id: targetId }
+          : { participation_id: targetId }),
+        reason,
+      }),
+    });
+    $("#student-review-reason").value = "";
+    notify("Solicitud de revisión enviada.");
+    await loadStudentReviewData();
+  } catch (error) {
+    $("#student-review-status").textContent = error.message;
+    notify(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+});
 $("#student-course-back").addEventListener("click", () => {
   state.selectedStudentCourse = null;
   elements.studentCourseDetail.hidden = true;
@@ -4278,6 +4521,60 @@ elements.attendanceTab.addEventListener("click", () => setCourseView("attendance
 elements.participationsTab.addEventListener("click", () => {
   setCourseView("participations");
   loadParticipationHistory();
+});
+elements.courseEvaluationForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.course) return;
+  const button = elements.courseEvaluationForm.querySelector('button[type="submit"]');
+  setBusy(button, true, "Creando…");
+  try {
+    const evaluation = await api(`/courses/${state.course.id}/evaluations`, {
+      method: "POST",
+      body: JSON.stringify({ title: elements.courseEvaluationTitle.value.trim() }),
+    });
+    elements.courseEvaluationForm.reset();
+    state.selectedEvaluationId = evaluation.id;
+    await loadCourseEvaluations();
+    notify("Evaluación creada. Puedes registrar el feedback de cada alumno.");
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+});
+$("#refresh-course-evaluations").addEventListener("click", loadCourseEvaluations);
+elements.courseEvaluationList.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-open-evaluation]");
+  if (!button) return;
+  state.selectedEvaluationId = Number(button.dataset.openEvaluation);
+  await loadCourseEvaluations();
+});
+elements.courseEvaluationRoster.addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-evaluation-result]");
+  if (!form || !state.course || !state.selectedEvaluationId) return;
+  event.preventDefault();
+  const data = new FormData(form);
+  const rawScore = String(data.get("score") || "").trim();
+  const submit = form.querySelector('button[type="submit"]');
+  setBusy(submit, true, "Guardando…");
+  try {
+    await api(
+      `/courses/${state.course.id}/evaluations/${state.selectedEvaluationId}/students/${form.dataset.evaluationResult}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          score: rawScore ? Number(rawScore) : null,
+          feedback: String(data.get("feedback") || "").trim() || null,
+          grade_visible: data.has("grade_visible"),
+        }),
+      },
+    );
+    await loadEvaluationRoster(state.selectedEvaluationId);
+    notify("Resultado de evaluación guardado.");
+  } catch (error) {
+    notify(error.message, true);
+    setBusy(submit, false);
+  }
 });
 elements.groupsTab.addEventListener("click", () => {
   setCourseView("groups");
@@ -4504,6 +4801,7 @@ elements.deleteGroupPlanButton.addEventListener("click", deleteGroupPlan);
 elements.editGroupPlanButton.addEventListener("click", startGroupPlanEditing);
 elements.cancelGroupEditsButton.addEventListener("click", cancelGroupPlanEditing);
 $("#refresh-participations").addEventListener("click", loadParticipationHistory);
+$("#refresh-review-requests").addEventListener("click", loadCourseReviewRequests);
 elements.participationHistoryBody.addEventListener("change", async (event) => {
   const checkbox = event.target.closest("[data-participation-visibility]");
   if (!checkbox || !state.course) return;
@@ -4526,6 +4824,64 @@ elements.participationHistoryBody.addEventListener("change", async (event) => {
   } finally {
     checkbox.disabled = false;
   }
+});
+elements.participationHistoryBody.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-void-participation]");
+  if (!button || !state.course) return;
+  const voided = button.dataset.voided === "true";
+  if (!window.confirm(
+    voided ? "¿Restaurar esta participación anulada?" : "¿Anular esta participación?",
+  )) return;
+  setBusy(button, true, voided ? "Restaurando…" : "Anulando…");
+  try {
+    await api(
+      `/courses/${state.course.id}/participations/${button.dataset.voidParticipation}/void`,
+      { method: "PATCH", body: JSON.stringify({ voided: !voided }) },
+    );
+    await loadParticipationHistory();
+    notify(voided ? "Participación restaurada." : "Participación anulada.");
+  } catch (error) {
+    notify(error.message, true);
+    setBusy(button, false);
+  }
+});
+elements.courseReviewRequestList.addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-review-request-update]");
+  if (!form || !state.course) return;
+  event.preventDefault();
+  const data = new FormData(form);
+  const status = String(data.get("status") || form.dataset.requestStatus);
+  const resolutionComment = String(data.get("resolution_comment") || "").trim();
+  const rawScore = String(data.get("revised_score") || "").trim();
+  const button = form.querySelector('button[type="submit"]');
+  setBusy(button, true, "Guardando…");
+  try {
+    await api(
+      `/courses/${state.course.id}/review-requests/${form.dataset.reviewRequestUpdate}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          status,
+          resolution_comment: resolutionComment || null,
+          revised_score: rawScore ? Number(rawScore) : null,
+        }),
+      },
+    );
+    await loadParticipationHistory();
+    notify("Resolución guardada y visible para el estudiante.");
+  } catch (error) {
+    notify(error.message, true);
+    setBusy(button, false);
+  }
+});
+elements.courseReviewRequestList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-edit-resolution]");
+  if (!button) return;
+  const form = button.closest("[data-review-request-update]");
+  if (!form) return;
+  form.querySelector(".teacher-review-controls").hidden = false;
+  button.hidden = true;
+  form.querySelector('[name="resolution_comment"]').focus();
 });
 elements.activeRole.addEventListener("change", () => {
   if (state.authenticatedUser?.role !== "administrador") return;

@@ -258,6 +258,66 @@ class StudentParticipation:
     grade_visible: bool = False
     question: Optional[str] = None
     comment: Optional[str] = None
+    voided: bool = False
+
+
+@dataclass(frozen=True)
+class CourseEvaluation:
+    """Evaluación creada por el docente para un curso."""
+
+    id: int
+    course_id: int
+    title: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class EvaluationStudentRecord:
+    """Resultado y retroalimentación de un estudiante en una evaluación."""
+
+    result_id: Optional[int]
+    evaluation_id: int
+    student_id: int
+    external_ref: str
+    display_name: str
+    score: Optional[float]
+    feedback: Optional[str]
+    grade_visible: bool
+
+
+@dataclass(frozen=True)
+class StudentEvaluationHistory:
+    """Evaluación publicada para el portal privado del estudiante."""
+
+    result_id: int
+    evaluation_id: int
+    course_id: int
+    course_name: str
+    title: str
+    score: Optional[float]
+    feedback: Optional[str]
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class StudentReviewRequest:
+    """Solicitud de revisión de nota enviada por un estudiante."""
+
+    id: int
+    participation_id: Optional[int]
+    evaluation_result_id: Optional[int]
+    student_user_id: int
+    course_id: int
+    course_name: str
+    student_name: str
+    student_username: str
+    reason: str
+    status: str
+    target_name: str
+    target_score: Optional[float]
+    resolution_comment: Optional[str]
+    created_at: datetime
+    updated_at: datetime
 
 
 @dataclass(frozen=True)

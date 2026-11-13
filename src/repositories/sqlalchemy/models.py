@@ -394,10 +394,90 @@ class StudentParticipationORM(Base):
     )
     question: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    voided: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     decision_run: Mapped["DecisionRunORM"] = relationship(back_populates="participations")
     student: Mapped["StudentORM"] = relationship(back_populates="participations")
+
+
+class CourseEvaluationORM(Base):
+    """Evaluación independiente de las participaciones de clase."""
+
+    __tablename__ = "course_evaluations"
+    __table_args__ = (
+        Index("ix_course_evaluations_course_created", "course_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class StudentEvaluationResultORM(Base):
+    """Nota y feedback opcionales por estudiante y evaluación."""
+
+    __tablename__ = "student_evaluation_results"
+    __table_args__ = (
+        UniqueConstraint("evaluation_id", "student_id", name="uq_evaluation_student"),
+        CheckConstraint(
+            "score IS NULL OR (score >= 0 AND score <= 5)",
+            name="ck_student_evaluation_score_range",
+        ),
+        Index("ix_evaluation_results_student", "student_id", "evaluation_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    evaluation_id: Mapped[int] = mapped_column(
+        ForeignKey("course_evaluations.id"), nullable=False
+    )
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), nullable=False)
+    score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    feedback: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    grade_visible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+
+
+class StudentReviewRequestORM(Base):
+    """Solicitud de revisión de una nota visible para el estudiante."""
+
+    __tablename__ = "student_review_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'in_review', 'resolved')",
+            name="ck_student_review_request_status",
+        ),
+        CheckConstraint(
+            "(participation_id IS NOT NULL AND evaluation_result_id IS NULL) OR "
+            "(participation_id IS NULL AND evaluation_result_id IS NOT NULL)",
+            name="ck_student_review_request_target",
+        ),
+        Index("ix_student_review_requests_student_created", "student_user_id", "created_at"),
+        Index("ix_student_review_requests_course_status", "course_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    participation_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("student_participations.id"), nullable=True
+    )
+    evaluation_result_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("student_evaluation_results.id"), nullable=True
+    )
+    student_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", server_default="pending"
+    )
+    resolution_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
 
 
 class GroupExpositionORM(Base):

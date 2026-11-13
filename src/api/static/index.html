@@ -154,10 +154,25 @@
             <p class="heading-meta">Tus participaciones y notas publicadas por el docente.</p>
             <div id="student-history-list" class="student-history-list"></div>
             <p id="student-history-empty" class="setup-empty" hidden></p>
+            <h3 class="student-portal-section-title">Evaluaciones y retroalimentación</h3>
+            <div id="student-evaluation-list" class="student-history-list"></div>
+            <p id="student-evaluation-empty" class="setup-empty" hidden></p>
           </section>
           <section id="student-review-view" class="student-review-view" hidden aria-labelledby="student-review-title">
             <h2 class="student-portal-section-title" id="student-review-title">Solicitar revisión</h2>
-            <p class="student-review-note">La opción para enviar solicitudes de revisión estará disponible en una próxima etapa.</p>
+            <p class="student-review-note">Puedes solicitar una explicación o revisión de una nota publicada.</p>
+            <form id="student-review-form" class="student-review-form">
+              <label class="form-label" for="student-review-participation">Nota o evaluación</label>
+              <select id="student-review-participation" class="field" required>
+                <option value="">Cargando notas visibles…</option>
+              </select>
+              <label class="form-label" for="student-review-reason">Motivo de la solicitud</label>
+              <textarea id="student-review-reason" class="field" rows="4" maxlength="2000" required></textarea>
+              <button class="button button-add" id="student-review-submit" type="submit">Enviar solicitud</button>
+            </form>
+            <p id="student-review-status" class="form-note" role="status"></p>
+            <div id="student-review-list" class="student-review-list"></div>
+            <p id="student-review-empty" class="setup-empty" hidden></p>
           </section>
         </section>
 
@@ -396,11 +411,38 @@
             </div>
             <div class="participation-table-wrap">
               <table class="participation-table">
-                <thead><tr><th>Código</th><th>Estudiante</th><th>Pregunta</th><th>Nota</th><th>Dificultad</th><th>Visible al estudiante</th><th>Comentario</th><th>Fecha y hora</th><th>Asistencia</th></tr></thead>
+                <thead><tr><th>Código</th><th>Estudiante</th><th>Pregunta</th><th>Nota</th><th>Dificultad</th><th>Visible al estudiante</th><th>Comentario</th><th>Fecha y hora</th><th>Asistencia</th><th>Estado</th></tr></thead>
                 <tbody id="participation-history-body"></tbody>
               </table>
             </div>
             <p class="history-none" id="participation-history-empty">Todavía no hay participaciones registradas.</p>
+            <section class="course-review-requests course-evaluations" aria-labelledby="course-evaluations-title">
+              <div class="panel-heading">
+                <div>
+                  <h3 id="course-evaluations-title">Evaluaciones y feedback</h3>
+                  <p class="form-note">Crea un examen u otra evaluación y registra feedback opcional por alumno. Publica cada resultado cuando esté listo.</p>
+                </div>
+                <button class="button button-quiet" id="refresh-course-evaluations" type="button">Actualizar</button>
+              </div>
+              <form id="course-evaluation-form" class="course-evaluation-form">
+                <label class="form-label" for="course-evaluation-title">Nombre de la evaluación</label>
+                <div class="course-evaluation-create">
+                  <input class="field" id="course-evaluation-title" maxlength="255" placeholder="Ej. Examen Parcial" required />
+                  <button class="button button-add" type="submit">Crear evaluación</button>
+                </div>
+              </form>
+              <div id="course-evaluation-list" class="course-evaluation-list"></div>
+              <p class="history-none" id="course-evaluation-empty" hidden></p>
+              <section id="course-evaluation-roster" class="course-evaluation-roster" hidden aria-label="Resultados de evaluación"></section>
+            </section>
+            <section class="course-review-requests" aria-labelledby="course-review-title">
+              <div class="panel-heading">
+                <h3 id="course-review-title">Solicitudes de revisión</h3>
+                <button class="button button-quiet" id="refresh-review-requests" type="button">Actualizar solicitudes</button>
+              </div>
+              <div id="course-review-request-list" class="student-review-list"></div>
+              <p class="history-none" id="course-review-request-empty" hidden></p>
+            </section>
           </section>
 
           <section class="group-planning-panel" id="groups-view" hidden aria-labelledby="groups-title">

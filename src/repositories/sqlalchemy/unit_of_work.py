@@ -22,12 +22,14 @@ from src.repositories.sqlalchemy.repository_impl import (
     SqlAlchemyClassSessionRepository,
     SqlAlchemyCourseRepository,
     SqlAlchemyCourseMaterialRepository,
+    SqlAlchemyCourseEvaluationRepository,
     SqlAlchemyExposureTimeSettingsRepository,
     SqlAlchemyDecisionRunRepository,
     SqlAlchemyEventRepository,
     SqlAlchemyGroupExpositionRepository,
     SqlAlchemyGroupPlanRepository,
     SqlAlchemyParticipationRepository,
+    SqlAlchemyStudentReviewRequestRepository,
     SqlAlchemyStudentRepository,
     SqlAlchemyStudentAccountRepository,
     SqlAlchemyStudentStateRepository,
@@ -62,6 +64,8 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.decision_runs = SqlAlchemyDecisionRunRepository(self._session)
         self.events = SqlAlchemyEventRepository(self._session)
         self.participations = SqlAlchemyParticipationRepository(self._session)
+        self.evaluations = SqlAlchemyCourseEvaluationRepository(self._session)
+        self.review_requests = SqlAlchemyStudentReviewRequestRepository(self._session)
         self.group_plans = SqlAlchemyGroupPlanRepository(self._session)
         self.group_expositions = SqlAlchemyGroupExpositionRepository(self._session)
         return self

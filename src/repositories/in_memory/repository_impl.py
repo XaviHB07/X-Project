@@ -25,6 +25,7 @@ from src.domain.entities import (
     AttendanceRecord,
     ClassSession,
     Course,
+    CourseEvaluation,
     CourseGroupPlan,
     CourseMaterial,
     CourseMaterialContent,
@@ -35,8 +36,11 @@ from src.domain.entities import (
     GroupExpositionMemberScore,
     Student,
     StudentAccount,
+    StudentEvaluationHistory,
+    EvaluationStudentRecord,
     StudentGroup,
     StudentParticipation,
+    StudentReviewRequest,
     SyllabusEntry,
 )
 from src.domain.value_objects import (
@@ -62,6 +66,8 @@ from src.repositories.interfaces import (
     InvalidParticipationStudentError,
     ParticipationDecisionNotFoundError,
     ParticipationRepository,
+    CourseEvaluationRepository,
+    StudentReviewRequestRepository,
     StudentRepository,
     StudentAccountRepository,
     StudentStateRepository,
@@ -120,6 +126,9 @@ class InMemoryDatabase:
         self.decision_runs: Dict[int, DecisionRun] = {}
         self.events: List[SelectionEventRecord] = []
         self.participations: Dict[Tuple[int, int], StudentParticipation] = {}
+        self.evaluations: Dict[int, CourseEvaluation] = {}
+        self.evaluation_results: Dict[Tuple[int, int], EvaluationStudentRecord] = {}
+        self.review_requests: Dict[int, StudentReviewRequest] = {}
         self.group_plans: Dict[int, CourseGroupPlan] = {}
         self.group_expositions: Dict[int, GroupExposition] = {}
 
@@ -814,6 +823,7 @@ class InMemoryParticipationRepository(ParticipationRepository):
                     grade_visible=grade_visible,
                     question=question,
                     comment=comment,
+                    voided=record.voided if record else False,
                 )
             else:
                 record = replace(
@@ -855,11 +865,28 @@ class InMemoryParticipationRepository(ParticipationRepository):
             return updated
         return None
 
+    def set_voided(
+        self, course_id: int, participation_id: int, voided: bool
+    ) -> Optional[StudentParticipation]:
+        for key, record in self._db.participations.items():
+            if record.id != participation_id:
+                continue
+            run = self._db.decision_runs.get(record.decision_run_id)
+            session = self._db.class_sessions.get(run.class_session_id) if run else None
+            if session is None or session.course_id != course_id:
+                return None
+            updated = replace(record, voided=voided)
+            self._db.participations[key] = updated
+            return updated
+        return None
+
     def weekly_score_averages(
         self, course_id: int, start_on: date, end_on: date
     ) -> List[Tuple[int, date, float, int]]:
         grouped: Dict[Tuple[int, date], List[float]] = {}
         for record in self._db.participations.values():
+            if record.voided:
+                continue
             run = self._db.decision_runs[record.decision_run_id]
             session = self._db.class_sessions[run.class_session_id]
             if session.course_id != course_id or session.session_date is None:
@@ -877,7 +904,7 @@ class InMemoryParticipationRepository(ParticipationRepository):
     ) -> List[Tuple[StudentParticipation, date, datetime]]:
         details = []
         for record in self._db.participations.values():
-            if record.student_id != student_id:
+            if record.student_id != student_id or record.voided:
                 continue
             run = self._db.decision_runs[record.decision_run_id]
             session = self._db.class_sessions[run.class_session_id]
@@ -888,6 +915,252 @@ class InMemoryParticipationRepository(ParticipationRepository):
             ):
                 details.append((record, session.session_date, run.created_at))
         return sorted(details, key=lambda item: (item[2], item[0].id))
+
+
+class InMemoryCourseEvaluationRepository(CourseEvaluationRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def create(self, course_id: int, title: str) -> CourseEvaluation:
+        evaluation = CourseEvaluation(
+            id=self._db.next_id("course_evaluations"),
+            course_id=course_id,
+            title=title,
+            created_at=_utcnow(),
+        )
+        self._db.evaluations[evaluation.id] = evaluation
+        return evaluation
+
+    def list_by_course(self, course_id: int) -> List[CourseEvaluation]:
+        return sorted(
+            (item for item in self._db.evaluations.values() if item.course_id == course_id),
+            key=lambda item: (item.created_at, item.id),
+            reverse=True,
+        )
+
+    def list_students(
+        self, course_id: int, evaluation_id: int
+    ) -> Optional[List[EvaluationStudentRecord]]:
+        evaluation = self._db.evaluations.get(evaluation_id)
+        if evaluation is None or evaluation.course_id != course_id:
+            return None
+        students = sorted(
+            (
+                student for student in self._db.students.values()
+                if student.course_id == course_id and student.active
+            ),
+            key=lambda student: (student.display_name.casefold(), student.id),
+        )
+        return [
+            self._db.evaluation_results.get((evaluation_id, student.id))
+            or EvaluationStudentRecord(
+                result_id=None,
+                evaluation_id=evaluation_id,
+                student_id=student.id,
+                external_ref=student.external_ref,
+                display_name=student.display_name,
+                score=None,
+                feedback=None,
+                grade_visible=False,
+            )
+            for student in students
+        ]
+
+    def save_student_result(
+        self,
+        course_id: int,
+        evaluation_id: int,
+        student_id: int,
+        score: Optional[float],
+        feedback: Optional[str],
+        grade_visible: bool,
+    ) -> Optional[EvaluationStudentRecord]:
+        evaluation = self._db.evaluations.get(evaluation_id)
+        student = self._db.students.get(student_id)
+        if (
+            evaluation is None
+            or evaluation.course_id != course_id
+            or student is None
+            or student.course_id != course_id
+            or not student.active
+        ):
+            return None
+        key = (evaluation_id, student_id)
+        previous = self._db.evaluation_results.get(key)
+        result = EvaluationStudentRecord(
+            result_id=previous.result_id if previous else self._db.next_id("evaluation_results"),
+            evaluation_id=evaluation_id,
+            student_id=student_id,
+            external_ref=student.external_ref,
+            display_name=student.display_name,
+            score=score,
+            feedback=feedback,
+            grade_visible=grade_visible,
+        )
+        self._db.evaluation_results[key] = result
+        return result
+
+    def list_for_student(self, student_user_id: int) -> List[StudentEvaluationHistory]:
+        accounts = {
+            account.id: account for account in self._db.student_accounts.values()
+        }
+        history = []
+        for result in self._db.evaluation_results.values():
+            student = self._db.students.get(result.student_id)
+            account = accounts.get(student.user_id) if student and student.user_id else None
+            evaluation = self._db.evaluations.get(result.evaluation_id)
+            course = self._db.courses.get(evaluation.course_id) if evaluation else None
+            if (
+                student is None or not student.active or account is None
+                or account.id != student_user_id or not result.grade_visible
+                or evaluation is None or course is None
+            ):
+                continue
+            history.append(StudentEvaluationHistory(
+                result_id=result.result_id,
+                evaluation_id=evaluation.id,
+                course_id=course.id,
+                course_name=course.name,
+                title=evaluation.title,
+                score=result.score,
+                feedback=result.feedback,
+                created_at=evaluation.created_at,
+            ))
+        return sorted(history, key=lambda item: (item.created_at, item.result_id), reverse=True)
+
+
+class InMemoryStudentReviewRequestRepository(StudentReviewRequestRepository):
+    def __init__(self, db: InMemoryDatabase):
+        self._db = db
+
+    def create_for_visible_target(
+        self,
+        student_user_id: int,
+        participation_id: Optional[int],
+        evaluation_result_id: Optional[int],
+        reason: str,
+    ) -> Optional[StudentReviewRequest]:
+        if (participation_id is None) == (evaluation_result_id is None):
+            return None
+        accounts = {account.id: account for account in self._db.student_accounts.values()}
+        target_score = None
+        target_name = "Evaluación"
+        course_id = None
+        student = None
+        if participation_id is not None:
+            participation = next(
+                (record for record in self._db.participations.values()
+                 if record.id == participation_id),
+                None,
+            )
+            if participation is None or not participation.grade_visible or participation.voided:
+                return None
+            student = self._db.students.get(participation.student_id)
+            run = self._db.decision_runs.get(participation.decision_run_id)
+            session = self._db.class_sessions.get(run.class_session_id) if run else None
+            if session is None:
+                return None
+            course_id = session.course_id
+            target_score = participation.score
+            target_name = session.topic or "Participación"
+        else:
+            result = next(
+                (record for record in self._db.evaluation_results.values()
+                 if record.result_id == evaluation_result_id),
+                None,
+            )
+            if result is None or not result.grade_visible:
+                return None
+            student = self._db.students.get(result.student_id)
+            evaluation = self._db.evaluations.get(result.evaluation_id)
+            if evaluation is None:
+                return None
+            course_id = evaluation.course_id
+            target_score = result.score
+            target_name = evaluation.title
+        account = accounts.get(student.user_id) if student and student.user_id else None
+        if (
+            student is None or not student.active or account is None
+            or account.id != student_user_id
+        ):
+            return None
+        course = self._db.courses.get(course_id)
+        if course is None:
+            return None
+        now = _utcnow()
+        request = StudentReviewRequest(
+            id=self._db.next_id("student_review_requests"),
+            participation_id=participation_id,
+            evaluation_result_id=evaluation_result_id,
+            student_user_id=student_user_id,
+            course_id=course_id,
+            course_name=course.name,
+            student_name=student.display_name,
+            student_username=account.username,
+            reason=reason,
+            status="pending",
+            target_name=target_name,
+            target_score=target_score,
+            resolution_comment=None,
+            created_at=now,
+            updated_at=now,
+        )
+        self._db.review_requests[request.id] = request
+        return request
+
+    def list_for_student(self, student_user_id: int) -> List[StudentReviewRequest]:
+        return sorted(
+            (request for request in self._db.review_requests.values()
+             if request.student_user_id == student_user_id),
+            key=lambda request: (request.created_at, request.id),
+            reverse=True,
+        )
+
+    def list_by_course(self, course_id: int) -> List[StudentReviewRequest]:
+        return sorted(
+            (request for request in self._db.review_requests.values()
+             if request.course_id == course_id),
+            key=lambda request: (request.created_at, request.id),
+            reverse=True,
+        )
+
+    def update_resolution(
+        self,
+        course_id: int,
+        request_id: int,
+        status: str,
+        resolution_comment: Optional[str],
+        revised_score: Optional[float],
+    ) -> Optional[StudentReviewRequest]:
+        request = self._db.review_requests.get(request_id)
+        if request is None or request.course_id != course_id:
+            return None
+        target_score = request.target_score
+        if revised_score is not None:
+            target_score = revised_score
+            if request.participation_id is not None:
+                for key, participation in self._db.participations.items():
+                    if participation.id == request.participation_id:
+                        self._db.participations[key] = replace(
+                            participation, score=revised_score
+                        )
+                        break
+            elif request.evaluation_result_id is not None:
+                for key, result in self._db.evaluation_results.items():
+                    if result.result_id == request.evaluation_result_id:
+                        self._db.evaluation_results[key] = replace(
+                            result, score=revised_score
+                        )
+                        break
+        updated = replace(
+            request,
+            status=status,
+            target_score=target_score,
+            resolution_comment=resolution_comment,
+            updated_at=_utcnow(),
+        )
+        self._db.review_requests[request_id] = updated
+        return updated
 
 
 class InMemoryGroupPlanRepository(GroupPlanRepository):

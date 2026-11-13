@@ -93,11 +93,20 @@ from src.api.schemas import (
     StudentAccountCreatedResponse,
     StudentAccountResponse,
     StudentCourseResponse,
+    StudentEvaluationCreate,
+    StudentEvaluationHistoryResponse,
+    StudentEvaluationResponse,
+    EvaluationStudentResponse,
+    EvaluationStudentResultUpdate,
     StudentParticipationHistoryResponse,
+    StudentReviewRequestCreate,
+    StudentReviewRequestResponse,
+    StudentReviewRequestStatusUpdate,
     StudentWeekResponse,
     StudentWeeksResponse,
     StudentStateResponse,
     StudentUpdateRequest,
+    ParticipationVoidedRequest,
     TeacherAssignmentResponse,
     TeacherActiveRequest,
     TeacherCreatedResponse,
@@ -225,14 +234,22 @@ async def authenticate_requests(request: Request, call_next):
                 status_code=status.HTTP_403_FORBIDDEN,
             )
     response = await call_next(request)
-    if request.method != "GET" and (
-        request.url.path.startswith("/auth/")
-        or request.url.path.startswith("/admin/teachers")
-        or request.url.path.startswith("/admin/students")
-        or request.url.path.endswith("/students/import")
-        or request.url.path.endswith("/students")
-        or request.url.path.endswith("/reset-password")
-        or "/materials" in request.url.path
+    if (
+        request.url.path.startswith("/student/")
+        or "/review-requests" in request.url.path
+        or "/participations" in request.url.path
+        or (
+            request.method != "GET"
+            and (
+                request.url.path.startswith("/auth/")
+                or request.url.path.startswith("/admin/teachers")
+                or request.url.path.startswith("/admin/students")
+                or request.url.path.endswith("/students/import")
+                or request.url.path.endswith("/students")
+                or request.url.path.endswith("/reset-password")
+                or "/materials" in request.url.path
+            )
+        )
     ):
         response.headers["Cache-Control"] = "no-store"
     return response
@@ -614,6 +631,7 @@ def list_student_course_weeks(
 @app.get(
     "/student/history",
     response_model=List[StudentParticipationHistoryResponse],
+    response_model_exclude_none=True,
     tags=["estudiantes"],
     dependencies=[Depends(current_user)],
 )
@@ -627,6 +645,212 @@ def list_student_participation_history(
         user.id
     )
     return [StudentParticipationHistoryResponse(**entry) for entry in history]
+
+
+def _student_review_request_response(record) -> StudentReviewRequestResponse:
+    return StudentReviewRequestResponse(
+        id=record.id,
+        participation_id=record.participation_id,
+        evaluation_result_id=record.evaluation_result_id,
+        course_id=record.course_id,
+        course_name=record.course_name,
+        student_name=record.student_name,
+        student_username=record.student_username,
+        reason=record.reason,
+        status=record.status,
+        target_name=record.target_name,
+        target_score=record.target_score,
+        resolution_comment=record.resolution_comment,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+@app.get(
+    "/student/evaluations",
+    response_model=List[StudentEvaluationHistoryResponse],
+    tags=["estudiantes"],
+    dependencies=[Depends(current_user)],
+)
+def list_student_evaluations(
+    user: AuthenticatedUser = Depends(current_user),
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> List[StudentEvaluationHistoryResponse]:
+    if user.role != ROLE_STUDENT:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Este recurso es exclusivo para estudiantes.")
+    with uow:
+        records = uow.evaluations.list_for_student(user.id)
+    return [StudentEvaluationHistoryResponse(**record.__dict__) for record in records]
+
+
+@app.get(
+    "/courses/{course_id}/evaluations",
+    response_model=List[StudentEvaluationResponse],
+    tags=["evaluaciones"],
+    dependencies=[Depends(require_course_access)],
+)
+def list_course_evaluations(
+    course_id: int,
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> List[StudentEvaluationResponse]:
+    with uow:
+        records = uow.evaluations.list_by_course(course_id)
+    return [StudentEvaluationResponse(**record.__dict__) for record in records]
+
+
+@app.post(
+    "/courses/{course_id}/evaluations",
+    response_model=StudentEvaluationResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["evaluaciones"],
+    dependencies=[Depends(require_course_access)],
+)
+def create_course_evaluation(
+    course_id: int,
+    payload: StudentEvaluationCreate,
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> StudentEvaluationResponse:
+    with uow:
+        evaluation = uow.evaluations.create(course_id, payload.title)
+        uow.commit()
+    return StudentEvaluationResponse(**evaluation.__dict__)
+
+
+@app.get(
+    "/courses/{course_id}/evaluations/{evaluation_id}/students",
+    response_model=List[EvaluationStudentResponse],
+    tags=["evaluaciones"],
+    dependencies=[Depends(require_course_access)],
+)
+def list_evaluation_students(
+    course_id: int,
+    evaluation_id: int,
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> List[EvaluationStudentResponse]:
+    with uow:
+        records = uow.evaluations.list_students(course_id, evaluation_id)
+        if records is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "No se encontró la evaluación.")
+    return [EvaluationStudentResponse(**record.__dict__) for record in records]
+
+
+@app.patch(
+    "/courses/{course_id}/evaluations/{evaluation_id}/students/{student_id}",
+    response_model=EvaluationStudentResponse,
+    tags=["evaluaciones"],
+    dependencies=[Depends(require_course_access)],
+)
+def update_evaluation_student_result(
+    course_id: int,
+    evaluation_id: int,
+    student_id: int,
+    payload: EvaluationStudentResultUpdate,
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> EvaluationStudentResponse:
+    with uow:
+        record = uow.evaluations.save_student_result(
+            course_id,
+            evaluation_id,
+            student_id,
+            payload.score,
+            payload.feedback,
+            payload.grade_visible,
+        )
+        if record is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "No se encontró el alumno o evaluación.")
+        uow.commit()
+    return EvaluationStudentResponse(**record.__dict__)
+
+
+@app.post(
+    "/student/review-requests",
+    response_model=StudentReviewRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["estudiantes"],
+    dependencies=[Depends(current_user)],
+)
+def create_student_review_request(
+    payload: StudentReviewRequestCreate,
+    user: AuthenticatedUser = Depends(current_user),
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> StudentReviewRequestResponse:
+    if user.role != ROLE_STUDENT:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Este recurso es exclusivo para estudiantes.")
+    with uow:
+        review_request = uow.review_requests.create_for_visible_target(
+            user.id,
+            payload.participation_id,
+            payload.evaluation_result_id,
+            payload.reason,
+        )
+        if review_request is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "No se encontró una participación propia con nota visible.",
+            )
+        uow.commit()
+    return _student_review_request_response(review_request)
+
+
+@app.get(
+    "/student/review-requests",
+    response_model=List[StudentReviewRequestResponse],
+    tags=["estudiantes"],
+    dependencies=[Depends(current_user)],
+)
+def list_student_review_requests(
+    user: AuthenticatedUser = Depends(current_user),
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> List[StudentReviewRequestResponse]:
+    if user.role != ROLE_STUDENT:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Este recurso es exclusivo para estudiantes.")
+    with uow:
+        records = uow.review_requests.list_for_student(user.id)
+    return [_student_review_request_response(record) for record in records]
+
+
+@app.get(
+    "/courses/{course_id}/review-requests",
+    response_model=List[StudentReviewRequestResponse],
+    tags=["participación"],
+    dependencies=[Depends(require_course_access)],
+)
+def list_course_review_requests(
+    course_id: int,
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> List[StudentReviewRequestResponse]:
+    with uow:
+        records = uow.review_requests.list_by_course(course_id)
+    return [_student_review_request_response(record) for record in records]
+
+
+@app.patch(
+    "/courses/{course_id}/review-requests/{request_id}",
+    response_model=StudentReviewRequestResponse,
+    tags=["participación"],
+    dependencies=[Depends(require_course_access)],
+)
+def update_course_review_request_status(
+    course_id: int,
+    request_id: int,
+    payload: StudentReviewRequestStatusUpdate,
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> StudentReviewRequestResponse:
+    with uow:
+        record = uow.review_requests.update_resolution(
+            course_id,
+            request_id,
+            payload.status,
+            payload.resolution_comment,
+            payload.revised_score,
+        )
+        if record is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "No se encontró la solicitud de revisión en el curso indicado.",
+            )
+        uow.commit()
+    return _student_review_request_response(record)
 
 
 @app.get(
@@ -1615,6 +1839,31 @@ def update_participation_grade_visibility(
     with uow:
         record = uow.participations.set_grade_visibility(
             course_id, participation_id, payload.grade_visible
+        )
+        if record is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "No se encontró la participación en el curso indicado.",
+            )
+        uow.commit()
+    return ParticipationResponse(**record.__dict__)
+
+
+@app.patch(
+    "/courses/{course_id}/participations/{participation_id}/void",
+    response_model=ParticipationResponse,
+    tags=["participación"],
+    dependencies=[Depends(require_course_access)],
+)
+def update_participation_void_status(
+    course_id: int,
+    participation_id: int,
+    payload: ParticipationVoidedRequest,
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> ParticipationResponse:
+    with uow:
+        record = uow.participations.set_voided(
+            course_id, participation_id, payload.voided
         )
         if record is None:
             raise HTTPException(
