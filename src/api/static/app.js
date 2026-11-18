@@ -49,6 +49,10 @@ const state = {
   expoTimer: null,
   audioContext: null,
   exposureTimeSettings: null,
+  // HU-A5 a HU-A7 / HU-C2: árbol universidad → facultad → especialidad.
+  institutions: [],
+  // HU-C4: curso que se está editando en "Gestión de cursos".
+  editingCourseId: null,
 };
 
 const selectionAnimationDuration = 5500;
@@ -215,6 +219,12 @@ const elements = {
   studentReviewEmpty: $("#student-review-empty"),
   courseReviewRequestList: $("#course-review-request-list"),
   courseReviewRequestEmpty: $("#course-review-request-empty"),
+  institutionsViewButton: $("#institutions-view-button"),
+  institutionsPage: $("#institutions-page"),
+  studentActivityViewButton: $("#student-activity-view-button"),
+  studentActivityView: $("#student-activity-view"),
+  quickTab: $("#quick-tab"),
+  quickView: $("#quick-view"),
 };
 
 function escapeHtml(value) {
@@ -261,6 +271,7 @@ function showLogin(message = "") {
   state.groupPlanEditing = false;
   state.draftGroups = [];
   state.exposureTimeSettings = null;
+  if (typeof resetQuickActivities === "function") resetQuickActivities(false);
   state.appView = "daily";
   elements.appShell.classList.remove("student-mode");
   elements.loginScreen.hidden = false;
@@ -298,7 +309,10 @@ async function loadAuthenticatedData(user) {
   elements.appShell.hidden = false;
   if (user.role === "estudiante") {
     state.appView = "studentPortal";
-    state.studentPortalView = "courses";
+    // HU-Q5: si el estudiante llegó desde el enlace del QR, abre directamente
+    // la vista para unirse a la actividad.
+    state.studentPortalView =
+      typeof pendingJoinCode === "function" && pendingJoinCode() ? "activity" : "courses";
     setAppView(state.appView);
     try {
       state.studentCourses = await api("/student/courses");
@@ -310,14 +324,17 @@ async function loadAuthenticatedData(user) {
   }
   setAppView(state.appView);
   try {
-    const [methods, courses, cycles] = await Promise.all([
+    const [methods, courses, cycles, institutions] = await Promise.all([
       api("/methods"),
       api("/courses"),
       api("/cycles"),
+      api("/institutions").catch(() => []),
     ]);
     state.methods = methods.methods;
     state.availableCourses = courses;
     state.cycles = cycles;
+    state.institutions = institutions;
+    if (typeof renderInstitutionViews === "function") renderInstitutionViews();
     renderMethodOptions();
     renderRecentCourses();
     renderCycles();
@@ -349,7 +366,7 @@ function renderTeacherAssignments() {
       `).join("")
     : '<p class="form-note">Crea un curso antes de asignarlo a un docente.</p>';
   elements.createTeacherCourseList.innerHTML = courseOptions;
-  elements.createTeacherSubmit.disabled = !state.availableCourses.length;
+  elements.createTeacherSubmit.disabled = false;
   filterCourseOptions($("#create-teacher-course-search"), elements.createTeacherCourseList);
   elements.teacherDirectoryList.innerHTML = state.teachers.length
     ? state.teachers.map((teacher) => {
@@ -358,7 +375,7 @@ function renderTeacherAssignments() {
           .map((course) => course.name);
         return `<details class="teacher-directory-item">
           <summary class="teacher-directory-summary">
-            <span><strong>${escapeHtml(teacher.full_name)} ${teacher.active === false ? '<em class="teacher-status is-inactive">Deshabilitado</em>' : '<em class="teacher-status">Activo</em>'}</strong><small>${escapeHtml(teacher.username)} · DNI ${escapeHtml(teacher.dni || "Sin registrar")}</small></span>
+            <span><strong>${escapeHtml(teacher.last_names ? `${teacher.last_names}, ${teacher.first_names}` : teacher.full_name)} ${teacher.active === false ? '<em class="teacher-status is-inactive">Deshabilitado</em>' : '<em class="teacher-status">Activo</em>'}</strong><small>${escapeHtml(teacher.username)} · DNI ${escapeHtml(teacher.dni || "Sin registrar")}</small></span>
             <span class="teacher-details-toggle" aria-hidden="true">＋</span>
           </summary>
           <div class="teacher-directory-details">
@@ -464,6 +481,7 @@ function setStudentPortalView(view) {
     courses: elements.studentCoursesView,
     history: elements.studentHistoryView,
     review: elements.studentReviewView,
+    activity: elements.studentActivityView,
   };
   if (!views[view]) return;
   state.studentPortalView = view;
@@ -474,6 +492,7 @@ function setStudentPortalView(view) {
     [elements.studentCoursesViewButton, "courses"],
     [elements.studentHistoryViewButton, "history"],
     [elements.studentReviewViewButton, "review"],
+    [elements.studentActivityViewButton, "activity"],
   ].forEach(([button, name]) => {
     const active = name === view;
     button.classList.toggle("active", active);
@@ -482,6 +501,7 @@ function setStudentPortalView(view) {
   });
   if (view === "history") loadStudentHistory();
   if (view === "review") loadStudentReviewData();
+  if (view === "activity" && typeof openStudentActivityView === "function") openStudentActivityView();
 }
 
 async function openStudentCourse(event) {
@@ -881,11 +901,23 @@ function renderCycleRow(cycle) {
     ? `Del ${formatCycleDate(cycle.starts_on)}${cycle.ends_on ? ` al ${formatCycleDate(cycle.ends_on)}` : " · sin fecha de fin"}`
     : "Sin fecha de inicio";
   const summary = `${period} · ${courseCount} curso${courseCount === 1 ? "" : "s"}`;
+  // HU-C2: contexto institucional del ciclo.
+  const context = cycle.specialty_id
+    ? `${cycle.university_name} · ${cycle.faculty_name} · ${cycle.specialty_name}`
+    : "Sin universidad, facultad ni especialidad";
   if (state.editingCycleId === cycle.id) {
     return `
       <article class="cycle-row ${enabled ? "" : "is-disabled"}">
         <span class="cycle-mark" aria-hidden="true">◷</span>
         <form class="cycle-edit-form" data-cycle-edit-form="${cycle.id}">
+          <div class="institution-picker institution-picker-inline" data-institution-picker data-selected-specialty="${cycle.specialty_id || ""}">
+            <label class="cycle-field"><span>Universidad</span>
+              <select class="field" name="university" data-level="university"></select></label>
+            <label class="cycle-field"><span>Facultad</span>
+              <select class="field" name="faculty" data-level="faculty"></select></label>
+            <label class="cycle-field"><span>Especialidad</span>
+              <select class="field" name="specialty" data-level="specialty"></select></label>
+          </div>
           <label class="cycle-field"><span>Nombre</span>
             <input class="field" name="name" type="text" maxlength="255" value="${escapeHtml(cycle.name)}" required /></label>
           <label class="cycle-field"><span>Inicio</span>
@@ -913,6 +945,7 @@ function renderCycleRow(cycle) {
           ? '<em class="teacher-status">Habilitado</em>'
           : '<em class="teacher-status is-inactive">Deshabilitado</em>'}</strong>
         <span>${escapeHtml(summary)}</span>
+        <span class="cycle-context">${escapeHtml(context)}</span>
       </div>
       ${actions}
     </article>`;
@@ -930,8 +963,11 @@ function renderCycles(preferredCycleId = state.activeCycleId) {
     .map((cycle) => `<option value="${cycle.id}">${escapeHtml(cycle.name)}</option>`)
     .join("")}`;
   elements.activeCycle.value = selectedCycleId ? String(selectedCycleId) : "";
-  // HU-C3: un ciclo deshabilitado no admite cursos nuevos.
-  const enabledCycles = state.cycles.filter((cycle) => cycle.enabled !== false);
+  // HU-C3: un ciclo deshabilitado no admite cursos nuevos. HU-C4: el docente
+  // registra cursos solo en los ciclos que él creó (`can_manage`).
+  const enabledCycles = state.cycles.filter(
+    (cycle) => cycle.enabled !== false && cycle.can_manage,
+  );
   const previousCreationCycle = Number(elements.courseCreationCycle.value);
   elements.courseCreationCycle.innerHTML = `<option value="">Selecciona un ciclo</option>${enabledCycles
     .map((cycle) => `<option value="${cycle.id}">${escapeHtml(cycle.name)}</option>`)
@@ -947,6 +983,11 @@ function renderCycles(preferredCycleId = state.activeCycleId) {
   renderCourseCreation();
   $("#cycle-list").innerHTML = state.cycles.map(renderCycleRow).join("");
   $("#cycle-list-empty").hidden = state.cycles.length > 0;
+  if (typeof initInstitutionPicker === "function") {
+    document.querySelectorAll("#cycle-list [data-institution-picker]").forEach((picker) => {
+      initInstitutionPicker(picker, Number(picker.dataset.selectedSpecialty) || null, { keepCurrent: true });
+    });
+  }
   renderTeacherAssignments();
   renderWorkCourseSelectors();
   if (selectedCycleId) localStorage.setItem("aula-active-cycle", String(selectedCycleId));
@@ -959,15 +1000,49 @@ function renderCourseCreation() {
   const courses = state.availableCourses.filter(
     (course) => !selectedCycleId || course.cycle_id === selectedCycleId,
   );
+  // HU-C4: cada curso muestra código, nombre y estado, con sus acciones.
   $("#course-creation-list").innerHTML = courses.length
-    ? courses.map((course) => `
-        <article class="course-creation-row">
-          <strong>${escapeHtml(course.name)}</strong>
-          <span>${escapeHtml(cycleById.get(course.cycle_id) || "Sin ciclo")} · #${course.id}</span>
-        </article>
-      `).join("")
+    ? courses.map((course) => {
+        const enabled = course.enabled !== false;
+        if (state.editingCourseId === course.id) {
+          return `
+            <article class="course-creation-row is-editing">
+              <form class="course-edit-form" data-course-edit-form="${course.id}">
+                <label class="cycle-field"><span>Código</span>
+                  <input class="field" name="code" maxlength="32" value="${escapeHtml(course.code || "")}" required /></label>
+                <label class="cycle-field"><span>Nombre</span>
+                  <input class="field" name="name" maxlength="255" value="${escapeHtml(course.name)}" required /></label>
+                <button class="button button-add" type="submit">Guardar</button>
+                <button class="button button-quiet" type="button" data-course-cancel="${course.id}">Cancelar</button>
+              </form>
+            </article>`;
+        }
+        return `
+        <article class="course-creation-row ${enabled ? "" : "is-disabled"}">
+          <div>
+            <strong>${escapeHtml(course.code ? `${course.code} · ${course.name}` : course.name)} ${enabled
+              ? '<em class="teacher-status">Habilitado</em>'
+              : '<em class="teacher-status is-inactive">Deshabilitado</em>'}</strong>
+            <span>${escapeHtml(cycleById.get(course.cycle_id) || "Sin ciclo")} · #${course.id}${course.code ? "" : " · sin código"}</span>
+          </div>
+          <div class="cycle-actions">
+            <button class="button button-quiet" type="button" data-course-edit="${course.id}">Editar</button>
+            <button class="button button-quiet" type="button" data-course-toggle="${course.id}">${enabled ? "Deshabilitar" : "Habilitar"}</button>
+            <button class="button button-quiet button-danger" type="button" data-course-delete="${course.id}">Eliminar</button>
+          </div>
+        </article>`;
+      }).join("")
     : '<p class="setup-empty">No hay cursos en este ciclo todavía.</p>';
   $("#course-creation-count").textContent = courses.length;
+}
+
+function replaceAvailableCourse(updated) {
+  state.availableCourses = state.availableCourses.map(
+    (course) => course.id === updated.id ? updated : course,
+  );
+  if (state.course?.id === updated.id) state.course = updated;
+  renderRecentCourses();
+  renderCourseCreation();
 }
 
 function renderMethodOptions() {
@@ -1149,6 +1224,7 @@ function clearCourseSelection() {
   state.roundEligibleStudentIds = new Set();
   state.lastSelectedStudentIds = new Set();
   state.metrics = null;
+  if (typeof resetQuickActivities === "function") resetQuickActivities(false);
   renderCourse();
 }
 
@@ -1163,7 +1239,9 @@ function renderWorkCourseSelectors() {
     ? state.availableCourses.filter((course) => course.cycle_id === state.activeCycleId)
     : state.availableCourses;
   const courseOptions = `<option value="">Selecciona un curso</option>${filteredCourses
-    .map((course) => `<option value="${course.id}">${escapeHtml(course.name)} · #${course.id}</option>`)
+    .map((course) => `<option value="${course.id}">${escapeHtml(courseLabel(course))}${
+      course.enabled === false ? " · deshabilitado" : ""
+    }</option>`)
     .join("")}`;
   elements.dailyCourse.innerHTML = courseOptions;
   elements.enrollmentCourse.innerHTML = courseOptions;
@@ -1173,6 +1251,12 @@ function renderWorkCourseSelectors() {
   elements.dailyCourse.value = selectedCourseId;
   elements.enrollmentCourse.value = selectedCourseId;
   renderGradeSelectors();
+}
+
+// HU-C4: "SI807U · Inteligencia de Negocios"; los cursos del MVP 1 sin
+// código siguen mostrándose con su ID.
+function courseLabel(course) {
+  return course.code ? `${course.code} · ${course.name}` : `${course.name} · #${course.id}`;
 }
 
 function renderGradeSelectors() {
@@ -1341,10 +1425,12 @@ function setAppView(view) {
     elements.studentCoursesViewButton.hidden = false;
     elements.studentHistoryViewButton.hidden = false;
     elements.studentReviewViewButton.hidden = false;
+    elements.studentActivityViewButton.hidden = false;
     setStudentPortalView(state.studentPortalView);
     [
       elements.dailyViewButton,
       elements.gradesViewButton,
+      elements.institutionsViewButton,
       elements.cyclesViewButton,
       elements.teachersViewButton,
       elements.studentAccountsViewButton,
@@ -1356,6 +1442,7 @@ function setAppView(view) {
       button.removeAttribute("aria-current");
     });
     elements.cyclesSetupPage.hidden = true;
+    elements.institutionsPage.hidden = true;
     elements.teacherManagementPage.hidden = true;
     elements.studentAccountsPage.hidden = true;
     elements.courseCreationPage.hidden = true;
@@ -1377,6 +1464,7 @@ function setAppView(view) {
     elements.studentCoursesViewButton,
     elements.studentHistoryViewButton,
     elements.studentReviewViewButton,
+    elements.studentActivityViewButton,
   ].forEach((button) => {
     button.hidden = true;
     button.classList.remove("active");
@@ -1396,13 +1484,16 @@ function setAppView(view) {
   if (!teacherView && (view === "daily" || view === "grades")) {
     view = "cycles";
   }
-  // HU-C3: el docente gestiona sus propios ciclos académicos.
-  if (!isAdminView && ["teachers", "studentAccounts", "createCourse"].includes(view)) {
+  // HU-C3: el docente gestiona sus propios ciclos académicos. HU-C4: también
+  // registra sus cursos, así que "Gestión de cursos" ya no es solo del
+  // Administrador. La estructura institucional (HU-A5 a A7) sí lo es.
+  if (!isAdminView && ["teachers", "studentAccounts", "institutions"].includes(view)) {
     view = "enrollment";
   }
   if (previousView !== view) window.scrollTo(0, 0);
   state.appView = view;
   const cycles = view === "cycles";
+  const institutions = view === "institutions";
   const teachers = view === "teachers";
   const studentAccounts = view === "studentAccounts";
   const createCourse = view === "createCourse";
@@ -1412,6 +1503,7 @@ function setAppView(view) {
   const course = state.course;
   const cycle = state.cycles.find((item) => item.id === course?.cycle_id);
   elements.cyclesSetupPage.hidden = !cycles;
+  elements.institutionsPage.hidden = !institutions;
   elements.teacherManagementPage.hidden = !teachers;
   elements.studentAccountsPage.hidden = !studentAccounts;
   elements.courseCreationPage.hidden = !createCourse;
@@ -1425,6 +1517,7 @@ function setAppView(view) {
   elements.dailyViewButton.classList.toggle("active", daily);
   elements.gradesViewButton.classList.toggle("active", grades);
   elements.cyclesViewButton.classList.toggle("active", cycles);
+  elements.institutionsViewButton.classList.toggle("active", institutions);
   elements.teachersViewButton.classList.toggle("active", teachers);
   elements.studentAccountsViewButton.classList.toggle("active", studentAccounts);
   elements.coursesViewButton.classList.toggle("active", createCourse);
@@ -1432,6 +1525,7 @@ function setAppView(view) {
   [
     elements.dailyViewButton,
     elements.gradesViewButton,
+    elements.institutionsViewButton,
     elements.cyclesViewButton,
     elements.teachersViewButton,
     elements.studentAccountsViewButton,
@@ -1443,6 +1537,8 @@ function setAppView(view) {
     ? elements.dailyViewButton
     : grades
       ? elements.gradesViewButton
+    : institutions
+      ? elements.institutionsViewButton
     : cycles
       ? elements.cyclesViewButton
       : teachers
@@ -1456,18 +1552,25 @@ function setAppView(view) {
   elements.dailyViewButton.hidden = !teacherView;
   elements.gradesViewButton.hidden = !teacherView;
   elements.cyclesViewButton.hidden = false;
+  elements.institutionsViewButton.hidden = !isAdminView;
   elements.teachersViewButton.hidden = !isAdminView;
   elements.studentAccountsViewButton.hidden = !isAdminView;
-  elements.coursesViewButton.hidden = !isAdminView;
+  elements.coursesViewButton.hidden = false;
   elements.activeRole.closest(".sidebar-role").hidden = state.authenticatedUser?.role !== "administrador";
   elements.studentAccountForm.hidden = !isAdminView;
   $("#create-course-form button[type=submit]").disabled =
-    !isAdminView || !Number(elements.courseCreationCycle.value);
+    !Number(elements.courseCreationCycle.value);
   elements.sidebarUser.textContent = `${state.authenticatedUser?.full_name || ""} · ${
     state.authenticatedUser?.role === "administrador" ? "Administrador" : "Docente"
   }`;
   if (grades) loadGradeMatrix();
-  if (cycles) {
+  if (institutions) {
+    elements.courseTitle.textContent = "Estructura institucional";
+    elements.pageEyebrow.firstChild.textContent = "ADMINISTRACIÓN ";
+    elements.courseMeta.textContent = `${state.institutions.length} universidad${state.institutions.length === 1 ? "" : "es"} registrada${state.institutions.length === 1 ? "" : "s"}.`;
+    elements.breadcrumbCourse.textContent = "INSTITUCIÓN";
+    if (typeof renderInstitutionViews === "function") renderInstitutionViews();
+  } else if (cycles) {
     elements.courseTitle.textContent = "Ciclos académicos";
     elements.pageEyebrow.firstChild.textContent = "PERIODOS ACADÉMICOS ";
     elements.courseMeta.textContent = `${state.cycles.length} ciclo${state.cycles.length === 1 ? "" : "s"} registrado${state.cycles.length === 1 ? "" : "s"}.`;
@@ -1490,9 +1593,11 @@ function setAppView(view) {
     elements.courseMeta.textContent = `${state.studentAccounts.length} cuenta${state.studentAccounts.length === 1 ? "" : "s"} registrada${state.studentAccounts.length === 1 ? "" : "s"}.`;
     elements.breadcrumbCourse.textContent = "ALUMNOS";
   } else if (createCourse) {
-    elements.courseTitle.textContent = "Crear cursos";
-    elements.pageEyebrow.firstChild.textContent = "ADMINISTRACIÓN ";
-    elements.courseMeta.textContent = "Crea cursos y asígnalos a un ciclo académico.";
+    elements.courseTitle.textContent = "Gestión de cursos";
+    elements.pageEyebrow.firstChild.textContent = "CURSOS POR CICLO ";
+    elements.courseMeta.textContent = isAdminView
+      ? "Registra, modifica, deshabilita o elimina cursos (código, nombre y estado) dentro de un ciclo académico."
+      : "Registra tus cursos (código, nombre y estado) dentro de tus ciclos académicos.";
     elements.breadcrumbCourse.textContent = "CURSOS";
   } else if (grades) {
     elements.courseTitle.textContent = "Análisis de notas";
@@ -1515,7 +1620,11 @@ function setCourseView(view) {
   const participations = view === "participations";
   const groups = view === "groups";
   const materials = view === "materials";
-  elements.attendanceView.hidden = participations || groups || materials;
+  const quick = view === "quick";
+  elements.attendanceView.hidden = participations || groups || materials || quick;
+  elements.quickView.hidden = !quick;
+  elements.quickTab.classList.toggle("active", quick);
+  elements.quickTab.setAttribute("aria-selected", String(quick));
   elements.participationsView.hidden = !participations;
   elements.groupsView.hidden = !groups;
   elements.materialsView.hidden = !materials;
@@ -1726,6 +1835,8 @@ async function loadCourse(courseId, { remember = true } = {}) {
   loadProposal();
   loadExposureTimeSettings();
   loadGroupPlans();
+  // Sprint 7: las actividades rápidas son por curso.
+  if (typeof resetQuickActivities === "function") resetQuickActivities(true);
 }
 
 async function refreshCourse() {
@@ -2903,21 +3014,108 @@ $("#create-course-form").addEventListener("submit", async (event) => {
   const form = event.currentTarget;
   const button = form.querySelector("button[type=submit]");
   const name = $("#course-name").value.trim();
+  const code = $("#course-code").value.trim();
   const cycleId = Number(elements.courseCreationCycle.value) || null;
-  if (!name || !cycleId) return;
+  if (!name || !code || !cycleId) return;
   setBusy(button, true, "Creando...");
   try {
+    // HU-C4: el curso se registra con código y nombre dentro de un ciclo; si
+    // lo crea un docente, queda asignado a él.
     const course = await api("/courses", {
       method: "POST",
-      body: JSON.stringify({ name, cycle_id: cycleId }),
+      body: JSON.stringify({ name, code, cycle_id: cycleId }),
     });
     await loadCourse(course.id);
-    form.reset();
+    $("#course-name").value = "";
+    $("#course-code").value = "";
     setAppView("enrollment");
     notify(`Curso “${course.name}” creado.`);
   } catch (error) {
     notify(error.message, true);
   } finally {
+    setBusy(button, false);
+  }
+});
+
+$("#course-creation-list").addEventListener("click", async (event) => {
+  const editButton = event.target.closest("[data-course-edit]");
+  const cancelButton = event.target.closest("[data-course-cancel]");
+  const toggleButton = event.target.closest("[data-course-toggle]");
+  const deleteButton = event.target.closest("[data-course-delete]");
+  if (editButton) {
+    state.editingCourseId = Number(editButton.dataset.courseEdit);
+    renderCourseCreation();
+    document.querySelector(`[data-course-edit-form="${state.editingCourseId}"] input[name=code]`)?.focus();
+    return;
+  }
+  if (cancelButton) {
+    state.editingCourseId = null;
+    renderCourseCreation();
+    return;
+  }
+  if (toggleButton) {
+    const course = state.availableCourses.find((item) => item.id === Number(toggleButton.dataset.courseToggle));
+    if (!course) return;
+    const enable = course.enabled === false;
+    if (!enable && !window.confirm(
+      `¿Deshabilitar el curso “${course.name}”? Se conserva su histórico, pero no admitirá sesiones ni actividades nuevas.`,
+    )) return;
+    setBusy(toggleButton, true, enable ? "Habilitando..." : "Deshabilitando...");
+    try {
+      const updated = await api(`/courses/${course.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: enable }),
+      });
+      replaceAvailableCourse(updated);
+      notify(`Curso “${updated.name}” ${enable ? "habilitado" : "deshabilitado"}.`);
+    } catch (error) {
+      notify(error.message, true);
+      setBusy(toggleButton, false);
+    }
+    return;
+  }
+  if (deleteButton) {
+    const course = state.availableCourses.find((item) => item.id === Number(deleteButton.dataset.courseDelete));
+    if (!course || !window.confirm(`¿Eliminar definitivamente el curso “${course.name}”?`)) return;
+    setBusy(deleteButton, true, "Eliminando...");
+    try {
+      await api(`/courses/${course.id}`, { method: "DELETE" });
+      state.availableCourses = state.availableCourses.filter((item) => item.id !== course.id);
+      localStorage.setItem(
+        "aula-recent-courses",
+        JSON.stringify(readRecentCourses().filter((item) => item.id !== course.id)),
+      );
+      if (state.course?.id === course.id) clearCourseSelection();
+      renderRecentCourses();
+      renderCourseCreation();
+      notify(`Curso “${course.name}” eliminado.`);
+    } catch (error) {
+      notify(error.message, true);
+      setBusy(deleteButton, false);
+    }
+  }
+});
+
+$("#course-creation-list").addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-course-edit-form]");
+  if (!form) return;
+  event.preventDefault();
+  const courseId = Number(form.dataset.courseEditForm);
+  const button = form.querySelector("button[type=submit]");
+  setBusy(button, true, "Guardando...");
+  try {
+    const updated = await api(`/courses/${courseId}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        code: form.elements.code.value.trim(),
+        name: form.elements.name.value.trim(),
+      }),
+    });
+    state.editingCourseId = null;
+    replaceAvailableCourse(updated);
+    notify(`Curso “${updated.name}” actualizado.`);
+  } catch (error) {
+    notify(error.message, true);
     setBusy(button, false);
   }
 });
@@ -2929,6 +3127,13 @@ $("#create-cycle-form").addEventListener("submit", async (event) => {
   const name = $("#cycle-name").value.trim();
   const startsOn = $("#cycle-starts-on").value;
   const endsOn = $("#cycle-ends-on").value;
+  // HU-C2: el ciclo se registra en la especialidad elegida en la selección
+  // encadenada universidad → facultad → especialidad.
+  const specialtyId = Number($("#cycle-specialty").value) || null;
+  if (!specialtyId) {
+    notify("Selecciona la universidad, la facultad y la especialidad del ciclo.", true);
+    return;
+  }
   if (!name || !startsOn) return;
   if (endsOn && endsOn < startsOn) {
     notify("La fecha de fin no puede ser anterior a la fecha de inicio.", true);
@@ -2938,11 +3143,15 @@ $("#create-cycle-form").addEventListener("submit", async (event) => {
   try {
     const cycle = await api("/cycles", {
       method: "POST",
-      body: JSON.stringify({ name, starts_on: startsOn, ends_on: endsOn || null }),
+      body: JSON.stringify({
+        name, starts_on: startsOn, ends_on: endsOn || null, specialty_id: specialtyId,
+      }),
     });
     state.cycles = [...state.cycles, cycle];
     renderCycles(cycle.id);
-    form.reset();
+    $("#cycle-name").value = "";
+    $("#cycle-starts-on").value = "";
+    $("#cycle-ends-on").value = "";
     notify(`Ciclo “${cycle.name}” creado con inicio el ${startsOn}.`);
   } catch (error) {
     notify(error.message, true);
@@ -3029,11 +3238,15 @@ $("#cycle-list").addEventListener("submit", async (event) => {
     return;
   }
   const button = form.querySelector("button[type=submit]");
+  const specialtyId = Number(form.elements.specialty?.value) || null;
+  const current = state.cycles.find((item) => item.id === cycleId);
+  const changes = { name, starts_on: startsOn, ends_on: endsOn || null };
+  if (specialtyId && specialtyId !== current?.specialty_id) changes.specialty_id = specialtyId;
   setBusy(button, true, "Guardando...");
   try {
     const updated = await api(`/cycles/${cycleId}`, {
       method: "PATCH",
-      body: JSON.stringify({ name, starts_on: startsOn, ends_on: endsOn || null }),
+      body: JSON.stringify(changes),
     });
     replaceCycle(updated);
     state.editingCycleId = null;
@@ -3192,11 +3405,11 @@ elements.registerTeacherButton.addEventListener("click", () => {
   $("#create-teacher-form h3").textContent = "Registrar docente";
   $("#create-teacher-submit").textContent = "Registrar docente";
   $("#create-teacher-form > .form-note").textContent =
-    "Completa los datos y elige uno o más cursos para asignar.";
+    "Completa DNI, apellidos, nombres y correo. Asignar cursos es opcional.";
   elements.teacherManagementHome.hidden = true;
   elements.registerTeacherButton.hidden = true;
   elements.createTeacherForm.hidden = false;
-  $("#teacher-full-name").focus();
+  $("#teacher-dni").focus();
 });
 elements.cancelTeacherRegistration.addEventListener("click", () => {
   elements.createTeacherForm.reset();
@@ -3212,18 +3425,18 @@ elements.assignmentCourseList.addEventListener("change", () => {
 elements.createTeacherForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const isEditing = state.editingTeacherId !== null;
+  // HU-C4: el docente registra sus cursos, así que asignarlos aquí es opcional.
   const courseIds = isEditing ? [] : [...elements.createTeacherCourseList.querySelectorAll("input:checked")]
     .map((checkbox) => Number(checkbox.value));
-  if (!isEditing && !courseIds.length) {
-    notify("Selecciona al menos un curso para el docente.", true);
-    return;
-  }
   setBusy(elements.createTeacherSubmit, true, "Registrando...");
   try {
+    // HU-A8: apellidos y nombres por separado. HU-A4: sin usuario explícito,
+    // el usuario (y la contraseña inicial) es el DNI.
     const payload = {
-      full_name: $("#teacher-full-name").value.trim(),
+      last_names: $("#teacher-last-names").value.trim(),
+      first_names: $("#teacher-first-names").value.trim(),
       dni: $("#teacher-dni").value.trim(),
-      username: $("#teacher-username").value.trim(),
+      username: $("#teacher-username").value.trim() || null,
       phone_number: $("#teacher-phone").value.trim() || null,
       email: $("#teacher-email").value.trim(),
     };
@@ -3246,7 +3459,8 @@ elements.createTeacherForm.addEventListener("submit", async (event) => {
     if (temporaryPassword) {
       showTemporaryPassword(
         temporaryPassword,
-        `Cuenta creada para ${teacher.full_name} (${teacher.username}).`,
+        `Cuenta creada para ${teacher.full_name}. Usuario: ${teacher.username}. La contraseña inicial es igual al usuario y deberá cambiarla al ingresar.`,
+        teacher.username,
       );
     } else {
       notify(`Datos de ${teacher.full_name} actualizados.`);
@@ -3265,7 +3479,10 @@ elements.teacherDirectoryList.addEventListener("click", async (event) => {
     const teacher = state.teachers.find((item) => item.id === Number(editButton.dataset.editTeacher));
     if (!teacher) return;
     state.editingTeacherId = teacher.id;
-    $("#teacher-full-name").value = teacher.full_name;
+    // Cuentas anteriores a HU-A8 solo tienen el nombre completo: se propone
+    // como "nombres" para que el Administrador lo separe.
+    $("#teacher-last-names").value = teacher.last_names || "";
+    $("#teacher-first-names").value = teacher.first_names || (teacher.last_names ? "" : teacher.full_name);
     $("#teacher-dni").value = teacher.dni || "";
     $("#teacher-username").value = teacher.username;
     $("#teacher-phone").value = teacher.phone_number || "";
@@ -3279,7 +3496,7 @@ elements.teacherDirectoryList.addEventListener("click", async (event) => {
     elements.teacherManagementHome.hidden = true;
     elements.registerTeacherButton.hidden = true;
     elements.createTeacherForm.hidden = false;
-    $("#teacher-full-name").focus();
+    $("#teacher-last-names").focus();
     return;
   }
   const toggleButton = event.target.closest("[data-toggle-teacher]");
@@ -4466,6 +4683,7 @@ $("#edit-withdraw").addEventListener("click", () => {
 
 elements.dailyViewButton.addEventListener("click", () => setAppView("daily"));
 elements.cyclesViewButton.addEventListener("click", () => setAppView("cycles"));
+elements.institutionsViewButton.addEventListener("click", () => setAppView("institutions"));
 elements.teachersViewButton.addEventListener("click", () => setAppView("teachers"));
 elements.studentAccountsViewButton.addEventListener("click", () => setAppView("studentAccounts"));
 elements.coursesViewButton.addEventListener("click", () => setAppView("createCourse"));
@@ -4480,6 +4698,7 @@ elements.studentCoursesViewButton.addEventListener("click", () => {
 });
 elements.studentHistoryViewButton.addEventListener("click", () => setStudentPortalView("history"));
 elements.studentReviewViewButton.addEventListener("click", () => setStudentPortalView("review"));
+elements.studentActivityViewButton.addEventListener("click", () => setStudentPortalView("activity"));
 elements.studentReviewForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const [targetType, rawTargetId] = elements.studentReviewParticipation.value.split(":");

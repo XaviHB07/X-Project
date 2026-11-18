@@ -26,7 +26,19 @@ import yaml
 # registrarlas en SelectorRegistry (ver src/strategies/__init__.py).
 import src.strategies  # noqa: F401
 from src.domain.events import EventBus, logging_subscriber, DecisionRunCompleted
-from src.repositories.sqlalchemy.models import Base, RoleORM, UserORM
+from src.repositories.sqlalchemy.models import (
+    AcademicCycleORM,
+    Base,
+    ClassSessionORM,
+    CourseORM,
+    FacultyORM,
+    RoleORM,
+    SchemaMigrationORM,
+    SpecialtyORM,
+    StudentORM,
+    UniversityORM,
+    UserORM,
+)
 from src.repositories.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork, build_session_factory
 from src.services.fairness_service import FairnessMetricsService
 from src.services.auth_service import (
@@ -35,7 +47,9 @@ from src.services.auth_service import (
 from src.services.group_exposition_service import GroupExpositionService
 from src.services.group_planning_service import GroupPlanningService
 from src.services.grade_analysis_service import GradeAnalysisService
+from src.services.institution_service import InstitutionService
 from src.services.material_service import CourseMaterialService
+from src.services.quick_activity_service import QuickActivityService
 from src.services.roster_service import RosterService
 from src.services.selection_service import SelectionService
 from src.services.session_service import SessionService
@@ -86,6 +100,8 @@ class AppContext:
     group_exposition_service: GroupExpositionService
     grade_analysis_service: GradeAnalysisService
     material_service: CourseMaterialService
+    institution_service: InstitutionService
+    quick_activity_service: QuickActivityService
 
 
 # Columnas agregadas a tablas que ya existían antes del Sprint 1. `create_all`
@@ -101,8 +117,13 @@ _ADDED_COLUMNS = [
     ("academic_cycles", "ends_on", "DATE"),
     ("academic_cycles", "enabled", "BOOLEAN NOT NULL DEFAULT TRUE"),
     ("academic_cycles", "owner_teacher_id", "INTEGER"),
+    # HU-C2 (Sprint 6): contexto universidad → facultad → especialidad.
+    ("academic_cycles", "specialty_id", "INTEGER"),
     ("courses", "cycle_id", "INTEGER"),
     ("courses", "roster_imported_at", "TIMESTAMP WITH TIME ZONE"),
+    # HU-C4 (Sprint 6): código y estado del curso.
+    ("courses", "code", "VARCHAR(32)"),
+    ("courses", "enabled", "BOOLEAN NOT NULL DEFAULT TRUE"),
     ("students", "active", "BOOLEAN NOT NULL DEFAULT TRUE"),
     ("students", "phone_number", "VARCHAR(32)"),
     ("students", "email", "VARCHAR(255)"),
@@ -118,6 +139,19 @@ _ADDED_COLUMNS = [
     ("users", "phone_number", "VARCHAR(32)"),
     ("users", "email", "VARCHAR(255)"),
     ("users", "dni", "VARCHAR(32)"),
+    # Quiz en vivo (Sprint 7): por si una base ya tenía las tablas de
+    # actividades rápidas de la primera versión (solo modo test).
+    ("quick_activities", "mode", "VARCHAR(16) NOT NULL DEFAULT 'self_paced'"),
+    ("quick_activities", "question_seconds", "INTEGER"),
+    ("quick_activities", "live_phase", "VARCHAR(16)"),
+    ("quick_activities", "live_position", "INTEGER"),
+    ("quick_activities", "live_started_at", "TIMESTAMP WITH TIME ZONE"),
+    ("quick_activity_answers", "points", "INTEGER"),
+    ("quick_activity_answers", "response_ms", "INTEGER"),
+    ("quick_activity_answers", "answered_at", "TIMESTAMP WITH TIME ZONE"),
+    # HU-A8 (Sprint 5): apellidos y nombres del docente por separado.
+    ("users", "last_names", "VARCHAR(255)"),
+    ("users", "first_names", "VARCHAR(255)"),
     ("users", "must_change_password", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ("class_sessions", "session_date", "DATE"),
     ("class_sessions", "topic", "VARCHAR(255)"),
@@ -270,6 +304,112 @@ def _migrate_review_request_targets(engine) -> None:
         ))
 
 
+# Nombres de la estructura que recibe los datos del MVP 1. Son genéricos a
+# propósito: el Administrador los renombra desde "Estructura institucional"
+# (HU-A5 a HU-A7) con los datos reales de su institución.
+MVP1_MIGRATION = "2026-11-mvp1-institutional-schema"
+MVP1_UNIVERSITY = "Universidad (migrada del MVP 1)"
+MVP1_FACULTY = "Facultad (migrada del MVP 1)"
+MVP1_SPECIALTY = "Especialidad (migrada del MVP 1)"
+MVP1_CYCLE = "Histórico MVP 1"
+
+
+def _migrate_mvp1_institutional_schema(session_factory) -> None:
+    """Tarea técnica del Sprint 6: pasa cursos y ciclos anteriores al nuevo
+    esquema universidad → facultad → especialidad → ciclo → curso.
+
+    * Los ciclos sin especialidad quedan en la especialidad de migración.
+    * Los cursos sin ciclo pasan al ciclo "Histórico MVP 1", cuya fecha de
+      inicio es la de la sesión más antigua de esos cursos (así el portal del
+      estudiante sigue ordenando sus sesiones por semana). Si un curso ya
+      tenía estudiantes, esa lista cuenta como su carga inicial por Excel
+      (regla de HU-C1 para cursos con ciclo).
+    * No borra ni modifica sesiones, participaciones ni notas.
+
+    Se ejecuta una sola vez (queda registrada en `schema_migrations`); en una
+    base nueva solo deja el registro.
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import func, select
+
+    with session_factory() as session:
+        if session.get(SchemaMigrationORM, MVP1_MIGRATION) is not None:
+            return
+        legacy_cycles = session.execute(
+            select(AcademicCycleORM).where(AcademicCycleORM.specialty_id.is_(None))
+        ).scalars().all()
+        legacy_courses = session.execute(
+            select(CourseORM).where(CourseORM.cycle_id.is_(None)).order_by(CourseORM.id)
+        ).scalars().all()
+        if legacy_cycles or legacy_courses:
+            university = session.execute(
+                select(UniversityORM).where(UniversityORM.name == MVP1_UNIVERSITY)
+            ).scalar_one_or_none() or UniversityORM(name=MVP1_UNIVERSITY, enabled=True)
+            session.add(university)
+            session.flush()
+            faculty = session.execute(
+                select(FacultyORM).where(
+                    FacultyORM.university_id == university.id, FacultyORM.name == MVP1_FACULTY
+                )
+            ).scalar_one_or_none() or FacultyORM(
+                university_id=university.id, name=MVP1_FACULTY, enabled=True
+            )
+            session.add(faculty)
+            session.flush()
+            specialty = session.execute(
+                select(SpecialtyORM).where(
+                    SpecialtyORM.faculty_id == faculty.id, SpecialtyORM.name == MVP1_SPECIALTY
+                )
+            ).scalar_one_or_none() or SpecialtyORM(
+                faculty_id=faculty.id, name=MVP1_SPECIALTY, enabled=True
+            )
+            session.add(specialty)
+            session.flush()
+            for cycle in legacy_cycles:
+                cycle.specialty_id = specialty.id
+            if legacy_courses:
+                course_ids = [course.id for course in legacy_courses]
+                first_session = session.execute(
+                    select(func.min(ClassSessionORM.session_date)).where(
+                        ClassSessionORM.course_id.in_(course_ids)
+                    )
+                ).scalar_one_or_none()
+                starts_on = first_session or min(
+                    (course.created_at.date() for course in legacy_courses if course.created_at),
+                    default=None,
+                )
+                historic = session.execute(
+                    select(AcademicCycleORM).where(
+                        AcademicCycleORM.name == MVP1_CYCLE,
+                        AcademicCycleORM.owner_teacher_id.is_(None),
+                    )
+                ).scalar_one_or_none()
+                if historic is None:
+                    historic = AcademicCycleORM(
+                        name=MVP1_CYCLE,
+                        starts_on=starts_on,
+                        enabled=True,
+                        specialty_id=specialty.id,
+                    )
+                    session.add(historic)
+                    session.flush()
+                now = datetime.now(timezone.utc)
+                for course in legacy_courses:
+                    course.cycle_id = historic.id
+                    has_students = session.execute(
+                        select(StudentORM.id).where(StudentORM.course_id == course.id).limit(1)
+                    ).scalar_one_or_none() is not None
+                    if has_students and course.roster_imported_at is None:
+                        course.roster_imported_at = now
+            logging.info(
+                "Migración MVP 1: %s ciclos y %s cursos pasaron al esquema institucional.",
+                len(legacy_cycles), len(legacy_courses),
+            )
+        session.add(SchemaMigrationORM(name=MVP1_MIGRATION))
+        session.commit()
+
+
 def _provision_initial_admin(session_factory) -> None:
     username = os.environ.get("ADMIN_USERNAME")
     password = os.environ.get("ADMIN_PASSWORD")
@@ -330,6 +470,7 @@ def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bo
         _ensure_columns(session_factory.engine)
         Base.metadata.create_all(session_factory.engine)
         _migrate_review_request_targets(session_factory.engine)
+        _migrate_mvp1_institutional_schema(session_factory)
         with session_factory() as session:
             existing_roles = set(session.query(RoleORM.name).all())
             existing_names = {name for (name,) in existing_roles}
@@ -366,4 +507,6 @@ def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bo
         group_exposition_service=GroupExpositionService(uow_factory),
         grade_analysis_service=GradeAnalysisService(uow_factory),
         material_service=CourseMaterialService(uow_factory),
+        institution_service=InstitutionService(session_factory),
+        quick_activity_service=QuickActivityService(session_factory),
     )

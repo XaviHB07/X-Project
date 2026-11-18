@@ -22,3 +22,8 @@ class SessionNotFoundError(LookupError):
 class InvalidAttendanceError(ValueError):
     """Se intentó marcar asistencia de estudiantes que no pertenecen (o
     ya no están activos) en el curso de la sesión."""
+
+
+class CourseDisabledError(ValueError):
+    """HU-C4: el curso está deshabilitado (dado de baja) y no admite
+    sesiones nuevas; su histórico sigue disponible."""

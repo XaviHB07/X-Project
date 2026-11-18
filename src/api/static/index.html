@@ -7,6 +7,10 @@
     <title>Aula | Seleccion justa</title>
     <link rel="stylesheet" href="/assets/styles.css" />
     <script src="/assets/app.js" defer></script>
+    <script src="/assets/institutions.js" defer></script>
+    <script src="/assets/quick-activities.js" defer></script>
+    <script src="/assets/live-quiz.js" defer></script>
+    <script src="/assets/qr-scanner.js" defer></script>
   </head>
   <body>
     <section class="login-screen" id="login-screen" aria-labelledby="login-title">
@@ -51,11 +55,17 @@
           <button class="app-navigation-button" id="student-review-view-button" type="button" hidden>
             <span aria-hidden="true">✉</span> Solicitar revisión
           </button>
+          <button class="app-navigation-button" id="student-activity-view-button" type="button" hidden>
+            <span aria-hidden="true">◎</span> Unirse a actividad
+          </button>
           <button class="app-navigation-button active" id="daily-view-button" type="button" aria-current="page">
             <span aria-hidden="true">▦</span> Sesiones y asistencia
           </button>
           <button class="app-navigation-button" id="grades-view-button" type="button">
             <span aria-hidden="true">▤</span> Análisis de notas
+          </button>
+          <button class="app-navigation-button" id="institutions-view-button" type="button" hidden>
+            <span aria-hidden="true">⌂</span> Estructura institucional
           </button>
           <button class="app-navigation-button" id="cycles-view-button" type="button">
             <span aria-hidden="true">◷</span> Ciclos académicos
@@ -67,7 +77,7 @@
             <span aria-hidden="true">♙</span> Cuentas de alumnos
           </button>
           <button class="app-navigation-button" id="courses-view-button" type="button" hidden>
-            <span aria-hidden="true">＋</span> Crear cursos
+            <span aria-hidden="true">＋</span> Gestión de cursos
           </button>
           <button class="app-navigation-button" id="enrollment-view-button" type="button">
             <span aria-hidden="true">＋</span> Matrícula de estudiantes
@@ -174,6 +184,41 @@
             <div id="student-review-list" class="student-review-list"></div>
             <p id="student-review-empty" class="setup-empty" hidden></p>
           </section>
+          <section id="student-activity-view" class="student-activity-view" hidden aria-labelledby="student-activity-title">
+            <h2 class="student-portal-section-title" id="student-activity-title">Unirse a una actividad rápida</h2>
+            <p class="heading-meta">Escribe el código que muestra tu docente o abre el enlace del QR.</p>
+            <form id="student-join-form" class="student-join-form" autocomplete="off">
+              <label class="form-label" for="student-join-code">Código de la actividad</label>
+              <div class="student-join-row">
+                <input id="student-join-code" class="field join-code-field" type="text" maxlength="12"
+                  placeholder="Ej. K7M2QX" autocapitalize="characters" spellcheck="false" required />
+                <button class="button button-add" id="student-join-submit" type="submit">Unirme</button>
+              </div>
+              <button class="button button-quiet scan-qr-button" id="student-scan-button" type="button">
+                <span aria-hidden="true">▣</span> Escanear QR con la cámara
+              </button>
+            </form>
+            <p id="student-join-status" class="form-note" role="status" aria-live="polite"></p>
+            <form id="student-activity-form" class="student-activity-form" hidden>
+              <div class="student-activity-heading">
+                <div>
+                  <p class="eyebrow" id="student-activity-course"></p>
+                  <h3 id="student-activity-name"></h3>
+                </div>
+                <span class="activity-timer" id="student-activity-timer" aria-live="off"></span>
+              </div>
+              <ol id="student-activity-questions" class="student-activity-questions"></ol>
+              <div class="student-activity-actions">
+                <button class="button button-quiet" id="student-activity-cancel" type="button">Salir</button>
+                <button class="button button-add" id="student-activity-submit" type="submit">Enviar respuestas</button>
+              </div>
+            </form>
+            <div id="student-activity-done" class="student-activity-done" hidden aria-live="polite"></div>
+            <section id="student-live" class="student-live" hidden aria-live="polite"></section>
+            <h3 class="student-portal-section-title">Mis envíos</h3>
+            <div id="student-submission-list" class="student-history-list"></div>
+            <p id="student-submission-empty" class="setup-empty" hidden>Todavía no respondiste actividades rápidas.</p>
+          </section>
         </section>
 
         <section class="work-course-picker" id="daily-course-picker" aria-label="Seleccionar ciclo y curso de trabajo">
@@ -247,6 +292,7 @@
             <button class="workspace-tab" id="participations-tab" type="button" aria-selected="false">Historial de participación</button>
             <button class="workspace-tab" id="groups-tab" type="button" aria-selected="false">Trabajo en grupos</button>
             <button class="workspace-tab" id="materials-tab" type="button" aria-selected="false">Material académico</button>
+            <button class="workspace-tab" id="quick-tab" type="button" aria-selected="false">Actividades rápidas</button>
           </nav>
 
           <div class="workspace-grid" id="attendance-view">
@@ -563,6 +609,58 @@
             <p class="history-none" id="course-materials-empty">Todavía no hay materiales cargados.</p>
           </section>
 
+          <section class="quick-activities-panel" id="quick-view" hidden aria-labelledby="quick-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">ACTIVIDADES RÁPIDAS</p>
+                <h2 id="quick-title">Preguntas cortas con código</h2>
+                <p class="form-note">Prepara preguntas cortas, publícalas con un código temporal y revisa las respuestas que registran tus estudiantes desde su cuenta.</p>
+              </div>
+              <button class="button button-quiet" id="refresh-quick" type="button">Actualizar</button>
+            </div>
+            <div class="quick-layout">
+              <form id="quick-create-form" class="setup-card quick-create-form">
+                <h3>Nueva actividad</h3>
+                <label class="form-label" for="quick-title-input">Título</label>
+                <input class="field" id="quick-title-input" type="text" maxlength="255" placeholder="Ej. Repaso de la sesión 9" required />
+                <fieldset class="quick-mode">
+                  <legend class="form-label">Tipo de actividad</legend>
+                  <label class="quick-mode-option">
+                    <input type="radio" name="quick-mode" value="self_paced" checked />
+                    <span><strong>Test</strong><small>Cada estudiante responde a su ritmo dentro del tiempo que definas.</small></span>
+                  </label>
+                  <label class="quick-mode-option">
+                    <input type="radio" name="quick-mode" value="live" />
+                    <span><strong>Quiz en vivo</strong><small>Proyectas una pregunta a la vez y responden desde su celular, con puntaje por rapidez.</small></span>
+                  </label>
+                </fieldset>
+                <label class="quick-seconds-field" id="quick-seconds-field" for="quick-question-seconds" hidden>
+                  <span class="form-label">Segundos por pregunta</span>
+                  <input class="field" id="quick-question-seconds" type="number" min="5" max="120" value="20" />
+                </label>
+                <label class="quick-check" for="quick-allow-multiple">
+                  <input id="quick-allow-multiple" type="checkbox" />
+                  <span>Permitir más de un envío por estudiante</span>
+                </label>
+                <div id="quick-question-list" class="quick-question-list"></div>
+                <div class="quick-form-actions">
+                  <button class="button button-quiet" id="quick-add-question" type="button">＋ Agregar pregunta</button>
+                  <button class="button button-add" id="quick-create-submit" type="submit">Guardar borrador</button>
+                </div>
+                <p class="form-note">Las preguntas de opción múltiple llevan una alternativa por línea; marca la correcta si quieres que el sistema la compare.</p>
+              </form>
+              <section class="quick-activity-list-panel" aria-labelledby="quick-list-title">
+                <div class="panel-heading">
+                  <h3 id="quick-list-title">Actividades del curso</h3>
+                  <span class="count-badge" id="quick-count">0</span>
+                </div>
+                <div id="quick-activity-list" class="quick-activity-list"></div>
+                <p class="history-none" id="quick-empty">Todavía no hay actividades en este curso.</p>
+              </section>
+            </div>
+            <section id="quick-responses" class="quick-responses" hidden aria-live="polite"></section>
+          </section>
+
         </div>
 
         <section class="grade-analysis-panel" id="grades-view" hidden aria-labelledby="grades-title">
@@ -597,6 +695,32 @@
           </div>
         </section>
 
+        <section class="institutions-page" id="institutions-page" hidden aria-labelledby="course-title">
+          <div class="setup-heading">
+            <p class="eyebrow">ADMINISTRACIÓN</p>
+            <p class="heading-meta">Registra universidades, sus facultades y sus especialidades. Deshabilitar da de baja sin borrar: se conserva el histórico, pero ya no se ofrece al docente.</p>
+          </div>
+          <section class="setup-card institution-create-card">
+            <h2>Registrar universidad</h2>
+            <form id="create-university-form" class="institution-inline-form">
+              <label class="sr-only" for="university-name">Nombre de la universidad</label>
+              <input class="field" id="university-name" type="text" maxlength="255" placeholder="Ej. Universidad Nacional de Ingeniería" required />
+              <button class="button button-add" type="submit">＋ Registrar</button>
+            </form>
+          </section>
+          <section class="setup-card institution-tree-card" aria-labelledby="institution-tree-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">UNIVERSIDAD → FACULTAD → ESPECIALIDAD</p>
+                <h2 id="institution-tree-title">Estructura registrada</h2>
+              </div>
+              <span class="count-badge" id="university-count">0</span>
+            </div>
+            <div id="institution-tree" class="institution-tree" aria-live="polite"></div>
+            <p class="setup-empty" id="institution-empty">Todavía no hay universidades registradas.</p>
+          </section>
+        </section>
+
         <section class="cycles-setup-page" id="cycles-setup-page" hidden aria-labelledby="course-title">
           <div class="setup-heading">
             <p class="eyebrow">PERIODOS ACADÉMICOS</p>
@@ -606,6 +730,22 @@
           <section class="setup-card cycle-create-card">
             <h2>Crear ciclo académico</h2>
             <form id="create-cycle-form" class="cycle-create-form">
+              <fieldset class="institution-picker" id="cycle-institution-picker">
+                <legend class="form-label">Universidad, facultad y especialidad en las que trabajas</legend>
+                <label class="cycle-field">
+                  <span class="form-label">Universidad</span>
+                  <select class="field" id="cycle-university" data-level="university" required></select>
+                </label>
+                <label class="cycle-field">
+                  <span class="form-label">Facultad</span>
+                  <select class="field" id="cycle-faculty" data-level="faculty" required disabled></select>
+                </label>
+                <label class="cycle-field">
+                  <span class="form-label">Especialidad</span>
+                  <select class="field" id="cycle-specialty" data-level="specialty" required disabled></select>
+                </label>
+              </fieldset>
+              <p class="form-note" id="cycle-institution-hint" hidden>El administrador todavía no registró universidades habilitadas. Pídele que complete la estructura institucional.</p>
               <div class="cycle-create-fields">
                 <label class="cycle-field">
                   <span class="form-label">Nombre del ciclo</span>
@@ -671,16 +811,20 @@
               <p class="form-note">Completa los datos y elige uno o más cursos para asignar.</p>
               <div class="teacher-create-fields">
                 <div>
-                  <label class="form-label" for="teacher-full-name">Nombre completo</label>
-                  <input class="field" id="teacher-full-name" maxlength="255" required />
-                </div>
-                <div>
-                  <label class="form-label" for="teacher-dni">DNI / identificación única</label>
+                  <label class="form-label" for="teacher-dni">DNI</label>
                   <input class="field" id="teacher-dni" maxlength="32" autocomplete="off" required />
                 </div>
                 <div>
-                  <label class="form-label" for="teacher-username">Usuario</label>
-                  <input class="field" id="teacher-username" maxlength="120" autocomplete="off" required />
+                  <label class="form-label" for="teacher-last-names">Apellidos</label>
+                  <input class="field" id="teacher-last-names" maxlength="255" required />
+                </div>
+                <div>
+                  <label class="form-label" for="teacher-first-names">Nombres</label>
+                  <input class="field" id="teacher-first-names" maxlength="255" required />
+                </div>
+                <div>
+                  <label class="form-label" for="teacher-username">Usuario <span class="optional">POR DEFECTO, EL DNI</span></label>
+                  <input class="field" id="teacher-username" maxlength="120" autocomplete="off" placeholder="Igual al DNI" />
                 </div>
                 <div>
                   <label class="form-label" for="teacher-phone">Teléfono <span class="optional">OPCIONAL</span></label>
@@ -692,10 +836,10 @@
                 </div>
               </div>
               <div id="teacher-registration-course-fields">
-                <label class="form-label" for="create-teacher-course-search">Buscar cursos a asignar</label>
+                <label class="form-label" for="create-teacher-course-search">Buscar cursos a asignar <span class="optional">OPCIONAL</span></label>
                 <input class="field course-search" id="create-teacher-course-search" type="search" placeholder="Escribe el nombre o ID del curso" autocomplete="off" />
                 <div class="assignment-course-list" id="create-teacher-course-list"></div>
-                <p class="form-note">Al registrar, se mostrará una contraseña temporal para compartir con el docente. Deberá cambiarla al iniciar sesión.</p>
+                <p class="form-note">El usuario y la contraseña inicial serán el DNI del docente; deberá cambiar la contraseña al iniciar sesión. Los cursos son opcionales: el docente también puede registrar los suyos.</p>
               </div>
               <div class="teacher-form-actions">
                 <button class="button button-quiet" id="cancel-teacher-registration" type="button">Volver</button>
@@ -813,6 +957,8 @@
               <h3>Datos del curso</h3>
               <label class="form-label" for="course-creation-cycle">Ciclo académico</label>
               <select id="course-creation-cycle" class="field"></select>
+              <label class="form-label" for="course-code">Código del curso</label>
+              <input id="course-code" class="field" type="text" maxlength="32" placeholder="Ej. SI807U" required />
               <label class="form-label" for="course-name">Nombre del curso</label>
               <input id="course-name" class="field" type="text" maxlength="255" placeholder="Ej. Ciencias 8A" required />
               <button class="button button-add button-full" type="submit" disabled>
@@ -1051,6 +1197,37 @@
           <button class="button button-quiet stage-done" id="stage-done" type="button">Salir</button>
         </section>
         <p class="stage-footnote" id="stage-footnote">El resultado se calcula con el método seleccionado.</p>
+      </div>
+    </dialog>
+    <dialog class="live-stage" id="live-stage" aria-labelledby="live-stage-title">
+      <div class="live-stage-bar">
+        <div>
+          <p class="eyebrow">QUIZ EN VIVO</p>
+          <h2 id="live-stage-title"></h2>
+        </div>
+        <div class="live-stage-tools">
+          <button class="button button-quiet" id="live-fullscreen" type="button">Pantalla completa</button>
+          <button class="icon-button dialog-close" id="live-stage-close" type="button" aria-label="Cerrar pantalla en vivo">×</button>
+        </div>
+      </div>
+      <div class="live-stage-body" id="live-stage-body"></div>
+      <div class="live-stage-footer">
+        <span class="form-note" id="live-stage-status"></span>
+        <button class="button button-add" id="live-advance" type="button">Comenzar</button>
+      </div>
+    </dialog>
+
+    <dialog class="student-dialog qr-scanner-dialog" id="qr-scanner-dialog" aria-labelledby="qr-scanner-title">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">UNIRSE CON QR</p>
+          <h2 id="qr-scanner-title">Apunta al código QR</h2>
+        </div>
+        <button class="icon-button dialog-close" id="qr-scanner-close" type="button" aria-label="Cerrar escáner">×</button>
+      </div>
+      <div class="qr-scanner-body">
+        <video id="qr-scanner-video" playsinline muted></video>
+        <p class="form-note" id="qr-scanner-status" role="status">Activando la cámara…</p>
       </div>
     </dialog>
   </body>

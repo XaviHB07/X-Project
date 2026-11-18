@@ -58,7 +58,9 @@ from src.repositories.interfaces import (
     ExposureTimeSettingsRepository,
     DecisionRunRepository,
     AcademicCycleInUseError,
+    CourseInUseError,
     DuplicateAcademicCycleError,
+    DuplicateCourseCodeError,
     DuplicateStudentError,
     EventRepository,
     GroupExpositionRepository,
@@ -146,12 +148,28 @@ class InMemoryCourseRepository(CourseRepository):
     def __init__(self, db: InMemoryDatabase):
         self._db = db
 
-    def create(self, name: str, cycle_id: Optional[int] = None) -> Course:
+    def _code_taken(
+        self, code: str, cycle_id: Optional[int], exclude_id: Optional[int] = None
+    ) -> bool:
+        return any(
+            course.code is not None
+            and course.code.upper() == code.upper()
+            and course.cycle_id == cycle_id
+            and course.id != exclude_id
+            for course in self._db.courses.values()
+        )
+
+    def create(
+        self, name: str, cycle_id: Optional[int] = None, code: Optional[str] = None
+    ) -> Course:
+        if code and self._code_taken(code, cycle_id):
+            raise DuplicateCourseCodeError(f"El código “{code}” ya existe en el ciclo.")
         course = Course(
             id=self._db.next_id("courses"),
             name=name,
             created_at=_utcnow(),
             cycle_id=cycle_id,
+            code=code or None,
         )
         self._db.courses[course.id] = course
         return course
@@ -161,6 +179,58 @@ class InMemoryCourseRepository(CourseRepository):
 
     def list_all(self) -> List[Course]:
         return sorted(self._db.courses.values(), key=lambda c: c.id)
+
+    def update(
+        self,
+        course_id: int,
+        *,
+        name: Optional[str] = None,
+        code: Optional[str] = None,
+        enabled: Optional[bool] = None,
+        clear_code: bool = False,
+    ) -> Optional[Course]:
+        current = self._db.courses.get(course_id)
+        if current is None:
+            return None
+        changes = {}
+        if clear_code:
+            changes["code"] = None
+        elif code is not None and code != current.code:
+            if self._code_taken(code, current.cycle_id, exclude_id=course_id):
+                raise DuplicateCourseCodeError(f"El código “{code}” ya existe en el ciclo.")
+            changes["code"] = code
+        if name is not None:
+            changes["name"] = name
+        if enabled is not None:
+            changes["enabled"] = enabled
+        updated = replace(current, **changes)
+        self._db.courses[course_id] = updated
+        return updated
+
+    def count_associated_data(self, course_id: int) -> int:
+        db = self._db
+        return (
+            sum(1 for s in db.students.values() if s.course_id == course_id)
+            + sum(1 for s in db.class_sessions.values() if s.course_id == course_id)
+            + sum(1 for e in db.syllabus.values() if e.course_id == course_id)
+            + sum(1 for m, _ in db.course_materials.values() if m.course_id == course_id)
+            + sum(1 for e in db.evaluations.values() if e.course_id == course_id)
+            + sum(1 for g in db.group_plans.values() if g.course_id == course_id)
+            + sum(1 for g in db.group_expositions.values() if g.course_id == course_id)
+            + sum(1 for r in db.review_requests.values() if r.course_id == course_id)
+        )
+
+    def delete(self, course_id: int) -> bool:
+        if course_id not in self._db.courses:
+            return False
+        if self.count_associated_data(course_id):
+            raise CourseInUseError(
+                "El curso tiene datos asociados (matrícula, sesiones, materiales, "
+                "evaluaciones o actividades): deshabilítalo para conservar su histórico."
+            )
+        self._db.exposure_time_settings.pop(course_id, None)
+        del self._db.courses[course_id]
+        return True
 
     def claim_roster_import(self, course_id: int) -> bool:
         with self._db._meta_lock:
@@ -314,6 +384,7 @@ class InMemoryAcademicCycleRepository(AcademicCycleRepository):
         starts_on: Optional[date] = None,
         ends_on: Optional[date] = None,
         owner_teacher_id: Optional[int] = None,
+        specialty_id: Optional[int] = None,
     ) -> AcademicCycle:
         if self._name_taken(name, owner_teacher_id):
             raise DuplicateAcademicCycleError(f"El ciclo “{name}” ya existe.")
@@ -325,6 +396,7 @@ class InMemoryAcademicCycleRepository(AcademicCycleRepository):
             ends_on=ends_on,
             enabled=True,
             owner_teacher_id=owner_teacher_id,
+            specialty_id=specialty_id,
         )
         self._db.cycles[cycle.id] = cycle
         return cycle
@@ -347,6 +419,7 @@ class InMemoryAcademicCycleRepository(AcademicCycleRepository):
         ends_on: Optional[date] = None,
         enabled: Optional[bool] = None,
         clear_ends_on: bool = False,
+        specialty_id: Optional[int] = None,
     ) -> Optional[AcademicCycle]:
         current = self._db.cycles.get(cycle_id)
         if current is None:
@@ -364,6 +437,8 @@ class InMemoryAcademicCycleRepository(AcademicCycleRepository):
             changes["ends_on"] = ends_on
         if enabled is not None:
             changes["enabled"] = enabled
+        if specialty_id is not None:
+            changes["specialty_id"] = specialty_id
         updated = replace(current, **changes)
         self._db.cycles[cycle_id] = updated
         return updated

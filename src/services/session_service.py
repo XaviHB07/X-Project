@@ -24,7 +24,12 @@ from typing import Callable, Dict, List, Optional, Sequence
 
 from src.domain.entities import ClassSession, Student, SyllabusEntry
 from src.repositories.interfaces import UnitOfWork
-from src.services.errors import CourseNotFoundError, InvalidAttendanceError, SessionNotFoundError
+from src.services.errors import (
+    CourseDisabledError,
+    CourseNotFoundError,
+    InvalidAttendanceError,
+    SessionNotFoundError,
+)
 
 UnitOfWorkFactory = Callable[[], UnitOfWork]
 
@@ -123,6 +128,11 @@ class SessionService:
 
         with self._uow_factory() as uow:
             self._require_course(uow, course_id)
+            course = uow.courses.get(course_id)
+            if course is not None and course.enabled is False:
+                raise CourseDisabledError(
+                    "El curso está deshabilitado y no admite sesiones nuevas."
+                )
             if topic is None:
                 topic = uow.syllabus.get_topic_for_date(course_id, session_date)
 

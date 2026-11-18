@@ -55,7 +55,9 @@ from src.repositories.interfaces import (
     ExposureTimeSettingsRepository,
     DecisionRunRepository,
     AcademicCycleInUseError,
+    CourseInUseError,
     DuplicateAcademicCycleError,
+    DuplicateCourseCodeError,
     DuplicateStudentError,
     EventRepository,
     GroupExpositionRepository,
@@ -81,7 +83,9 @@ from src.repositories.sqlalchemy.models import (
     DecisionRunORM,
     GroupExpositionMemberScoreORM,
     GroupExpositionORM,
+    QuickActivityORM,
     SelectionEventORM,
+    TeacherCourseORM,
     SessionAttendanceORM,
     StudentORM,
     StudentStateORM,
@@ -134,11 +138,42 @@ def _to_class_session(row: ClassSessionORM) -> ClassSession:
 
 
 class SqlAlchemyCourseRepository(CourseRepository):
+    # Tablas cuyos registros impiden eliminar un curso (HU-C4). La
+    # configuración de tiempos de exposición y las asignaciones docentes no
+    # cuentan como datos: se crean solas y se borran junto con el curso.
+    _DEPENDENT_TABLES = (
+        StudentORM,
+        ClassSessionORM,
+        SyllabusEntryORM,
+        CourseMaterialORM,
+        CourseEvaluationORM,
+        CourseGroupPlanORM,
+        GroupExpositionORM,
+        StudentReviewRequestORM,
+        QuickActivityORM,
+    )
+
     def __init__(self, session: Session):
         self._session = session
 
-    def create(self, name: str, cycle_id: Optional[int] = None) -> Course:
-        row = CourseORM(name=name, cycle_id=cycle_id)
+    def _code_taken(
+        self, code: str, cycle_id: Optional[int], exclude_id: Optional[int] = None
+    ) -> bool:
+        query = select(CourseORM.id).where(func.upper(CourseORM.code) == code.upper())
+        if cycle_id is None:
+            query = query.where(CourseORM.cycle_id.is_(None))
+        else:
+            query = query.where(CourseORM.cycle_id == cycle_id)
+        if exclude_id is not None:
+            query = query.where(CourseORM.id != exclude_id)
+        return self._session.execute(query.limit(1)).scalar_one_or_none() is not None
+
+    def create(
+        self, name: str, cycle_id: Optional[int] = None, code: Optional[str] = None
+    ) -> Course:
+        if code and self._code_taken(code, cycle_id):
+            raise DuplicateCourseCodeError(f"El código “{code}” ya existe en el ciclo.")
+        row = CourseORM(name=name, cycle_id=cycle_id, code=code or None, enabled=True)
         self._session.add(row)
         self._session.flush()  # asigna row.id sin necesidad de commit
         return self._to_course(row)
@@ -152,6 +187,58 @@ class SqlAlchemyCourseRepository(CourseRepository):
     def list_all(self) -> List[Course]:
         rows = self._session.execute(select(CourseORM).order_by(CourseORM.id)).scalars().all()
         return [self._to_course(row) for row in rows]
+
+    def update(
+        self,
+        course_id: int,
+        *,
+        name: Optional[str] = None,
+        code: Optional[str] = None,
+        enabled: Optional[bool] = None,
+        clear_code: bool = False,
+    ) -> Optional[Course]:
+        row = self._session.get(CourseORM, course_id)
+        if row is None:
+            return None
+        if clear_code:
+            row.code = None
+        elif code is not None and code != row.code:
+            if self._code_taken(code, row.cycle_id, exclude_id=row.id):
+                raise DuplicateCourseCodeError(f"El código “{code}” ya existe en el ciclo.")
+            row.code = code
+        if name is not None:
+            row.name = name
+        if enabled is not None:
+            row.enabled = enabled
+        self._session.flush()
+        return self._to_course(row)
+
+    def count_associated_data(self, course_id: int) -> int:
+        total = 0
+        for model in self._DEPENDENT_TABLES:
+            total += int(self._session.execute(
+                select(func.count()).select_from(model).where(model.course_id == course_id)
+            ).scalar_one())
+        return total
+
+    def delete(self, course_id: int) -> bool:
+        row = self._session.get(CourseORM, course_id)
+        if row is None:
+            return False
+        if self.count_associated_data(course_id):
+            raise CourseInUseError(
+                "El curso tiene datos asociados (matrícula, sesiones, materiales, "
+                "evaluaciones o actividades): deshabilítalo para conservar su histórico."
+            )
+        self._session.execute(
+            delete(ExposureTimeSettingsORM).where(ExposureTimeSettingsORM.course_id == course_id)
+        )
+        self._session.execute(
+            delete(TeacherCourseORM).where(TeacherCourseORM.course_id == course_id)
+        )
+        self._session.delete(row)
+        self._session.flush()
+        return True
 
     def claim_roster_import(self, course_id: int) -> bool:
         result = self._session.execute(
@@ -173,6 +260,8 @@ class SqlAlchemyCourseRepository(CourseRepository):
             created_at=row.created_at,
             cycle_id=row.cycle_id,
             roster_imported_at=row.roster_imported_at,
+            code=row.code,
+            enabled=True if row.enabled is None else bool(row.enabled),
         )
 
 
@@ -396,6 +485,7 @@ class SqlAlchemyAcademicCycleRepository(AcademicCycleRepository):
         starts_on: Optional[date] = None,
         ends_on: Optional[date] = None,
         owner_teacher_id: Optional[int] = None,
+        specialty_id: Optional[int] = None,
     ) -> AcademicCycle:
         if self._name_taken(name, owner_teacher_id):
             raise DuplicateAcademicCycleError(f"El ciclo “{name}” ya existe.")
@@ -405,6 +495,7 @@ class SqlAlchemyAcademicCycleRepository(AcademicCycleRepository):
             ends_on=ends_on,
             enabled=True,
             owner_teacher_id=owner_teacher_id,
+            specialty_id=specialty_id,
         )
         self._session.add(row)
         self._session.flush()
@@ -432,6 +523,7 @@ class SqlAlchemyAcademicCycleRepository(AcademicCycleRepository):
         ends_on: Optional[date] = None,
         enabled: Optional[bool] = None,
         clear_ends_on: bool = False,
+        specialty_id: Optional[int] = None,
     ) -> Optional[AcademicCycle]:
         row = self._session.get(AcademicCycleORM, cycle_id)
         if row is None:
@@ -448,6 +540,8 @@ class SqlAlchemyAcademicCycleRepository(AcademicCycleRepository):
             row.ends_on = ends_on
         if enabled is not None:
             row.enabled = enabled
+        if specialty_id is not None:
+            row.specialty_id = specialty_id
         self._session.flush()
         return self._to_entity(row)
 
@@ -477,6 +571,7 @@ class SqlAlchemyAcademicCycleRepository(AcademicCycleRepository):
             ends_on=row.ends_on,
             enabled=True if row.enabled is None else bool(row.enabled),
             owner_teacher_id=row.owner_teacher_id,
+            specialty_id=row.specialty_id,
         )
 
     @staticmethod

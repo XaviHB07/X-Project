@@ -81,15 +81,27 @@ un servidor HTTP o dentro de una simulación en memoria.
 ```
 roles (1) ──< users (1) ──< auth\_sessions
 users (1) ──< teacher\_courses >── courses
+universities (1) ──< faculties (1) ──< specialties (1) ──< academic\_cycles
 academic\_cycles (1) ──< courses (1) ──< students (1) ── (1) student\_state
 courses (1) ──< class\_sessions (1) ──< decision\_runs (1) ──< selection\_events >── students
 decision\_runs (1) ──< student\_participations >── students
 courses (1) ──< syllabus\_entries
 class\_sessions (1) ──< session\_attendance >── students
 courses (1) ──< group\_expositions (1) ──< group\_exposition\_member\_scores >── students
+courses (1) ──< quick\_activities (1) ──< quick\_activity\_questions
+quick\_activities (1) ──< quick\_activity\_responses (1) ──< quick\_activity\_answers
+quick\_activity\_responses >── students, users
 ```
 
-* **`academic\_cycles`**: periodo académico que agrupa cursos.
+* **`universities` / `faculties` / `specialties`** (HU-A5 a HU-A7): estructura
+institucional que administra el Administrador. Cada nivel tiene estado
+habilitado/deshabilitado y nombre único dentro de su padre; solo se elimina si
+no tiene hijos (la especialidad, si no tiene ciclos).
+* **`schema\_migrations`**: migraciones de datos que corren una sola vez (ver
+"Migración del MVP 1").
+
+* **`academic\_cycles`**: periodo académico que agrupa cursos. Desde HU-C2
+guarda la especialidad (`specialty\_id`) elegida en la selección encadenada.
 * **`courses`**: contenedor de estudiantes (permite correr varios cursos
 en paralelo sobre la misma base de datos); puede asociarse a un ciclo.
 La importación inicial de estudiantes se permite una sola vez por curso
@@ -216,8 +228,11 @@ en el entorno donde despliega la aplicación.
 Con la cuenta inicial creada, inicia la API y abre `http://127.0.0.1:8000/`.
 El acceso al panel requiere iniciar sesión con `ADMIN_USERNAME` y la contraseña
 ingresada durante el aprovisionamiento. El Administrador registra docentes
-desde **Ciclos académicos → Gestión de docentes**, con nombre, usuario,
-DNI/identificación única, teléfono, correo y cursos asignados. Desde el
+desde **Gestión de docentes** con DNI, apellidos, nombres, teléfono, correo y,
+de forma opcional, cursos asignados (HU-A8). El usuario del docente es su DNI
+y su contraseña inicial es igual al usuario (HU-A4); se guarda solo su hash y
+el docente debe cambiarla al primer ingreso. El campo **Usuario** solo se
+llena para conservar un usuario distinto en cuentas anteriores. Desde el
 directorio puede modificar sus datos, restablecer su contraseña o
 deshabilitar/habilitar su cuenta. Deshabilitar revoca su sesión y bloquea
 nuevos accesos, pero conserva sus datos, cursos asignados e historial.
@@ -226,7 +241,7 @@ Las secciones **Sesión y asistencia** y **Análisis de notas** aparecen en la
 vista Docente. La vista Administrador se concentra en ciclos, cursos,
 matrícula, cuentas y gestión de docentes.
 
-Al registrar un docente o restablecer su contraseña, la contraseña temporal
+Al restablecer la contraseña de un docente, la contraseña temporal (aleatoria)
 se muestra una sola vez al Administrador en la pantalla para copiarla y
 compartirla por un canal privado. No se guarda en texto claro ni se registra
 en logs. Si se cierra la ventana, debe generarse otra contraseña temporal. El
@@ -252,8 +267,14 @@ en él. Cada docente solo ve y modifica sus ciclos (y los de los cursos que
 tiene asignados); el nombre es único por docente, así que dos docentes pueden
 tener cada uno su "2026-II". El Administrador conserva el acceso completo.
 API: `POST /cycles`, `PATCH /cycles/{id}`, `DELETE /cycles/{id}`, `GET /cycles`.
-Pendiente: asociar el ciclo a universidad/facultad/especialidad cuando estén
-HU-A5 a HU-A7 y HU-C2. En **Sesiones y asistencia** y **Matrícula de estudiantes** se puede
+HU-C2: al crear o editar un ciclo, el docente elige universidad → facultad →
+especialidad (solo se ofrecen las habilitadas) y cada ciclo muestra ese
+contexto. HU-C4: en **Gestión de cursos** el docente registra sus cursos
+(código, nombre, estado) dentro de sus ciclos y quedan asignados a él; el
+código es único dentro del ciclo. Deshabilitar un curso conserva su histórico
+pero no admite sesiones ni actividades nuevas; eliminarlo solo procede si no
+tiene matrícula, sesiones, materiales, evaluaciones, grupos ni actividades.
+En **Sesiones y asistencia** y **Matrícula de estudiantes** se puede
 seleccionar el ciclo y el curso de trabajo; la selección se sincroniza con
 **Curso activo** en la barra lateral. **Matrícula de estudiantes** está
 separada de la configuración de ciclos: allí se puede crear el curso y luego
@@ -342,14 +363,34 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |PATCH|`/courses/{course_id}/evaluations/{evaluation_id}/students/{student_id}`|Guardar nota opcional, feedback opcional y publicación individual|
 |GET|`/methods`|Estrategias de selección disponibles|
 |GET|`/admin/teachers`|Administrador: listar docentes y cursos asignados|
-|POST|`/admin/teachers`|Administrador: registrar docente, asignar cursos y devolver una contraseña temporal de un solo vistazo|
+|POST|`/admin/teachers`|Administrador: registrar docente (DNI, apellidos, nombres; usuario = DNI y contraseña inicial = usuario) y, opcionalmente, asignar cursos|
 |PUT|`/admin/teachers/{id}`|Administrador: modificar los datos de identificación y contacto del docente|
 |PATCH|`/admin/teachers/{id}/status`|Administrador: habilitar o deshabilitar la cuenta sin borrar sus datos ni historial|
 |PUT|`/admin/teachers/{id}/courses`|Administrador: reemplazar cursos asignados al docente|
 |POST|`/admin/teachers/{id}/reset-password`|Administrador: generar una contraseña temporal de un solo vistazo|
-|POST|`/cycles`|Crear un ciclo académico|
+|POST|`/cycles`|Crear un ciclo académico (con `specialty_id`, HU-C2)|
 |GET|`/cycles`|Listar ciclos académicos|
-|POST|`/courses`|Crear un curso (opcionalmente asociado a `cycle_id`)|
+|POST|`/courses`|Crear un curso con `code`, `name` y `cycle_id`; el docente lo crea en sus ciclos y queda asignado (HU-C4)|
+|PATCH|`/courses/{id}`|Modificar código, nombre o estado del curso (HU-C4)|
+|DELETE|`/courses/{id}`|Eliminar el curso si no tiene datos asociados (HU-C4)|
+|GET|`/institutions`|Árbol universidad → facultades → especialidades (docente: solo habilitados)|
+|POST/PATCH/DELETE|`/institutions/universities[/{id}]`|Administrador: gestionar universidades (HU-A5)|
+|POST|`/institutions/universities/{id}/faculties`|Administrador: registrar facultad (HU-A6)|
+|PATCH/DELETE|`/institutions/faculties/{id}`|Administrador: modificar, deshabilitar o eliminar facultad (HU-A6)|
+|POST|`/institutions/faculties/{id}/specialties`|Administrador: registrar especialidad (HU-A7)|
+|PATCH/DELETE|`/institutions/specialties/{id}`|Administrador: modificar, deshabilitar o eliminar especialidad (HU-A7)|
+|GET/POST|`/courses/{id}/quick-activities`|Listar o preparar actividades rápidas del curso|
+|POST|`/courses/{id}/quick-activities/{aid}/publish`|Publicar con código temporal (o extender su vigencia)|
+|POST|`/courses/{id}/quick-activities/{aid}/close`|Cerrar la actividad|
+|GET|`/courses/{id}/quick-activities/{aid}/responses`|**HU-Q3**: respuestas registradas por estudiante|
+|POST|`/student/quick-activities/join`|**HU-Q5**: unirse con código (vigencia, pertenencia, envío único)|
+|POST|`/student/quick-activities/{aid}/responses`|**HU-Q3**: registrar las respuestas del estudiante|
+|GET|`/student/quick-activities/responses`|Estudiante: sus envíos|
+|GET|`/courses/{id}/quick-activities/{aid}/qr.svg`|**HU-Q2**: QR del enlace de ingreso|
+|GET|`/courses/{id}/quick-activities/{aid}/live`|Quiz en vivo: estado para la pantalla del docente|
+|POST|`/courses/{id}/quick-activities/{aid}/live/advance`|Quiz en vivo: sala → pregunta → resultados → … → podio|
+|GET|`/student/quick-activities/{aid}/live`|Quiz en vivo: estado para el celular del estudiante|
+|POST|`/student/quick-activities/{aid}/live/answers`|Quiz en vivo: responder la pregunta en curso|
 |GET|`/courses`|Listar cursos (HU-S1)|
 |GET|`/courses/{course_id}/materials`|Listar materiales académicos del curso|
 |POST|`/courses/{course_id}/materials`|Cargar PDF, PPTX, DOCX o XLSX y asociarlo al curso, tema y opcionalmente a una sesión|
@@ -396,6 +437,75 @@ curl -c cookies.txt -X POST http://127.0.0.1:8000/auth/login \
   -d '{"username":"admin","password":"<CONTRASENA>"}'
 curl -b cookies.txt http://127.0.0.1:8000/courses
 ```
+
+### Estructura institucional (HU-A5, HU-A6, HU-A7)
+
+Menú **Estructura institucional** (solo Administrador): registra universidades
+y, dentro de cada una, facultades y especialidades. Cada elemento se puede
+renombrar, deshabilitar/habilitar o eliminar. Deshabilitar lo da de baja sin
+borrarlo: sus datos siguen visibles, pero ya no se ofrece al docente ni admite
+elementos nuevos debajo. Eliminar solo procede si no tiene hijos.
+
+### Migración del MVP 1 (tarea técnica del Sprint 6)
+
+Al arrancar, `bootstrap.\_migrate\_mvp1\_institutional\_schema` pasa una sola
+vez los datos anteriores al esquema universidad → facultad → especialidad →
+ciclo → curso: los ciclos sin especialidad quedan en "Especialidad (migrada
+del MVP 1)" y los cursos sin ciclo pasan al ciclo "Histórico MVP 1" (con fecha
+de inicio igual a su primera sesión). No toca sesiones, participaciones ni
+notas. El Administrador debe renombrar esa universidad, facultad y
+especialidad con los datos reales desde **Estructura institucional**.
+
+### Actividades rápidas (Sprint 7: HU-Q3 y HU-Q5)
+
+Pestaña **Actividades rápidas** del curso (docente): prepara preguntas cortas
+(abiertas o de opción múltiple, con alternativa correcta opcional), guárdalas
+como borrador y publícalas con un código de 6 caracteres válido por N minutos.
+Se muestra el código y el enlace `/?actividad=CÓDIGO` (el que codificará el QR
+de HU-Q2). **Ver respuestas** lista cada envío con el estudiante, la hora y
+sus respuestas (✓/✗ en opción múltiple).
+
+Portal del estudiante → **Unirse a actividad** (HU-Q5): escribe el código o
+abre el enlace; si no tenía sesión, se le pide iniciarla y luego entra directo
+a la actividad. El servidor valida que el código exista (404) y esté vigente
+(410 si venció o se cerró), que el estudiante tenga matrícula activa en el
+curso (403) y que no haya respondido ya, salvo que el docente marque
+"Permitir más de un envío" (409). Las respuestas se registran asociadas a la
+cuenta y a la matrícula del estudiante (HU-Q3) y la restricción única
+(actividad, matrícula, intento) evita duplicados por envíos simultáneos.
+
+La generación con IA (HU-Q1) solo debe enviar sus preguntas a
+`POST /courses/{id}/quick-activities` con el mismo formato.
+
+**Dos tipos de actividad** (se elige al crearla):
+
+* **Test**: cada estudiante responde todas las preguntas a su ritmo dentro del
+  rango de tiempo que fija el docente (lo descrito arriba).
+* **Quiz en vivo** (tipo Kahoot/Quizizz): todas las preguntas son de opción
+  múltiple con alternativa correcta y tienen N segundos cada una. Al publicar
+  se abre la **pantalla en vivo** para proyectar: sala de espera con el código,
+  el QR y los participantes → pregunta con cuenta regresiva y "X de Y
+  respondieron" → resultados (respuesta correcta, cuántos eligieron cada
+  alternativa y ranking) → … → podio final. La pregunta se cierra sola al
+  acabarse el tiempo o cuando el docente la cierra. En el celular, el
+  estudiante toca una alternativa y, al cerrarse la pregunta, ve si acertó,
+  sus puntos y su puesto. Un acierto vale hasta 1000 puntos y baja hasta 500
+  según el tiempo que tardó; el reloj del servidor es la referencia. La
+  sincronización es por consultas cortas (pantalla del docente cada 1 s,
+  celulares cada 1,5 s), sin WebSockets. Conviene probarla en Render con un
+  curso completo antes de usarla en clase.
+
+**Código QR (HU-Q2).** Al publicar, la actividad muestra un QR (generado en el
+servidor con `segno`, `GET /courses/{id}/quick-activities/{aid}/qr.svg`) con
+el enlace `https://<app>/?actividad=CÓDIGO`. Detrás del proxy de Render se usa
+`X-Forwarded-Proto` para que el enlace sea `https`; si hiciera falta fijarlo,
+configura `PUBLIC_BASE_URL`. El estudiante puede: (1) escanearlo con la cámara
+de su celular, que abre el enlace, o (2) usar **Escanear QR con la cámara**
+dentro del portal. La segunda opción usa `getUserMedia` (requiere HTTPS o
+localhost) y decodifica con `BarcodeDetector` cuando el navegador lo trae, o
+con jsQR (Apache-2.0, copia local en `src/api/static/vendor/`) en Safari para
+iOS y Firefox. En ambos casos el ingreso pasa por las mismas validaciones de
+HU-Q5.
 
 ### Material académico (HU-M1)
 

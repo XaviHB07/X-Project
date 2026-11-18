@@ -59,6 +59,25 @@ from src.api.schemas import (
     CourseCreateRequest,
     CourseMaterialResponse,
     CourseResponse,
+    CourseUpdateRequest,
+    FacultyResponse,
+    InstitutionCreateRequest,
+    InstitutionUpdateRequest,
+    LiveAnswerRequest,
+    LiveAnswerResponse,
+    LiveStudentStateResponse,
+    LiveTeacherStateResponse,
+    QuickActivityCreateRequest,
+    QuickActivityJoinRequest,
+    QuickActivityPublishRequest,
+    QuickActivityResponse,
+    QuickActivityResponsesResponse,
+    QuickActivitySubmitRequest,
+    QuickActivitySubmitResponse,
+    SpecialtyResponse,
+    StudentQuickActivityResponse,
+    StudentQuickSubmissionResponse,
+    UniversityResponse,
     ExposureTimeSettingsRequest,
     ExposureTimeSettingsResponse,
     DecisionResultResponse,
@@ -120,7 +139,9 @@ from src.api.schemas import (
 )
 from src.repositories.interfaces import (
     AcademicCycleInUseError,
+    CourseInUseError,
     DuplicateAcademicCycleError,
+    DuplicateCourseCodeError,
     DuplicateStudentError,
     InvalidParticipationStudentError,
     ParticipationDecisionNotFoundError,
@@ -135,6 +156,7 @@ from src.services.auth_service import (
     hash_initial_student_password,
 )
 from src.services.errors import (
+    CourseDisabledError,
     CourseNotFoundError,
     InvalidAttendanceError,
     SessionNotFoundError,
@@ -156,6 +178,21 @@ from src.services.material_service import (
     CourseMaterialNotFoundError,
     CourseMaterialService,
     MaterialFormatError,
+)
+from src.services.institution_service import (
+    DuplicateInstitutionError,
+    InstitutionDisabledError,
+    InstitutionInUseError,
+    InstitutionNotFoundError,
+)
+from src.services.quick_activity_service import (
+    ActivityNotAvailableError,
+    AlreadyRespondedError,
+    InvalidJoinCodeError,
+    InvalidQuickActivityError,
+    NotEnrolledInCourseError,
+    QuickActivityNotFoundError,
+    QuickActivityStateError,
 )
 from src.services.roster_import import MAX_FILE_BYTES, RosterFormatError
 from src.services.roster_service import RosterAlreadyImportedError
@@ -366,6 +403,8 @@ def _course_response(course) -> CourseResponse:
         created_at=course.created_at,
         cycle_id=course.cycle_id,
         roster_imported=course.roster_imported_at is not None,
+        code=course.code,
+        enabled=course.enabled,
     )
 
 
@@ -395,6 +434,32 @@ def _session_detail_response(detail: SessionDetail) -> SessionDetailResponse:
 # --------------------------------------------------------------------------
 
 
+def _institution_service(request: Request):
+    return request.app.state.app_context.institution_service
+
+
+def _selectable_specialty(request: Request, specialty_id: int) -> dict:
+    """HU-C2: valida que la especialidad exista y esté habilitada (junto con
+    su facultad y universidad) antes de usarla en un ciclo."""
+    try:
+        return _institution_service(request).require_selectable_specialty(specialty_id)
+    except InstitutionNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except InstitutionDisabledError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+def _cycle_contexts(request: Request, cycles) -> dict:
+    contexts = _institution_service(request).specialty_contexts(
+        cycle.specialty_id for cycle in cycles
+    )
+    return {
+        cycle.id: contexts.get(cycle.specialty_id)
+        for cycle in cycles
+        if cycle.specialty_id in contexts
+    }
+
+
 def _require_cycle_editor(user: AuthenticatedUser) -> AuthenticatedUser:
     """HU-C3: el docente gestiona sus ciclos; el Administrador conserva el
     acceso completo. Los estudiantes no gestionan ciclos."""
@@ -411,8 +476,17 @@ def _can_manage_cycle(user: AuthenticatedUser, cycle) -> bool:
     return user.role == ROLE_TEACHER and cycle.owner_teacher_id == user.id
 
 
-def _cycle_response(cycle, user: AuthenticatedUser, course_count: int) -> AcademicCycleResponse:
+def _cycle_response(
+    cycle, user: AuthenticatedUser, course_count: int, context: Optional[dict] = None
+) -> AcademicCycleResponse:
+    context = context or {}
     return AcademicCycleResponse(
+        specialty_id=cycle.specialty_id,
+        faculty_id=context.get("faculty_id"),
+        university_id=context.get("university_id"),
+        specialty_name=context.get("specialty_name"),
+        faculty_name=context.get("faculty_name"),
+        university_name=context.get("university_name"),
         id=cycle.id,
         name=cycle.name,
         created_at=cycle.created_at,
@@ -444,6 +518,7 @@ def _managed_cycle_or_error(uow: UnitOfWork, cycle_id: int, user: AuthenticatedU
 )
 def create_cycle(
     payload: AcademicCycleCreateRequest,
+    request: Request,
     user: AuthenticatedUser = Depends(current_user),
     uow: UnitOfWork = Depends(new_unit_of_work),
 ) -> AcademicCycleResponse:
@@ -451,6 +526,10 @@ def create_cycle(
     como dueño; si lo crea el Administrador, el ciclo no tiene dueño."""
     _require_cycle_editor(user)
     owner_id = user.id if user.role == ROLE_TEACHER else None
+    context = (
+        _selectable_specialty(request, payload.specialty_id)
+        if payload.specialty_id is not None else None
+    )
     try:
         with uow:
             cycle = uow.cycles.create(
@@ -458,11 +537,12 @@ def create_cycle(
                 starts_on=payload.starts_on,
                 ends_on=payload.ends_on,
                 owner_teacher_id=owner_id,
+                specialty_id=payload.specialty_id,
             )
             uow.commit()
     except DuplicateAcademicCycleError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    return _cycle_response(cycle, user, course_count=0)
+    return _cycle_response(cycle, user, course_count=0, context=context)
 
 
 @app.patch(
@@ -473,6 +553,7 @@ def create_cycle(
 def update_cycle(
     cycle_id: int,
     payload: AcademicCycleUpdateRequest,
+    request: Request,
     user: AuthenticatedUser = Depends(current_user),
     uow: UnitOfWork = Depends(new_unit_of_work),
 ) -> AcademicCycleResponse:
@@ -503,12 +584,13 @@ def update_cycle(
                 ends_on=payload.ends_on,
                 enabled=payload.enabled,
                 clear_ends_on="ends_on" in sent and payload.ends_on is None,
+                specialty_id=payload.specialty_id,
             )
             course_count = uow.cycles.count_courses(cycle_id)
             uow.commit()
     except DuplicateAcademicCycleError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    return _cycle_response(cycle, user, course_count)
+    return _cycle_response(cycle, user, course_count, _cycle_contexts(request, [cycle]).get(cycle.id))
 
 
 @app.delete(
@@ -551,7 +633,11 @@ def list_cycles(
             )
             cycles = [cycle for cycle in cycles if cycle.id in allowed_ids]
         counts = {cycle.id: uow.cycles.count_courses(cycle.id) for cycle in cycles}
-    return [_cycle_response(cycle, user, counts[cycle.id]) for cycle in cycles]
+    contexts = _cycle_contexts(request, cycles)
+    return [
+        _cycle_response(cycle, user, counts[cycle.id], contexts.get(cycle.id))
+        for cycle in cycles
+    ]
 
 
 @app.get(
@@ -928,6 +1014,8 @@ def create_teacher(
             email=payload.email,
             phone_number=payload.phone_number,
             course_ids=payload.course_ids,
+            last_names=payload.last_names,
+            first_names=payload.first_names,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
@@ -951,6 +1039,8 @@ def update_teacher(
             dni=payload.dni,
             email=payload.email,
             phone_number=payload.phone_number,
+            last_names=payload.last_names,
+            first_names=payload.first_names,
         )
     except LookupError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
@@ -1021,24 +1111,113 @@ def assign_teacher_courses(
 
 @app.post(
     "/courses", response_model=CourseResponse, status_code=status.HTTP_201_CREATED, tags=["cursos"],
-    dependencies=[Depends(require_admin)],
 )
-def create_course(payload: CourseCreateRequest, uow: UnitOfWork = Depends(new_unit_of_work)) -> CourseResponse:
-    with uow:
-        if payload.cycle_id is not None:
-            target_cycle = uow.cycles.get(payload.cycle_id)
-            if target_cycle is None:
-                raise HTTPException(
-                    status.HTTP_404_NOT_FOUND, f"Ciclo {payload.cycle_id} no encontrado."
-                )
-            if not target_cycle.enabled:
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    f"El ciclo “{target_cycle.name}” está deshabilitado y no admite cursos nuevos.",
-                )
-        course = uow.courses.create(payload.name, cycle_id=payload.cycle_id)
-        uow.commit()
+def create_course(
+    payload: CourseCreateRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(current_user),
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> CourseResponse:
+    """HU-C4: registra un curso (código, nombre) dentro de un ciclo.
+
+    El Administrador puede crear cursos en cualquier ciclo. El docente los
+    crea dentro de sus propios ciclos y el curso queda asignado a él.
+    """
+    if user.role == ROLE_STUDENT or (user.role == ROLE_TEACHER and payload.cycle_id is None):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Los cursos se registran dentro de uno de tus ciclos académicos.",
+        )
+    try:
+        with uow:
+            if payload.cycle_id is not None:
+                target_cycle = uow.cycles.get(payload.cycle_id)
+                if target_cycle is None:
+                    raise HTTPException(
+                        status.HTTP_404_NOT_FOUND, f"Ciclo {payload.cycle_id} no encontrado."
+                    )
+                if user.role == ROLE_TEACHER and target_cycle.owner_teacher_id != user.id:
+                    raise HTTPException(
+                        status.HTTP_403_FORBIDDEN,
+                        "Solo puedes registrar cursos en los ciclos que creaste.",
+                    )
+                if not target_cycle.enabled:
+                    raise HTTPException(
+                        status.HTTP_409_CONFLICT,
+                        f"El ciclo “{target_cycle.name}” está deshabilitado y no admite cursos nuevos.",
+                    )
+            course = uow.courses.create(payload.name, cycle_id=payload.cycle_id, code=payload.code)
+            uow.commit()
+    except DuplicateCourseCodeError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    if user.role == ROLE_TEACHER:
+        request.app.state.app_context.auth_service.add_course_assignment(user.id, course.id)
     return _course_response(course)
+
+
+def _require_course_editor(request: Request, course_id: int, user: AuthenticatedUser) -> None:
+    """HU-C4: el docente modifica los cursos que tiene asignados; el
+    Administrador, cualquiera."""
+    if user.role == ROLE_STUDENT:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "No puedes modificar cursos.")
+    if not request.app.state.app_context.auth_service.has_course_access(user, course_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "No tienes acceso a este curso.")
+
+
+@app.patch(
+    "/courses/{course_id}", response_model=CourseResponse, tags=["cursos"],
+)
+def update_course(
+    course_id: int,
+    payload: CourseUpdateRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(current_user),
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> CourseResponse:
+    """HU-C4: modifica código, nombre o estado. Deshabilitar da de baja el
+    curso sin borrarlo: se conserva su histórico, pero no admite sesiones ni
+    actividades nuevas."""
+    _require_course_editor(request, course_id, user)
+    sent = payload.model_fields_set
+    if "name" in sent and payload.name is None:
+        raise HTTPException(422, "El nombre no puede quedar vacío.")
+    try:
+        with uow:
+            course = uow.courses.update(
+                course_id,
+                name=payload.name,
+                code=payload.code,
+                enabled=payload.enabled,
+                clear_code="code" in sent and payload.code is None,
+            )
+            if course is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, f"Curso {course_id} no encontrado.")
+            uow.commit()
+    except DuplicateCourseCodeError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return _course_response(course)
+
+
+@app.delete(
+    "/courses/{course_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["cursos"],
+)
+def delete_course(
+    course_id: int,
+    request: Request,
+    user: AuthenticatedUser = Depends(current_user),
+    uow: UnitOfWork = Depends(new_unit_of_work),
+) -> Response:
+    """HU-C4: la eliminación definitiva solo procede si el curso no tiene
+    datos asociados (matrícula, sesiones, participaciones, evaluaciones...)."""
+    _require_course_editor(request, course_id, user)
+    try:
+        with uow:
+            if not uow.courses.delete(course_id):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, f"Curso {course_id} no encontrado.")
+            uow.commit()
+    except CourseInUseError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get(
@@ -1634,6 +1813,8 @@ def start_class_session(
         )
     except CourseNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except CourseDisabledError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except (InvalidAttendanceError, ValueError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return _session_detail_response(detail)
@@ -2254,3 +2435,489 @@ def fairness_metrics(
     """
     metrics = fairness_service.compute_for_course(course_id)
     return FairnessMetricsResponse(course_id=course_id, **metrics)
+
+
+# --------------------------------------------------------------------------
+# HU-A5 / HU-A6 / HU-A7 — Estructura institucional (y lectura para HU-C2)
+# --------------------------------------------------------------------------
+
+
+def _institution_call(action):
+    """Traduce los errores del servicio institucional a respuestas HTTP."""
+    try:
+        return action()
+    except InstitutionNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except (DuplicateInstitutionError, InstitutionInUseError, InstitutionDisabledError) as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/institutions", response_model=List[UniversityResponse], tags=["institución"])
+def list_institutions(
+    request: Request,
+    only_enabled: bool = False,
+    user: AuthenticatedUser = Depends(current_user),
+) -> List[UniversityResponse]:
+    """Árbol universidad → facultades → especialidades.
+
+    El Administrador ve también los elementos deshabilitados (HU-A5 a A7).
+    El docente solo recibe los habilitados, que son los que puede elegir en
+    la selección encadenada de HU-C2.
+    """
+    if user.role == ROLE_STUDENT:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "No tienes acceso a esta información.")
+    include_disabled = user.role == ROLE_ADMIN and not only_enabled
+    tree = _institution_service(request).tree(include_disabled=include_disabled)
+    return [UniversityResponse(**university) for university in tree]
+
+
+@app.post(
+    "/institutions/universities",
+    response_model=UniversityResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["institución"],
+    dependencies=[Depends(require_admin)],
+)
+def create_university(payload: InstitutionCreateRequest, request: Request) -> UniversityResponse:
+    """HU-A5: registra una universidad (habilitada)."""
+    return UniversityResponse(**_institution_call(
+        lambda: _institution_service(request).create_university(payload.name)
+    ))
+
+
+@app.patch(
+    "/institutions/universities/{university_id}",
+    response_model=UniversityResponse,
+    tags=["institución"],
+    dependencies=[Depends(require_admin)],
+)
+def update_university(
+    university_id: int, payload: InstitutionUpdateRequest, request: Request
+) -> UniversityResponse:
+    """HU-A5: modifica el nombre o el estado. Deshabilitar la da de baja sin
+    borrarla: no se ofrece en selecciones nuevas, pero sus datos siguen."""
+    return UniversityResponse(**_institution_call(
+        lambda: _institution_service(request).update_university(
+            university_id, name=payload.name, enabled=payload.enabled
+        )
+    ))
+
+
+@app.delete(
+    "/institutions/universities/{university_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["institución"],
+    dependencies=[Depends(require_admin)],
+)
+def delete_university(university_id: int, request: Request) -> Response:
+    """HU-A5: solo procede si la universidad no tiene facultades."""
+    _institution_call(lambda: _institution_service(request).delete_university(university_id))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post(
+    "/institutions/universities/{university_id}/faculties",
+    response_model=FacultyResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["institución"],
+    dependencies=[Depends(require_admin)],
+)
+def create_faculty(
+    university_id: int, payload: InstitutionCreateRequest, request: Request
+) -> FacultyResponse:
+    """HU-A6: registra una facultad dentro de una universidad habilitada."""
+    return FacultyResponse(**_institution_call(
+        lambda: _institution_service(request).create_faculty(university_id, payload.name)
+    ))
+
+
+@app.patch(
+    "/institutions/faculties/{faculty_id}",
+    response_model=FacultyResponse,
+    tags=["institución"],
+    dependencies=[Depends(require_admin)],
+)
+def update_faculty(
+    faculty_id: int, payload: InstitutionUpdateRequest, request: Request
+) -> FacultyResponse:
+    return FacultyResponse(**_institution_call(
+        lambda: _institution_service(request).update_faculty(
+            faculty_id, name=payload.name, enabled=payload.enabled
+        )
+    ))
+
+
+@app.delete(
+    "/institutions/faculties/{faculty_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["institución"],
+    dependencies=[Depends(require_admin)],
+)
+def delete_faculty(faculty_id: int, request: Request) -> Response:
+    """HU-A6: solo procede si la facultad no tiene especialidades."""
+    _institution_call(lambda: _institution_service(request).delete_faculty(faculty_id))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post(
+    "/institutions/faculties/{faculty_id}/specialties",
+    response_model=SpecialtyResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["institución"],
+    dependencies=[Depends(require_admin)],
+)
+def create_specialty(
+    faculty_id: int, payload: InstitutionCreateRequest, request: Request
+) -> SpecialtyResponse:
+    """HU-A7: registra una especialidad dentro de una facultad habilitada."""
+    return SpecialtyResponse(**_institution_call(
+        lambda: _institution_service(request).create_specialty(faculty_id, payload.name)
+    ))
+
+
+@app.patch(
+    "/institutions/specialties/{specialty_id}",
+    response_model=SpecialtyResponse,
+    tags=["institución"],
+    dependencies=[Depends(require_admin)],
+)
+def update_specialty(
+    specialty_id: int, payload: InstitutionUpdateRequest, request: Request
+) -> SpecialtyResponse:
+    return SpecialtyResponse(**_institution_call(
+        lambda: _institution_service(request).update_specialty(
+            specialty_id, name=payload.name, enabled=payload.enabled
+        )
+    ))
+
+
+@app.delete(
+    "/institutions/specialties/{specialty_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["institución"],
+    dependencies=[Depends(require_admin)],
+)
+def delete_specialty(specialty_id: int, request: Request) -> Response:
+    """HU-A7: solo procede si la especialidad no tiene ciclos académicos."""
+    _institution_call(lambda: _institution_service(request).delete_specialty(specialty_id))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --------------------------------------------------------------------------
+# Épica 7 — Actividades rápidas (Sprint 7: HU-Q3, HU-Q5; base de Q1 y Q2)
+# --------------------------------------------------------------------------
+
+
+def _quick_service(request: Request):
+    return request.app.state.app_context.quick_activity_service
+
+
+def _quick_call(action):
+    """Traduce los errores de actividades rápidas a respuestas HTTP."""
+    try:
+        return action()
+    except (QuickActivityNotFoundError, InvalidJoinCodeError) as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ActivityNotAvailableError as exc:
+        # 410 Gone: el código existió, pero ya no está vigente.
+        raise HTTPException(status.HTTP_410_GONE, str(exc)) from exc
+    except NotEnrolledInCourseError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    except (AlreadyRespondedError, QuickActivityStateError) as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except InvalidQuickActivityError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def _require_student(user: AuthenticatedUser) -> AuthenticatedUser:
+    if user.role != ROLE_STUDENT:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Solo los estudiantes se unen a las actividades."
+        )
+    return user
+
+
+@app.post(
+    "/courses/{course_id}/quick-activities",
+    response_model=QuickActivityResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["actividades rápidas"],
+    dependencies=[Depends(require_course_access)],
+)
+def create_quick_activity(
+    course_id: int,
+    payload: QuickActivityCreateRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(current_user),
+) -> QuickActivityResponse:
+    """Prepara una actividad rápida (queda en borrador). Las preguntas pueden
+    escribirse a mano o venir de la generación de HU-Q1 con este formato."""
+    activity = _quick_call(lambda: _quick_service(request).create(
+        course_id,
+        created_by_user_id=user.id,
+        title=payload.title,
+        questions=[question.model_dump() for question in payload.questions],
+        class_session_id=payload.class_session_id,
+        allow_multiple_responses=payload.allow_multiple_responses,
+        mode=payload.mode,
+        question_seconds=payload.question_seconds,
+    ))
+    return QuickActivityResponse(**activity)
+
+
+@app.get(
+    "/courses/{course_id}/quick-activities",
+    response_model=List[QuickActivityResponse],
+    tags=["actividades rápidas"],
+    dependencies=[Depends(require_course_access)],
+)
+def list_quick_activities(course_id: int, request: Request) -> List[QuickActivityResponse]:
+    return [
+        QuickActivityResponse(**activity)
+        for activity in _quick_service(request).list_for_course(course_id)
+    ]
+
+
+@app.get(
+    "/courses/{course_id}/quick-activities/{activity_id}",
+    response_model=QuickActivityResponse,
+    tags=["actividades rápidas"],
+    dependencies=[Depends(require_course_access)],
+)
+def get_quick_activity(course_id: int, activity_id: int, request: Request) -> QuickActivityResponse:
+    return QuickActivityResponse(**_quick_call(
+        lambda: _quick_service(request).get(course_id, activity_id)
+    ))
+
+
+@app.post(
+    "/courses/{course_id}/quick-activities/{activity_id}/publish",
+    response_model=QuickActivityResponse,
+    tags=["actividades rápidas"],
+    dependencies=[Depends(require_course_access)],
+)
+def publish_quick_activity(
+    course_id: int,
+    activity_id: int,
+    payload: QuickActivityPublishRequest,
+    request: Request,
+) -> QuickActivityResponse:
+    """Publica la actividad con un código temporal y su enlace de ingreso
+    (`join_url`, el que codificará el QR de HU-Q2). Publicarla otra vez
+    extiende la vigencia y conserva el código."""
+    return QuickActivityResponse(**_quick_call(lambda: _quick_service(request).publish(
+        course_id,
+        activity_id,
+        duration_minutes=payload.duration_minutes,
+        allow_multiple_responses=payload.allow_multiple_responses,
+    )))
+
+
+@app.post(
+    "/courses/{course_id}/quick-activities/{activity_id}/close",
+    response_model=QuickActivityResponse,
+    tags=["actividades rápidas"],
+    dependencies=[Depends(require_course_access)],
+)
+def close_quick_activity(course_id: int, activity_id: int, request: Request) -> QuickActivityResponse:
+    """Cierra la actividad: el código deja de aceptar ingresos y envíos."""
+    return QuickActivityResponse(**_quick_call(
+        lambda: _quick_service(request).close(course_id, activity_id)
+    ))
+
+
+@app.get(
+    "/courses/{course_id}/quick-activities/{activity_id}/responses",
+    response_model=QuickActivityResponsesResponse,
+    tags=["actividades rápidas"],
+    dependencies=[Depends(require_course_access)],
+)
+def list_quick_activity_responses(
+    course_id: int, activity_id: int, request: Request
+) -> QuickActivityResponsesResponse:
+    """HU-Q3: respuestas registradas, cada una con la cuenta y la matrícula
+    del estudiante que la envió (insumo de los resultados de HU-Q4)."""
+    return QuickActivityResponsesResponse(**_quick_call(
+        lambda: _quick_service(request).responses(course_id, activity_id)
+    ))
+
+
+@app.post(
+    "/student/quick-activities/join",
+    response_model=StudentQuickActivityResponse,
+    tags=["actividades rápidas"],
+)
+def join_quick_activity(
+    payload: QuickActivityJoinRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(current_user),
+) -> StudentQuickActivityResponse:
+    """HU-Q5: el estudiante ingresa el código (o abre el enlace del QR).
+
+    Valida que el código esté vigente (404 si no existe; 410 si venció o se
+    cerró), que el estudiante pertenezca al curso (403) y que no haya
+    respondido ya, salvo que el docente permita varios envíos (409).
+    """
+    _require_student(user)
+    return StudentQuickActivityResponse(**_quick_call(
+        lambda: _quick_service(request).join(user.id, payload.code)
+    ))
+
+
+@app.post(
+    "/student/quick-activities/{activity_id}/responses",
+    response_model=QuickActivitySubmitResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["actividades rápidas"],
+)
+def submit_quick_activity(
+    activity_id: int,
+    payload: QuickActivitySubmitRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(current_user),
+) -> QuickActivitySubmitResponse:
+    """HU-Q3: registra las respuestas, asociadas a la cuenta del estudiante.
+    Vuelve a aplicar las validaciones de HU-Q5."""
+    _require_student(user)
+    return QuickActivitySubmitResponse(**_quick_call(
+        lambda: _quick_service(request).submit(
+            user.id,
+            activity_id,
+            payload.code,
+            [answer.model_dump() for answer in payload.answers],
+        )
+    ))
+
+
+@app.get(
+    "/student/quick-activities/responses",
+    response_model=List[StudentQuickSubmissionResponse],
+    tags=["actividades rápidas"],
+)
+def list_my_quick_submissions(
+    request: Request, user: AuthenticatedUser = Depends(current_user)
+) -> List[StudentQuickSubmissionResponse]:
+    """Envíos propios del estudiante (sin notas ni respuestas correctas)."""
+    _require_student(user)
+    return [
+        StudentQuickSubmissionResponse(**item)
+        for item in _quick_service(request).student_submissions(user.id)
+    ]
+
+
+
+# --------------------------------------------------------------------------
+# HU-Q2 — Código QR del enlace de ingreso
+# --------------------------------------------------------------------------
+
+
+def _public_base_url(request: Request) -> str:
+    """Dirección pública de la aplicación para el enlace del QR.
+
+    `PUBLIC_BASE_URL` (si se configura) tiene prioridad. Si no, se usa la del
+    request; detrás del proxy de Render el servicio recibe HTTP, así que se
+    respeta `X-Forwarded-Proto` para que el QR apunte a `https://`.
+    """
+    configured = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if configured:
+        return configured
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{scheme}://{host.split(',')[0].strip()}"
+
+
+@app.get(
+    "/courses/{course_id}/quick-activities/{activity_id}/qr.svg",
+    tags=["actividades rápidas"],
+    dependencies=[Depends(require_course_access)],
+    response_class=Response,
+)
+def quick_activity_qr(course_id: int, activity_id: int, request: Request) -> Response:
+    """Imagen QR (SVG) con el enlace `/?actividad=CÓDIGO`. Al escanearlo, el
+    estudiante entra directamente a la actividad (HU-Q5)."""
+    import io
+
+    import segno
+
+    activity = _quick_call(lambda: _quick_service(request).get(course_id, activity_id))
+    if not activity["join_code"]:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Publica la actividad para generar su QR.")
+    url = f"{_public_base_url(request)}/?actividad={activity['join_code']}"
+    buffer = io.BytesIO()
+    segno.make(url, error="m").save(buffer, kind="svg", scale=10, border=2, dark="#0d2557")
+    return Response(
+        buffer.getvalue(),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "no-store", "X-Join-Url": url},
+    )
+
+
+# --------------------------------------------------------------------------
+# Quiz en vivo (tipo Kahoot / Quizizz)
+# --------------------------------------------------------------------------
+
+
+@app.get(
+    "/courses/{course_id}/quick-activities/{activity_id}/live",
+    response_model=LiveTeacherStateResponse,
+    tags=["actividades rápidas"],
+    dependencies=[Depends(require_course_access)],
+)
+def live_state_teacher(course_id: int, activity_id: int, request: Request) -> LiveTeacherStateResponse:
+    """Estado para la pantalla que proyecta el docente: participantes en la
+    sala, pregunta en curso, cuántos respondieron y, al cerrar la pregunta,
+    la distribución de respuestas y el ranking."""
+    return LiveTeacherStateResponse(**_quick_call(
+        lambda: _quick_service(request).live_state_for_teacher(course_id, activity_id)
+    ))
+
+
+@app.post(
+    "/courses/{course_id}/quick-activities/{activity_id}/live/advance",
+    response_model=LiveTeacherStateResponse,
+    tags=["actividades rápidas"],
+    dependencies=[Depends(require_course_access)],
+)
+def live_advance(course_id: int, activity_id: int, request: Request) -> LiveTeacherStateResponse:
+    """Avanza el quiz: sala → pregunta → resultados → siguiente → … → podio."""
+    return LiveTeacherStateResponse(**_quick_call(
+        lambda: _quick_service(request).live_advance(course_id, activity_id)
+    ))
+
+
+@app.get(
+    "/student/quick-activities/{activity_id}/live",
+    response_model=LiveStudentStateResponse,
+    tags=["actividades rápidas"],
+)
+def live_state_student(
+    activity_id: int, request: Request, user: AuthenticatedUser = Depends(current_user)
+) -> LiveStudentStateResponse:
+    _require_student(user)
+    return LiveStudentStateResponse(**_quick_call(
+        lambda: _quick_service(request).live_state_for_student(user.id, activity_id)
+    ))
+
+
+@app.post(
+    "/student/quick-activities/{activity_id}/live/answers",
+    response_model=LiveAnswerResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["actividades rápidas"],
+)
+def live_answer(
+    activity_id: int,
+    payload: LiveAnswerRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(current_user),
+) -> LiveAnswerResponse:
+    """Registra la respuesta a la pregunta en curso (una por pregunta, dentro
+    del tiempo). El puntaje se calcula con el reloj del servidor."""
+    _require_student(user)
+    return LiveAnswerResponse(**_quick_call(
+        lambda: _quick_service(request).live_answer(
+            user.id, activity_id, payload.question_id, payload.selected_option
+        )
+    ))

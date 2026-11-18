@@ -17,9 +17,57 @@ from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+def _clean_course_code(value: Optional[str]) -> Optional[str]:
+    """HU-C4: el código se guarda en mayúsculas y sin espacios."""
+    if value is None:
+        return None
+    cleaned = "".join(value.split()).upper()
+    return cleaned or None
+
+
 class CourseCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, examples=["Cálculo II - Sección 4"])
     cycle_id: Optional[int] = Field(None, gt=0)
+    # HU-C4: código del curso (p. ej. "SI807U"). Opcional en la API para no
+    # romper clientes anteriores; la interfaz lo pide siempre.
+    code: Optional[str] = Field(None, max_length=32, examples=["SI807U"])
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("El nombre del curso no puede estar vacío.")
+        return cleaned
+
+    @field_validator("code")
+    @classmethod
+    def _normalize_code(cls, value: Optional[str]) -> Optional[str]:
+        return _clean_course_code(value)
+
+
+class CourseUpdateRequest(BaseModel):
+    """HU-C4: modificación parcial del curso (código, nombre, estado).
+    Enviar `code: null` borra el código."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    code: Optional[str] = Field(None, max_length=32)
+    enabled: Optional[bool] = None
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("El nombre del curso no puede estar vacío.")
+        return cleaned
+
+    @field_validator("code")
+    @classmethod
+    def _normalize_code(cls, value: Optional[str]) -> Optional[str]:
+        return _clean_course_code(value)
 
 
 class CourseResponse(BaseModel):
@@ -28,6 +76,8 @@ class CourseResponse(BaseModel):
     created_at: datetime
     cycle_id: Optional[int] = None
     roster_imported: bool = False
+    code: Optional[str] = None
+    enabled: bool = True
 
 
 class CourseMaterialResponse(BaseModel):
@@ -76,6 +126,9 @@ class AcademicCycleCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, examples=["2026-II"])
     starts_on: Optional[date] = None
     ends_on: Optional[date] = None
+    # HU-C2: especialidad elegida en la selección encadenada
+    # universidad → facultad → especialidad.
+    specialty_id: Optional[int] = Field(None, gt=0)
 
     @field_validator("name")
     @classmethod
@@ -101,6 +154,13 @@ class AcademicCycleResponse(BaseModel):
     course_count: int = 0
     # Si el usuario actual puede modificar/eliminar el ciclo (dueño o admin).
     can_manage: bool = False
+    # HU-C2: contexto institucional del ciclo.
+    specialty_id: Optional[int] = None
+    faculty_id: Optional[int] = None
+    university_id: Optional[int] = None
+    specialty_name: Optional[str] = None
+    faculty_name: Optional[str] = None
+    university_name: Optional[str] = None
 
 
 class AcademicCycleStartDateRequest(BaseModel):
@@ -116,6 +176,7 @@ class AcademicCycleUpdateRequest(BaseModel):
     starts_on: Optional[date] = None
     ends_on: Optional[date] = None
     enabled: Optional[bool] = None
+    specialty_id: Optional[int] = Field(default=None, gt=0)
 
     @field_validator("name")
     @classmethod
@@ -141,6 +202,8 @@ class AuthenticatedUserResponse(BaseModel):
 
 
 class TeacherAssignmentResponse(AuthenticatedUserResponse):
+    last_names: Optional[str] = None
+    first_names: Optional[str] = None
     dni: Optional[str] = None
     phone_number: Optional[str] = None
     email: Optional[str] = None
@@ -157,14 +220,30 @@ class TemporaryPasswordResponse(BaseModel):
 
 
 class TeacherCreateRequest(BaseModel):
-    username: str = Field(..., min_length=1, max_length=120)
-    full_name: str = Field(..., min_length=1, max_length=255)
+    """HU-A8: DNI, apellidos, nombres y estado del docente. HU-A4: si no se
+    indica `username`, el usuario es el DNI. `full_name` se acepta para
+    clientes anteriores que no separan apellidos y nombres."""
+
+    username: Optional[str] = Field(None, max_length=120)
+    last_names: Optional[str] = Field(None, max_length=255)
+    first_names: Optional[str] = Field(None, max_length=255)
+    full_name: Optional[str] = Field(None, max_length=255)
     dni: str = Field(..., min_length=1, max_length=32)
     phone_number: Optional[str] = Field(None, max_length=32)
     email: str = Field(..., min_length=3, max_length=255)
-    course_ids: List[int] = Field(..., min_length=1)
+    # Desde HU-C4 el docente registra sus propios cursos: asignar cursos al
+    # crear la cuenta es opcional.
+    course_ids: List[int] = Field(default_factory=list)
 
-    @field_validator("username", "full_name", "email", "dni")
+    @field_validator("username", "last_names", "first_names", "full_name")
+    @classmethod
+    def _strip_optional_values(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = " ".join(value.split())
+        return cleaned or None
+
+    @field_validator("email", "dni")
     @classmethod
     def _strip_required_values(cls, value: str) -> str:
         cleaned = value.strip()
@@ -187,16 +266,38 @@ class TeacherCreateRequest(BaseModel):
         ):
             raise ValueError("Ingresa un correo electrónico válido.")
         return value
+
+    @model_validator(mode="after")
+    def _require_names(self) -> "TeacherCreateRequest":
+        if bool(self.last_names) != bool(self.first_names):
+            raise ValueError("Ingresa apellidos y nombres del docente.")
+        if not self.last_names and not self.full_name:
+            raise ValueError("Ingresa apellidos y nombres del docente.")
+        return self
 
 
 class TeacherUpdateRequest(BaseModel):
-    username: str = Field(..., min_length=1, max_length=120)
-    full_name: str = Field(..., min_length=1, max_length=255)
+    """HU-A8: DNI, apellidos, nombres y estado del docente. HU-A4: si no se
+    indica `username`, el usuario es el DNI. `full_name` se acepta para
+    clientes anteriores que no separan apellidos y nombres."""
+
+    username: Optional[str] = Field(None, max_length=120)
+    last_names: Optional[str] = Field(None, max_length=255)
+    first_names: Optional[str] = Field(None, max_length=255)
+    full_name: Optional[str] = Field(None, max_length=255)
     dni: str = Field(..., min_length=1, max_length=32)
     phone_number: Optional[str] = Field(None, max_length=32)
     email: str = Field(..., min_length=3, max_length=255)
 
-    @field_validator("username", "full_name", "email", "dni")
+    @field_validator("username", "last_names", "first_names", "full_name")
+    @classmethod
+    def _strip_optional_values(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = " ".join(value.split())
+        return cleaned or None
+
+    @field_validator("email", "dni")
     @classmethod
     def _strip_required_values(cls, value: str) -> str:
         cleaned = value.strip()
@@ -219,6 +320,14 @@ class TeacherUpdateRequest(BaseModel):
         ):
             raise ValueError("Ingresa un correo electrónico válido.")
         return value
+
+    @model_validator(mode="after")
+    def _require_names(self) -> "TeacherUpdateRequest":
+        if bool(self.last_names) != bool(self.first_names):
+            raise ValueError("Ingresa apellidos y nombres del docente.")
+        if not self.last_names and not self.full_name:
+            raise ValueError("Ingresa apellidos y nombres del docente.")
+        return self
 
 
 class TeacherActiveRequest(BaseModel):
@@ -861,3 +970,257 @@ class WeeklyGroupExpositionDetailsResponse(BaseModel):
 
 class AvailableMethodsResponse(BaseModel):
     methods: List[str]
+
+
+# --------------------------------------------------------------------------
+# HU-A5 / HU-A6 / HU-A7 — Estructura institucional
+# --------------------------------------------------------------------------
+
+
+class InstitutionCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+
+
+class InstitutionUpdateRequest(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    enabled: Optional[bool] = None
+
+
+class SpecialtyResponse(BaseModel):
+    id: int
+    faculty_id: int
+    name: str
+    enabled: bool
+    cycle_count: int = 0
+
+
+class FacultyResponse(BaseModel):
+    id: int
+    university_id: int
+    name: str
+    enabled: bool
+    specialties: List[SpecialtyResponse] = Field(default_factory=list)
+
+
+class UniversityResponse(BaseModel):
+    id: int
+    name: str
+    enabled: bool
+    faculties: List[FacultyResponse] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
+# Épica 7 — Actividades rápidas (HU-Q3 / HU-Q5; base de HU-Q1 / HU-Q2)
+# --------------------------------------------------------------------------
+
+
+class QuickQuestionRequest(BaseModel):
+    """Pregunta corta. Con `options` es de opción múltiple (2 a 6
+    alternativas, `correct_option` opcional con índice desde 0); sin
+    `options` es de respuesta abierta."""
+
+    prompt: str = Field(..., min_length=1, max_length=1000)
+    options: Optional[List[str]] = Field(None, max_length=6)
+    correct_option: Optional[int] = Field(None, ge=0)
+
+
+class QuickActivityCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    class_session_id: Optional[int] = Field(None, gt=0)
+    allow_multiple_responses: bool = False
+    # `self_paced`: test a su ritmo dentro del rango de tiempo del docente.
+    # `live`: quiz en vivo (una pregunta a la vez, tipo Kahoot/Quizizz).
+    mode: Literal["self_paced", "live"] = "self_paced"
+    question_seconds: Optional[int] = Field(None, ge=5, le=120)
+    questions: List[QuickQuestionRequest] = Field(..., min_length=1, max_length=20)
+
+
+class QuickActivityPublishRequest(BaseModel):
+    duration_minutes: int = Field(10, ge=1, le=240)
+    allow_multiple_responses: Optional[bool] = None
+
+
+class QuickQuestionResponse(BaseModel):
+    id: int
+    position: int
+    prompt: str
+    options: Optional[List[str]] = None
+    correct_option: Optional[int] = None
+
+
+class QuickActivityResponse(BaseModel):
+    id: int
+    course_id: int
+    class_session_id: Optional[int] = None
+    title: str
+    status: Literal["draft", "published", "closed"]
+    # `open` (acepta respuestas), `expired` (venció), `draft` o `closed`.
+    availability: Literal["draft", "open", "expired", "closed"]
+    join_code: Optional[str] = None
+    join_url: Optional[str] = None
+    published_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
+    allow_multiple_responses: bool = False
+    mode: Literal["self_paced", "live"] = "self_paced"
+    question_seconds: Optional[int] = None
+    live_phase: Optional[Literal["lobby", "question", "reveal", "finished"]] = None
+    created_at: datetime
+    response_count: int = 0
+    questions: List[QuickQuestionResponse]
+
+
+class QuickAnswerResponse(BaseModel):
+    question_id: int
+    answer_text: Optional[str] = None
+    selected_option: Optional[int] = None
+    is_correct: Optional[bool] = None
+    points: Optional[int] = None
+    response_ms: Optional[int] = None
+
+
+class QuickActivityStudentResponse(BaseModel):
+    id: int
+    student_id: int
+    student_code: str
+    student_name: str
+    user_id: int
+    attempt: int
+    submitted_at: datetime
+    answers: List[QuickAnswerResponse]
+
+
+class QuickActivityResponsesResponse(BaseModel):
+    activity: QuickActivityResponse
+    enrolled_count: int
+    respondent_count: int
+    responses: List[QuickActivityStudentResponse]
+
+
+class QuickActivityJoinRequest(BaseModel):
+    code: str = Field(..., min_length=1, max_length=32)
+
+
+class StudentQuickQuestionResponse(BaseModel):
+    id: int
+    position: int
+    prompt: str
+    options: Optional[List[str]] = None
+
+
+class StudentQuickActivityResponse(BaseModel):
+    id: int
+    title: str
+    course_id: int
+    course_name: str
+    join_code: str
+    expires_at: datetime
+    allow_multiple_responses: bool
+    mode: Literal["self_paced", "live"] = "self_paced"
+    question_seconds: Optional[int] = None
+    previous_attempts: int
+    questions: List[StudentQuickQuestionResponse]
+
+
+class QuickAnswerRequest(BaseModel):
+    question_id: int
+    answer_text: Optional[str] = Field(None, max_length=2000)
+    selected_option: Optional[int] = Field(None, ge=0)
+
+
+class QuickActivitySubmitRequest(BaseModel):
+    code: str = Field(..., min_length=1, max_length=32)
+    answers: List[QuickAnswerRequest] = Field(..., min_length=1, max_length=20)
+
+
+class QuickActivitySubmitResponse(BaseModel):
+    response_id: int
+    activity_id: int
+    activity_title: str
+    attempt: int
+    submitted_at: datetime
+    answered_count: int
+    can_submit_again: bool
+
+
+class StudentQuickSubmissionResponse(BaseModel):
+    response_id: int
+    activity_id: int
+    activity_title: str
+    course_id: int
+    course_name: str
+    attempt: int
+    submitted_at: datetime
+
+
+# --------------------------------------------------------------------------
+# Quiz en vivo
+# --------------------------------------------------------------------------
+
+LivePhase = Literal["lobby", "question", "reveal", "finished"]
+
+
+class LiveQuestionResponse(BaseModel):
+    id: int
+    position: int
+    prompt: str
+    options: Optional[List[str]] = None
+    correct_option: Optional[int] = None
+
+
+class LiveParticipantResponse(BaseModel):
+    student_name: str
+    student_code: str
+
+
+class LiveRankingRow(BaseModel):
+    rank: int
+    student_name: str
+    student_code: str
+    points: int
+    correct: int
+
+
+class LiveTeacherStateResponse(BaseModel):
+    activity: QuickActivityResponse
+    phase: LivePhase
+    position: Optional[int] = None
+    question_count: int
+    remaining_ms: int
+    participant_count: int
+    participants: List[LiveParticipantResponse]
+    question: Optional[LiveQuestionResponse] = None
+    answered_count: int
+    # Respuestas por alternativa; solo al cerrar la pregunta.
+    distribution: Optional[List[int]] = None
+    leaderboard: List[LiveRankingRow]
+
+
+class LiveStudentStateResponse(BaseModel):
+    activity_id: int
+    title: str
+    phase: LivePhase
+    position: Optional[int] = None
+    question_count: int
+    question_seconds: Optional[int] = None
+    remaining_ms: int
+    question: Optional[LiveQuestionResponse] = None
+    answered: bool
+    selected_option: Optional[int] = None
+    correct_option: Optional[int] = None
+    is_correct: Optional[bool] = None
+    points: Optional[int] = None
+    total_points: Optional[int] = None
+    rank: Optional[int] = None
+    participant_count: int
+    podium: List[LiveRankingRow]
+
+
+class LiveAnswerRequest(BaseModel):
+    question_id: int
+    selected_option: int = Field(..., ge=0, le=5)
+
+
+class LiveAnswerResponse(BaseModel):
+    question_id: int
+    selected_option: int

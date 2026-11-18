@@ -83,6 +83,21 @@ def verify_password(password: str, encoded: str) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
+def _teacher_names(
+    last_names: Optional[str], first_names: Optional[str], full_name: Optional[str]
+) -> tuple[Optional[str], Optional[str], str]:
+    """HU-A8: apellidos y nombres por separado. Si llegan, el nombre para
+    mostrar se arma como "Nombres Apellidos"; si no (clientes anteriores),
+    se conserva el nombre completo recibido."""
+    last_names = " ".join((last_names or "").split()) or None
+    first_names = " ".join((first_names or "").split()) or None
+    if last_names or first_names:
+        if not (last_names and first_names):
+            raise ValueError("Ingresa apellidos y nombres del docente.")
+        return last_names, first_names, f"{first_names} {last_names}"
+    return None, None, " ".join((full_name or "").split())
+
+
 class AuthService:
     def __init__(self, session_factory: SessionFactory):
         self._session_factory = session_factory
@@ -122,23 +137,31 @@ class AuthService:
 
     def create_teacher(
         self,
-        username: str,
-        full_name: str,
+        username: Optional[str],
+        full_name: Optional[str],
         dni: str,
         email: str,
         phone_number: Optional[str],
-        course_ids: List[int],
+        course_ids: Optional[List[int]] = None,
+        last_names: Optional[str] = None,
+        first_names: Optional[str] = None,
     ) -> tuple[dict, str]:
-        username = username.strip()
-        full_name = " ".join(full_name.split())
-        dni = dni.strip().upper()
-        email = email.strip()
-        if not username or not full_name or not dni or not email:
-            raise ValueError("Usuario, nombre, DNI y correo son obligatorios.")
-        if not course_ids:
-            raise ValueError("Asigna al menos un curso al docente.")
+        """HU-A8 + HU-A4: registra al docente y crea su usuario.
 
-        temporary_password = secrets.token_urlsafe(18)
+        * El usuario es el DNI del docente, salvo que el Administrador indique
+          otro explícitamente (cuentas anteriores al Sprint 6).
+        * La contraseña inicial es igual al usuario (criterio de HU-A4); se
+          guarda solo su hash y el docente debe cambiarla al primer ingreso.
+        * Los cursos son opcionales: desde HU-C4 el docente registra los suyos.
+        """
+        dni = (dni or "").strip().upper()
+        username = (username or "").strip() or dni
+        last_names, first_names, full_name = _teacher_names(last_names, first_names, full_name)
+        email = (email or "").strip()
+        course_ids = list(course_ids or [])
+        if not username or not full_name or not dni or not email:
+            raise ValueError("DNI, apellidos, nombres y correo son obligatorios.")
+        temporary_password = username
         with self._session_factory() as session:
             if session.execute(
                 select(UserORM.id).where(UserORM.username == username)
@@ -159,10 +182,12 @@ class AuthService:
             teacher = UserORM(
                 username=username,
                 full_name=full_name,
+                last_names=last_names,
+                first_names=first_names,
                 dni=dni,
                 email=email,
                 phone_number=phone_number.strip() if phone_number and phone_number.strip() else None,
-                password_hash=hash_password(temporary_password),
+                password_hash=hash_initial_student_password(temporary_password),
                 must_change_password=True,
                 role_id=teacher_role_id,
             )
@@ -597,6 +622,8 @@ class AuthService:
                     "id": teacher.id,
                     "username": teacher.username,
                     "full_name": teacher.full_name,
+                    "last_names": teacher.last_names,
+                    "first_names": teacher.first_names,
                     "dni": teacher.dni,
                     "phone_number": teacher.phone_number,
                     "email": teacher.email,
@@ -609,18 +636,20 @@ class AuthService:
     def update_teacher(
         self,
         teacher_id: int,
-        username: str,
-        full_name: str,
+        username: Optional[str],
+        full_name: Optional[str],
         dni: str,
         email: str,
         phone_number: Optional[str],
+        last_names: Optional[str] = None,
+        first_names: Optional[str] = None,
     ) -> dict:
-        username = username.strip()
-        full_name = " ".join(full_name.split())
-        dni = dni.strip().upper()
-        email = email.strip()
+        dni = (dni or "").strip().upper()
+        username = (username or "").strip() or dni
+        last_names, first_names, full_name = _teacher_names(last_names, first_names, full_name)
+        email = (email or "").strip()
         if not username or not full_name or not dni or not email:
-            raise ValueError("Usuario, nombre, DNI y correo son obligatorios.")
+            raise ValueError("DNI, apellidos, nombres y correo son obligatorios.")
         with self._session_factory() as session:
             teacher = session.execute(
                 select(UserORM)
@@ -650,6 +679,8 @@ class AuthService:
                 raise ValueError("Ese DNI/identificador ya está asociado a una cuenta.")
             teacher.username = username
             teacher.full_name = full_name
+            teacher.last_names = last_names
+            teacher.first_names = first_names
             teacher.dni = dni
             teacher.email = email
             teacher.phone_number = (
@@ -699,6 +730,19 @@ class AuthService:
             session.commit()
             return True
 
+    def add_course_assignment(self, teacher_id: int, course_id: int) -> None:
+        """HU-C4: el curso que registra un docente queda asignado a él."""
+        with self._session_factory() as session:
+            exists = session.execute(
+                select(TeacherCourseORM.teacher_id).where(
+                    TeacherCourseORM.teacher_id == teacher_id,
+                    TeacherCourseORM.course_id == course_id,
+                )
+            ).scalar_one_or_none()
+            if exists is None:
+                session.add(TeacherCourseORM(teacher_id=teacher_id, course_id=course_id))
+                session.commit()
+
     @staticmethod
     def _validate_course_ids(session: Session, course_ids: List[int]) -> None:
         existing_ids = set(
@@ -714,6 +758,8 @@ class AuthService:
             "id": teacher.id,
             "username": teacher.username,
             "full_name": teacher.full_name,
+            "last_names": teacher.last_names,
+            "first_names": teacher.first_names,
             "dni": teacher.dni,
             "phone_number": teacher.phone_number,
             "email": teacher.email,

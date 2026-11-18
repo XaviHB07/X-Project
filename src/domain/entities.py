@@ -30,6 +30,10 @@ class Course:
     created_at: datetime
     cycle_id: Optional[int] = None
     roster_imported_at: Optional[datetime] = None
+    # HU-C4: código del curso y estado (deshabilitar lo da de baja sin
+    # borrarlo). Los cursos del MVP 1 no tienen código.
+    code: Optional[str] = None
+    enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -86,6 +90,8 @@ class AcademicCycle:
     ends_on: Optional[date] = None
     enabled: bool = True
     owner_teacher_id: Optional[int] = None
+    # HU-C2: especialidad (y por ella facultad y universidad) del ciclo.
+    specialty_id: Optional[int] = None
 
 
 @dataclass(frozen=True)

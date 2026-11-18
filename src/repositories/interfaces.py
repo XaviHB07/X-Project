@@ -63,6 +63,14 @@ class AcademicCycleInUseError(ValueError):
     """El ciclo tiene cursos asociados y no puede eliminarse (HU-C3)."""
 
 
+class DuplicateCourseCodeError(ValueError):
+    """Ya existe un curso con ese código dentro del mismo ciclo (HU-C4)."""
+
+
+class CourseInUseError(ValueError):
+    """El curso tiene datos asociados y no puede eliminarse (HU-C4)."""
+
+
 class ParticipationDecisionNotFoundError(ValueError):
     """La decisión no existe o no pertenece al curso indicado."""
 
@@ -75,10 +83,41 @@ class CourseRepository(ABC):
     """Persistencia de cursos (el contenedor de estudiantes)."""
 
     @abstractmethod
-    def create(self, name: str, cycle_id: Optional[int] = None) -> Course: ...
+    def create(
+        self, name: str, cycle_id: Optional[int] = None, code: Optional[str] = None
+    ) -> Course:
+        """Lanza `DuplicateCourseCodeError` si el código ya existe en el ciclo."""
+        ...
 
     @abstractmethod
     def get(self, course_id: int) -> Optional[Course]: ...
+
+    @abstractmethod
+    def update(
+        self,
+        course_id: int,
+        *,
+        name: Optional[str] = None,
+        code: Optional[str] = None,
+        enabled: Optional[bool] = None,
+        clear_code: bool = False,
+    ) -> Optional[Course]:
+        """HU-C4: modifica solo los campos indicados. Devuelve `None` si el
+        curso no existe; lanza `DuplicateCourseCodeError` si el código ya lo
+        usa otro curso del mismo ciclo."""
+        ...
+
+    @abstractmethod
+    def count_associated_data(self, course_id: int) -> int:
+        """Cantidad de registros que dependen del curso (matrículas,
+        sesiones, materiales, evaluaciones, grupos, actividades...)."""
+        ...
+
+    @abstractmethod
+    def delete(self, course_id: int) -> bool:
+        """HU-C4: elimina el curso solo si no tiene datos asociados (lanza
+        `CourseInUseError`); devuelve `False` si no existe."""
+        ...
 
     @abstractmethod
     def list_all(self) -> List[Course]:
@@ -164,6 +203,7 @@ class AcademicCycleRepository(ABC):
         starts_on: Optional[date] = None,
         ends_on: Optional[date] = None,
         owner_teacher_id: Optional[int] = None,
+        specialty_id: Optional[int] = None,
     ) -> AcademicCycle: ...
 
     @abstractmethod
@@ -185,6 +225,7 @@ class AcademicCycleRepository(ABC):
         ends_on: Optional[date] = None,
         enabled: Optional[bool] = None,
         clear_ends_on: bool = False,
+        specialty_id: Optional[int] = None,
     ) -> Optional[AcademicCycle]:
         """Modifica solo los campos indicados (HU-C3). Devuelve `None` si el
         ciclo no existe; lanza `DuplicateAcademicCycleError` si el nuevo
