@@ -72,6 +72,7 @@ from src.api.schemas import (
     QuickActivityPublishRequest,
     QuickActivityResponse,
     QuickActivityResponsesResponse,
+    QuickActivityResultsResponse,
     QuickActivitySubmitRequest,
     QuickActivitySubmitResponse,
     SpecialtyResponse,
@@ -2741,6 +2742,23 @@ def list_quick_activity_responses(
     del estudiante que la envió (insumo de los resultados de HU-Q4)."""
     return QuickActivityResponsesResponse(**_quick_call(
         lambda: _quick_service(request).responses(course_id, activity_id)
+    ))
+
+
+@app.get(
+    "/courses/{course_id}/quick-activities/{activity_id}/results",
+    response_model=QuickActivityResultsResponse,
+    tags=["actividades rápidas"],
+    dependencies=[Depends(require_course_access)],
+)
+def quick_activity_results(
+    course_id: int, activity_id: int, request: Request
+) -> QuickActivityResultsResponse:
+    """HU-Q4: resultados para conocer el nivel de comprensión del grupo:
+    participación, % de aciertos y distribución por pregunta, aciertos por
+    estudiante y promedio del grupo con su nivel (alto/medio/bajo)."""
+    return QuickActivityResultsResponse(**_quick_call(
+        lambda: _quick_service(request).results(course_id, activity_id)
     ))
 
 

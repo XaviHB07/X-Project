@@ -126,7 +126,7 @@ function renderLiveStage() {
     </div>`;
   advance.textContent = "Cerrar pantalla";
   advance.disabled = false;
-  status.textContent = `${data.participant_count} participante${data.participant_count === 1 ? "" : "s"}. Las respuestas quedan en "Ver respuestas".`;
+  status.textContent = `${data.participant_count} participante${data.participant_count === 1 ? "" : "s"}. Los resultados quedan en "Resultados".`;
 }
 
 async function fetchLiveTeacher() {

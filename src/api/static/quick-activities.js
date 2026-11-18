@@ -19,6 +19,9 @@ const quickState = {
   drafts: [],
   responsesFor: null,
   responses: null,
+  // HU-Q4: el panel muestra "results" (resumen) o "responses" (detalle).
+  panelView: "results",
+  results: null,
   tickTimer: null,
   pollTimer: null,
   joined: null,
@@ -114,6 +117,7 @@ function resetQuickActivities(reloadIfVisible = false) {
   quickState.activities = [];
   quickState.responsesFor = null;
   quickState.responses = null;
+  quickState.results = null;
   if (!quickState.drafts.length) quickState.drafts = [newQuestionDraft()];
   renderQuickActivities();
   if (reloadIfVisible && state.courseView === "quick" && state.course) loadQuickActivities();
@@ -215,7 +219,7 @@ function renderQuickActivities() {
         ${activity.status === "published" ? `
           <button class="button button-quiet" type="button" data-close-quick="${activity.id}">Cerrar</button>` : ""}
         ${activity.status !== "draft" ? `
-          <button class="button button-quiet" type="button" data-view-quick="${activity.id}">Ver respuestas</button>` : ""}
+          <button class="button button-quiet" type="button" data-view-quick="${activity.id}">Resultados</button>` : ""}
       </div>
     </article>`;
   }).join("");
@@ -223,9 +227,140 @@ function renderQuickActivities() {
   scheduleQuickTimers();
 }
 
+function percent(value) {
+  return value === null || value === undefined ? "—" : `${Math.round(value * 100)} %`;
+}
+
+function rateTone(value) {
+  if (value === null || value === undefined) return "";
+  if (value >= 0.75) return "is-high";
+  if (value >= 0.5) return "is-medium";
+  return "is-low";
+}
+
+function panelHeading(activity, eyebrow, note) {
+  const view = quickState.panelView;
+  return `
+    <div class="panel-heading">
+      <div>
+        <p class="eyebrow">${eyebrow}</p>
+        <h3>${escapeHtml(activity.title)}</h3>
+        <p class="form-note">${note}</p>
+      </div>
+      <div class="cycle-actions">
+        <div class="quick-panel-switch" role="group" aria-label="Vista de resultados">
+          <button class="button button-quiet ${view === "results" ? "is-active" : ""}" type="button" data-panel-view="results" aria-pressed="${view === "results"}">Resumen</button>
+          <button class="button button-quiet ${view === "responses" ? "is-active" : ""}" type="button" data-panel-view="responses" aria-pressed="${view === "responses"}">Respuestas por estudiante</button>
+        </div>
+        <button class="button button-quiet" type="button" data-refresh-responses="${activity.id}">Actualizar</button>
+        <button class="button button-quiet" type="button" data-hide-responses>Ocultar</button>
+      </div>
+    </div>`;
+}
+
+// HU-Q4: resumen para conocer el nivel de comprensión del grupo.
+function renderResultsHtml(data) {
+  const levels = { alto: "Comprensión alta", medio: "Comprensión media", bajo: "Comprensión baja" };
+  const live = data.activity.mode === "live";
+  const note = `${data.respondent_count} de ${data.enrolled_count} estudiante${data.enrolled_count === 1 ? "" : "s"} matriculado${data.enrolled_count === 1 ? "" : "s"} participaron. Los porcentajes se calculan sobre quienes participaron${live ? "; no responder a tiempo cuenta como no acertar" : ""}.`;
+  const hardest = data.questions.find((question) => question.position === data.hardest_question_position);
+  const cards = `
+    <div class="quick-result-cards">
+      <div class="quick-result-card">
+        <span>Participación</span>
+        <strong>${data.respondent_count} / ${data.enrolled_count}</strong>
+        <small>${percent(data.participation_rate)} del curso</small>
+      </div>
+      <div class="quick-result-card ${rateTone(data.group_score)}">
+        <span>Aciertos promedio del grupo</span>
+        <strong>${percent(data.group_score)}</strong>
+        <small>${data.comprehension_level ? levels[data.comprehension_level] : data.scored_question_count ? "Sin participantes todavía" : "Sin preguntas calificables"}</small>
+      </div>
+      <div class="quick-result-card">
+        <span>Preguntas calificadas</span>
+        <strong>${data.scored_question_count} de ${data.questions.length}</strong>
+        <small>${data.open_question_count ? `${data.open_question_count} abierta${data.open_question_count === 1 ? "" : "s"}, sin calificar` : "Todas con respuesta correcta"}</small>
+      </div>
+      <div class="quick-result-card ${hardest ? rateTone(hardest.correct_rate) : ""}">
+        <span>Pregunta con menos aciertos</span>
+        <strong>${hardest ? `P${hardest.position}` : "—"}</strong>
+        <small>${hardest ? `${percent(hardest.correct_rate)} de aciertos` : "Sin datos"}</small>
+      </div>
+    </div>`;
+  const questionHtml = data.questions.map((question) => {
+    const header = `
+      <div class="quick-result-question-head">
+        <strong>P${question.position}. ${escapeHtml(question.prompt)}</strong>
+        ${question.correct_rate !== null && question.correct_rate !== undefined
+          ? `<span class="quick-rate ${rateTone(question.correct_rate)}">${percent(question.correct_rate)} aciertos</span>`
+          : `<span class="quick-rate">Sin calificar</span>`}
+      </div>`;
+    if (question.kind === "choice") {
+      const base = data.respondent_count || 1;
+      return `<li class="quick-result-question">${header}
+        <div class="quick-result-options">
+          ${question.options.map((option, index) => {
+            const count = question.distribution?.[index] ?? 0;
+            const correct = index === question.correct_option;
+            return `
+            <div class="quick-result-option ${correct ? "is-correct" : ""}">
+              <span class="quick-result-option-label">${OPTION_LETTERS[index]}. ${escapeHtml(option)}${correct ? " ✓" : ""}</span>
+              <span class="quick-result-bar" aria-hidden="true"><span style="width:${Math.round((count / base) * 100)}%"></span></span>
+              <span class="quick-result-count">${count} · ${Math.round((count / base) * 100)} %</span>
+            </div>`;
+          }).join("")}
+        </div>
+        <p class="form-note">${question.answered_count} respondieron esta pregunta.</p>
+      </li>`;
+    }
+    return `<li class="quick-result-question">${header}
+      <details class="quick-open-answers" ${question.open_answers.length <= 5 ? "open" : ""}>
+        <summary>${question.open_answers.length} respuesta${question.open_answers.length === 1 ? "" : "s"} abierta${question.open_answers.length === 1 ? "" : "s"} · se leen y califican aparte</summary>
+        <ul>${question.open_answers.map((answer) => `
+          <li><strong>${escapeHtml(answer.student_name)}</strong> <small>${escapeHtml(answer.student_code)}</small><p>${escapeHtml(answer.answer_text)}</p></li>`).join("")}
+        </ul>
+      </details>
+    </li>`;
+  }).join("");
+  const studentRows = data.students.map((student) => `
+    <tr>
+      <th scope="row"><strong>${escapeHtml(student.student_name)}</strong><small>${escapeHtml(student.student_code)}</small></th>
+      <td>${student.correct_count === null ? "—" : `${student.correct_count} / ${data.scored_question_count}`}</td>
+      <td><span class="quick-rate ${rateTone(student.score_rate)}">${percent(student.score_rate)}</span></td>
+      ${live ? `<td>${student.points ?? 0}</td>` : `<td>${student.attempt > 1 ? `#${student.attempt}` : "1"}</td>`}
+    </tr>`).join("");
+  return `
+    ${panelHeading(data.activity, "RESULTADOS DE LA ACTIVIDAD", note)}
+    ${cards}
+    ${data.respondent_count ? `
+      <h4 class="quick-result-subtitle">Por pregunta</h4>
+      <ol class="quick-result-questions">${questionHtml}</ol>
+      <h4 class="quick-result-subtitle">Por estudiante</h4>
+      <div class="quick-table-wrap">
+        <table class="quick-response-table">
+          <thead><tr>
+            <th scope="col">Estudiante</th><th scope="col">Aciertos</th><th scope="col">% aciertos</th>
+            <th scope="col">${live ? "Puntos" : "Envío contado"}</th>
+          </tr></thead>
+          <tbody>${studentRows}</tbody>
+        </table>
+      </div>` : '<p class="history-none">Todavía no hay respuestas registradas.</p>'}`;
+}
+
 function renderQuickResponses() {
   const panel = $("#quick-responses");
   if (!panel) return;
+  if (quickState.panelView === "results") {
+    const results = quickState.results;
+    if (!results || results.activity.id !== quickState.responsesFor) {
+      panel.hidden = true;
+      panel.innerHTML = "";
+      return;
+    }
+    panel.hidden = false;
+    panel.innerHTML = renderResultsHtml(results);
+    return;
+  }
   const data = quickState.responses;
   if (!data || data.activity.id !== quickState.responsesFor) {
     panel.hidden = true;
@@ -246,17 +381,11 @@ function renderQuickResponses() {
   };
   panel.hidden = false;
   panel.innerHTML = `
-    <div class="panel-heading">
-      <div>
-        <p class="eyebrow">RESPUESTAS REGISTRADAS</p>
-        <h3>${escapeHtml(data.activity.title)}</h3>
-        <p class="form-note">${data.respondent_count} de ${data.enrolled_count} estudiante${data.enrolled_count === 1 ? "" : "s"} matriculado${data.enrolled_count === 1 ? "" : "s"} ${data.respondent_count === 1 ? "respondió" : "respondieron"} · ${data.responses.length} envío${data.responses.length === 1 ? "" : "s"}.</p>
-      </div>
-      <div class="cycle-actions">
-        <button class="button button-quiet" type="button" data-refresh-responses="${data.activity.id}">Actualizar</button>
-        <button class="button button-quiet" type="button" data-hide-responses>Ocultar</button>
-      </div>
-    </div>
+    ${panelHeading(
+      data.activity,
+      "RESPUESTAS REGISTRADAS",
+      `${data.respondent_count} de ${data.enrolled_count} estudiante${data.enrolled_count === 1 ? "" : "s"} matriculado${data.enrolled_count === 1 ? "" : "s"} ${data.respondent_count === 1 ? "respondió" : "respondieron"} · ${data.responses.length} envío${data.responses.length === 1 ? "" : "s"}.`,
+    )}
     ${data.responses.length ? `
       <div class="quick-table-wrap">
         <table class="quick-response-table">
@@ -316,8 +445,9 @@ async function loadQuickActivities({ quiet = false } = {}) {
     if (state.course?.id !== courseId) return;
     quickState.activities = activities;
     if (quickState.responsesFor) {
-      quickState.responses = await api(
-        `/courses/${courseId}/quick-activities/${quickState.responsesFor}/responses`,
+      const kind = quickState.panelView === "results" ? "results" : "responses";
+      quickState[kind] = await api(
+        `/courses/${courseId}/quick-activities/${quickState.responsesFor}/${kind}`,
       );
     }
     renderQuickActivities();
@@ -476,6 +606,7 @@ $("#quick-activity-list")?.addEventListener("click", async (event) => {
   }
   if (viewButton) {
     quickState.responsesFor = Number(viewButton.dataset.viewQuick);
+    quickState.panelView = "results";
     await loadQuickActivities();
     $("#quick-responses")?.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
@@ -497,7 +628,14 @@ $("#quick-responses")?.addEventListener("click", (event) => {
   if (event.target.closest("[data-hide-responses]")) {
     quickState.responsesFor = null;
     quickState.responses = null;
+    quickState.results = null;
     renderQuickResponses();
+    return;
+  }
+  const switchButton = event.target.closest("[data-panel-view]");
+  if (switchButton) {
+    quickState.panelView = switchButton.dataset.panelView;
+    loadQuickActivities();
     return;
   }
   if (event.target.closest("[data-refresh-responses]")) loadQuickActivities();

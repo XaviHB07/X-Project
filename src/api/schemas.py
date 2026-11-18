@@ -1224,3 +1224,53 @@ class LiveAnswerRequest(BaseModel):
 class LiveAnswerResponse(BaseModel):
     question_id: int
     selected_option: int
+
+
+# --------------------------------------------------------------------------
+# HU-Q4 — Resultados de la actividad rápida
+# --------------------------------------------------------------------------
+
+
+class QuickOpenAnswerResponse(BaseModel):
+    student_name: str
+    student_code: str
+    answer_text: str
+
+
+class QuickQuestionResultResponse(BaseModel):
+    id: int
+    position: int
+    prompt: str
+    kind: Literal["choice", "open"]
+    options: Optional[List[str]] = None
+    correct_option: Optional[int] = None
+    answered_count: int
+    distribution: Optional[List[int]] = None
+    correct_count: Optional[int] = None
+    # Aciertos / estudiantes que participaron (0–1); None si no se califica.
+    correct_rate: Optional[float] = None
+    open_answers: List[QuickOpenAnswerResponse] = Field(default_factory=list)
+
+
+class QuickStudentResultResponse(BaseModel):
+    student_name: str
+    student_code: str
+    attempt: int
+    answered_count: int
+    correct_count: Optional[int] = None
+    score_rate: Optional[float] = None
+    points: Optional[int] = None
+
+
+class QuickActivityResultsResponse(BaseModel):
+    activity: QuickActivityResponse
+    enrolled_count: int
+    respondent_count: int
+    participation_rate: Optional[float] = None
+    scored_question_count: int
+    open_question_count: int
+    group_score: Optional[float] = None
+    comprehension_level: Optional[Literal["alto", "medio", "bajo"]] = None
+    hardest_question_position: Optional[int] = None
+    questions: List[QuickQuestionResultResponse]
+    students: List[QuickStudentResultResponse]

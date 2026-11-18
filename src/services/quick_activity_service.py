@@ -68,6 +68,12 @@ MIN_QUESTION_SECONDS = 5
 MAX_QUESTION_SECONDS = 120
 MAX_POINTS = 1000
 LEADERBOARD_SIZE = 10
+# HU-Q4: bandas para resumir el nivel de comprensión del grupo según el
+# porcentaje promedio de aciertos. Es un criterio provisional del equipo
+# (alto ≥ 75 %, medio 50–74 %, bajo < 50 %), fácil de ajustar si el docente
+# del curso define otro.
+COMPREHENSION_HIGH = 0.75
+COMPREHENSION_MEDIUM = 0.50
 
 
 class QuickActivityNotFoundError(LookupError):
@@ -301,6 +307,145 @@ class QuickActivityService:
                     }
                     for row in rows
                 ],
+            }
+
+    # ------------------------------------------------------------------
+    # HU-Q4 — Resultados de la actividad
+    # ------------------------------------------------------------------
+
+    def results(self, course_id: int, activity_id: int) -> dict:
+        """Resumen para que el docente conozca el nivel de comprensión del
+        grupo a partir de las respuestas registradas (HU-Q3).
+
+        * Participación: estudiantes que respondieron / matriculados activos.
+        * Por pregunta: cuántos respondieron, cuántos eligieron cada
+          alternativa y el % de aciertos sobre quienes participaron (en vivo,
+          no responder a tiempo cuenta como no acertar).
+        * Por estudiante: aciertos sobre las preguntas calificables.
+        * Grupo: promedio del % de aciertos de los estudiantes y su nivel.
+
+        Solo se califican las preguntas de opción múltiple con alternativa
+        correcta. Las abiertas se listan para leerlas, sin nota, hasta que se
+        califiquen (HU-E2/HU-E3). Si el test admitía varios envíos, cuenta el
+        último envío de cada estudiante.
+        """
+        with self._session_factory() as session:
+            activity = self._activity_in_course(session, course_id, activity_id)
+            rows = session.execute(
+                select(QuickActivityResponseORM)
+                .where(QuickActivityResponseORM.activity_id == activity.id)
+                .options(
+                    selectinload(QuickActivityResponseORM.answers),
+                    selectinload(QuickActivityResponseORM.student),
+                )
+                .order_by(QuickActivityResponseORM.attempt)
+            ).scalars().all()
+            enrolled = int(session.execute(
+                select(func.count(StudentORM.id)).where(
+                    StudentORM.course_id == course_id, StudentORM.active.is_(True)
+                )
+            ).scalar_one())
+            latest = {}
+            for row in rows:
+                latest[row.student_id] = row  # queda el intento más alto
+            participants = list(latest.values())
+            scored = [q for q in activity.questions if q.options and q.correct_option is not None]
+            scored_ids = {q.id for q in scored}
+
+            questions = []
+            for question in activity.questions:
+                answers = [
+                    (row, answer)
+                    for row in participants
+                    for answer in row.answers
+                    if answer.question_id == question.id
+                ]
+                item = {
+                    "id": question.id,
+                    "position": question.position,
+                    "prompt": question.prompt,
+                    "kind": "choice" if question.options else "open",
+                    "options": question.options,
+                    "correct_option": question.correct_option,
+                    "answered_count": len(answers),
+                    "distribution": None,
+                    "correct_count": None,
+                    "correct_rate": None,
+                    "open_answers": [],
+                }
+                if question.options:
+                    distribution = [0] * len(question.options)
+                    for _, answer in answers:
+                        if answer.selected_option is not None and answer.selected_option < len(distribution):
+                            distribution[answer.selected_option] += 1
+                    item["distribution"] = distribution
+                    if question.id in scored_ids:
+                        correct = distribution[question.correct_option]
+                        item["correct_count"] = correct
+                        item["correct_rate"] = (
+                            round(correct / len(participants), 4) if participants else None
+                        )
+                else:
+                    item["open_answers"] = [
+                        {
+                            "student_name": row.student.display_name,
+                            "student_code": row.student.external_ref,
+                            "answer_text": answer.answer_text or "",
+                        }
+                        for row, answer in sorted(
+                            answers, key=lambda pair: pair[0].student.display_name
+                        )
+                    ]
+                questions.append(item)
+
+            students = []
+            for row in participants:
+                correct = sum(
+                    1 for answer in row.answers
+                    if answer.question_id in scored_ids and answer.is_correct
+                )
+                students.append({
+                    "student_name": row.student.display_name,
+                    "student_code": row.student.external_ref,
+                    "attempt": row.attempt,
+                    "answered_count": len(row.answers),
+                    "correct_count": correct if scored else None,
+                    "score_rate": round(correct / len(scored), 4) if scored else None,
+                    "points": (
+                        sum(answer.points or 0 for answer in row.answers)
+                        if activity.mode == MODE_LIVE else None
+                    ),
+                })
+            students.sort(key=lambda item: (
+                -(item["score_rate"] or 0), -(item["points"] or 0), item["student_name"]
+            ))
+
+            group_score = (
+                round(sum(item["score_rate"] for item in students) / len(students), 4)
+                if scored and students else None
+            )
+            if group_score is None:
+                level = None
+            elif group_score >= COMPREHENSION_HIGH:
+                level = "alto"
+            elif group_score >= COMPREHENSION_MEDIUM:
+                level = "medio"
+            else:
+                level = "bajo"
+            rated = [item for item in questions if item["correct_rate"] is not None]
+            hardest = min(rated, key=lambda item: (item["correct_rate"], item["position"])) if rated else None
+            return {
+                "activity": self._teacher_view(session, activity),
+                "enrolled_count": enrolled,
+                "respondent_count": len(participants),
+                "participation_rate": round(len(participants) / enrolled, 4) if enrolled else None,
+                "scored_question_count": len(scored),
+                "open_question_count": sum(1 for q in activity.questions if not q.options),
+                "group_score": group_score,
+                "comprehension_level": level,
+                "hardest_question_position": hardest["position"] if hardest else None,
+                "questions": questions,
+                "students": students,
             }
 
     # ------------------------------------------------------------------

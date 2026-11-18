@@ -386,6 +386,7 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |POST|`/student/quick-activities/join`|**HU-Q5**: unirse con código (vigencia, pertenencia, envío único)|
 |POST|`/student/quick-activities/{aid}/responses`|**HU-Q3**: registrar las respuestas del estudiante|
 |GET|`/student/quick-activities/responses`|Estudiante: sus envíos|
+|GET|`/courses/{id}/quick-activities/{aid}/results`|**HU-Q4**: resultados (participación, % de aciertos por pregunta y por estudiante, nivel de comprensión del grupo)|
 |GET|`/courses/{id}/quick-activities/{aid}/qr.svg`|**HU-Q2**: QR del enlace de ingreso|
 |GET|`/courses/{id}/quick-activities/{aid}/live`|Quiz en vivo: estado para la pantalla del docente|
 |POST|`/courses/{id}/quick-activities/{aid}/live/advance`|Quiz en vivo: sala → pregunta → resultados → … → podio|
@@ -494,6 +495,19 @@ La generación con IA (HU-Q1) solo debe enviar sus preguntas a
   sincronización es por consultas cortas (pantalla del docente cada 1 s,
   celulares cada 1,5 s), sin WebSockets. Conviene probarla en Render con un
   curso completo antes de usarla en clase.
+
+**Resultados (HU-Q4).** El botón **Resultados** de cada actividad muestra un
+resumen para conocer el nivel de comprensión del grupo: participación (quienes
+respondieron sobre los matriculados activos), promedio de aciertos del grupo
+con su nivel (alto ≥ 75 %, medio 50–74 %, bajo < 50 %, criterio provisional
+del equipo), la pregunta con menos aciertos, la distribución de respuestas y
+el % de aciertos de cada pregunta, y los aciertos de cada estudiante. Los
+porcentajes se calculan sobre quienes participaron; en el quiz en vivo, no
+responder a tiempo cuenta como no acertar. Solo se califican las preguntas de
+opción múltiple con alternativa correcta. Las abiertas se listan para leerlas,
+sin nota, hasta que exista la calificación con IA (HU-E2/HU-E3). Si un test
+admitía reenvíos, cuenta el último envío. "Respuestas por estudiante" muestra
+el detalle de HU-Q3.
 
 **Código QR (HU-Q2).** Al publicar, la actividad muestra un QR (generado en el
 servidor con `segno`, `GET /courses/{id}/quick-activities/{aid}/qr.svg`) con

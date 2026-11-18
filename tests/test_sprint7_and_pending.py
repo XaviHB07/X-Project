@@ -836,3 +836,108 @@ class TestQrYQuizEnVivo:
             "/student/quick-activities/join", json={"code": quiz["join_code"]}
         ).status_code == 403
         assert client.get(f"/student/quick-activities/{quiz['id']}/live").status_code == 403
+
+
+# --------------------------------------------------------------------------
+# HU-Q4 — Resultados de la actividad
+# --------------------------------------------------------------------------
+
+
+class TestResultadosActividad:
+    def test_self_paced_results_summarize_group_comprehension(self, client: TestClient):
+        _, course = _teacher_course(client)
+        for code, name in (("20200001A", "Ana"), ("20200002B", "Beto"), ("20200003C", "Carla")):
+            _enroll_and_login_student(client, course["id"], code, name)
+        activity = _published_activity(client, course["id"], allow_multiple_responses=True)
+        open_q, choice_q = activity["questions"]
+
+        def send(code, option, text="respuesta"):
+            _login_student(client, code)
+            assert client.post(
+                f"/student/quick-activities/{activity['id']}/responses",
+                json={"code": activity["join_code"], "answers": [
+                    {"question_id": open_q["id"], "answer_text": text},
+                    {"question_id": choice_q["id"], "selected_option": option},
+                ]},
+            ).status_code == 201
+
+        send("20200001A", 0, "Extraer y cargar")  # primero falla…
+        send("20200001A", 1, "Extraer, transformar y cargar")  # …y su último envío acierta
+        send("20200002B", 2)
+        # Carla no responde.
+
+        _login_as_teacher(client)
+        results = client.get(
+            f"/courses/{course['id']}/quick-activities/{activity['id']}/results"
+        )
+        assert results.status_code == 200, results.text
+        data = results.json()
+        assert data["enrolled_count"] == 3 and data["respondent_count"] == 2
+        assert data["participation_rate"] == round(2 / 3, 4)
+        assert data["scored_question_count"] == 1 and data["open_question_count"] == 1
+        assert data["group_score"] == 0.5 and data["comprehension_level"] == "medio"
+        assert data["hardest_question_position"] == 2
+
+        open_result, choice_result = data["questions"]
+        assert open_result["kind"] == "open" and open_result["correct_rate"] is None
+        assert [a["answer_text"] for a in open_result["open_answers"]] == [
+            "Extraer, transformar y cargar", "respuesta",
+        ]
+        # Cuenta el último envío de Ana (opción 1), no el primero.
+        assert choice_result["distribution"] == [0, 1, 1]
+        assert choice_result["correct_count"] == 1 and choice_result["correct_rate"] == 0.5
+
+        assert [s["student_name"] for s in data["students"]] == ["Ana", "Beto"]
+        assert data["students"][0]["attempt"] == 2
+        assert data["students"][0]["score_rate"] == 1.0
+        assert data["students"][1]["correct_count"] == 0
+
+    def test_live_results_count_missing_answers_as_not_correct(self, client: TestClient):
+        clock = _Clock()
+        client.app.state.app_context.quick_activity_service._clock = clock
+        _, course = _teacher_course(client)
+        _enroll_and_login_student(client, course["id"], "20200001A", "Ana")
+        _enroll_and_login_student(client, course["id"], "20200002B", "Beto")
+        quiz = _live_quiz(client, course["id"])
+        base = f"/courses/{course['id']}/quick-activities/{quiz['id']}"
+        for code in ("20200001A", "20200002B"):
+            _login_student(client, code)
+            client.post("/student/quick-activities/join", json={"code": quiz["join_code"]})
+        _login_as_teacher(client)
+        q1 = client.post(f"{base}/live/advance").json()
+        _login_student(client, "20200001A")
+        client.post(
+            f"/student/quick-activities/{quiz['id']}/live/answers",
+            json={"question_id": q1["question"]["id"], "selected_option": 1},
+        )
+        # Beto no responde la pregunta 1; nadie responde la 2.
+        _login_as_teacher(client)
+        for _ in range(3):
+            client.post(f"{base}/live/advance")
+
+        data = client.get(f"{base}/results").json()
+        assert data["respondent_count"] == 2
+        first, second = data["questions"]
+        assert first["correct_count"] == 1 and first["correct_rate"] == 0.5
+        assert second["answered_count"] == 0 and second["correct_rate"] == 0.0
+        assert data["group_score"] == 0.25 and data["comprehension_level"] == "bajo"
+        assert data["students"][0]["student_name"] == "Ana"
+        assert data["students"][0]["points"] == 1000
+
+    def test_results_without_responses_and_access(self, client: TestClient):
+        _, course = _teacher_course(client)
+        activity = _published_activity(client, course["id"])
+        empty = client.get(
+            f"/courses/{course['id']}/quick-activities/{activity['id']}/results"
+        ).json()
+        assert empty["respondent_count"] == 0
+        assert empty["group_score"] is None and empty["comprehension_level"] is None
+        _create_second_teacher(client)
+        client.cookies.clear()
+        client.post(
+            "/auth/login",
+            json={"username": "teacher2", "password": "test-teacher2-password-123"},
+        )
+        assert client.get(
+            f"/courses/{course['id']}/quick-activities/{activity['id']}/results"
+        ).status_code == 403
