@@ -50,6 +50,7 @@ from src.services.grade_analysis_service import GradeAnalysisService
 from src.services.institution_service import InstitutionService
 from src.services.material_service import CourseMaterialService
 from src.services.quick_activity_service import QuickActivityService
+from src.services.quick_activity_email_service import QuickActivityResultsEmailService
 from src.services.roster_service import RosterService
 from src.services.selection_service import SelectionService
 from src.services.session_service import SessionService
@@ -102,6 +103,7 @@ class AppContext:
     material_service: CourseMaterialService
     institution_service: InstitutionService
     quick_activity_service: QuickActivityService
+    quick_activity_email_service: QuickActivityResultsEmailService
 
 
 # Columnas agregadas a tablas que ya existían antes del Sprint 1. `create_all`
@@ -146,6 +148,7 @@ _ADDED_COLUMNS = [
     ("quick_activities", "live_phase", "VARCHAR(16)"),
     ("quick_activities", "live_position", "INTEGER"),
     ("quick_activities", "live_started_at", "TIMESTAMP WITH TIME ZONE"),
+    ("quick_activities", "results_email_claimed_at", "TIMESTAMP WITH TIME ZONE"),
     ("quick_activity_answers", "points", "INTEGER"),
     ("quick_activity_answers", "response_ms", "INTEGER"),
     ("quick_activity_answers", "answered_at", "TIMESTAMP WITH TIME ZONE"),
@@ -509,4 +512,5 @@ def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bo
         material_service=CourseMaterialService(uow_factory),
         institution_service=InstitutionService(session_factory),
         quick_activity_service=QuickActivityService(session_factory),
+        quick_activity_email_service=QuickActivityResultsEmailService(session_factory),
     )

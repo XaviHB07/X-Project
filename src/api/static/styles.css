@@ -1053,7 +1053,7 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 @media (max-width: 860px) { .course-edit-form { grid-template-columns: 1fr; } }
 
 /* ----------------------------------------------------------------------
-   Actividades rápidas — Sprint 7 (HU-Q3 / HU-Q5)
+   Cacería en vivo — Sprint 7 (HU-Q3 / HU-Q5)
    ---------------------------------------------------------------------- */
 .quick-question textarea.field, .student-question textarea.field { height: auto; padding: 10px 12px; font: inherit; line-height: 1.45; resize: vertical; }
 .quick-activities-panel { padding: 22px; border: 1px solid var(--line); border-radius: 6px; background: var(--white); }
@@ -1134,20 +1134,10 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .student-activity-view .student-history-item { display: grid; gap: 4px; }
 .student-activity-view .student-history-item span { color: var(--muted); font-size: 12px; }
 
-/* Tipo de actividad: test o quiz en vivo */
-.quick-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 4px 0; padding: 0; border: 0; }
-.quick-mode legend { margin-bottom: 6px; padding: 0; }
-.quick-mode-option { display: flex; align-items: flex-start; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--white); cursor: pointer; }
-.quick-mode-option:has(input:checked) { border-color: var(--teal); background: #f2f7ff; }
-.quick-mode-option input { margin-top: 3px; accent-color: var(--teal); }
-.quick-mode-option span { display: grid; gap: 3px; }
-.quick-mode-option strong { color: var(--forest); font-size: 13px; }
-.quick-mode-option small { color: var(--muted); font-size: 11px; line-height: 1.35; }
 .quick-seconds-field { display: grid; gap: 6px; max-width: 200px; }
 .quick-seconds-field .form-label { margin: 0; }
-.quick-chip.is-test { background: #eef1f5; color: #536070; }
+.quick-chip.is-legacy { background: #eef1f5; color: #536070; }
 .quick-chip.is-live { background: #fde8e3; color: #b24a32; }
-@media (max-width: 560px) { .quick-mode { grid-template-columns: 1fr; } }
 
 /* Pantalla del quiz en vivo (para proyectar) */
 .live-stage { width: min(1200px, calc(100vw - 24px)); max-width: none; height: min(860px, calc(100vh - 24px)); max-height: none; padding: 0; border: 0; border-radius: 10px; background: #0d2557; color: white; }
@@ -1192,10 +1182,8 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .live-option.is-correct { box-shadow: 0 0 0 4px white; }
 .live-red { background: #d64545; color: white; }
 .live-blue { background: #2f6fe0; color: white; }
-.live-yellow { background: #e0a21b; color: white; }
+.live-yellow { background: #e0a21b; color: #241a05; }
 .live-green { background: #2f9a5b; color: white; }
-.live-purple { background: #7b4bd1; color: white; }
-.live-teal { background: #138c94; color: white; }
 .live-board { margin-top: 20px; }
 .live-board h4 { margin: 0 0 8px; color: var(--lime); font-size: 13px; letter-spacing: .06em; text-transform: uppercase; }
 .live-ranking { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
@@ -1216,6 +1204,58 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .live-final .live-board { width: min(560px, 100%); }
 @media (max-width: 760px) { .live-lobby { grid-template-columns: 1fr; justify-items: center; text-align: center; } .live-options { grid-template-columns: 1fr; } }
 
+/* Finale sincronizado de Cacería en vivo */
+.wolf-finale { position: relative; display: grid; min-height: min(650px, calc(100dvh - 190px)); overflow: hidden; isolation: isolate; border: 1px solid rgb(170 120 255 / 28%); border-radius: 12px; background: radial-gradient(ellipse at 50% 14%, #34206f 0, #121532 42%, #070b1a 100%); color: #fff; }
+.wolf-finale-sky { position: absolute; z-index: 0; inset: 0; overflow: hidden; background: radial-gradient(ellipse at 50% 100%, rgb(101 42 184 / 28%), transparent 58%); }
+.wolf-light { position: absolute; top: -25%; left: 50%; width: min(80vw, 820px); height: 95%; transform: translateX(-50%); background: radial-gradient(ellipse, rgb(174 101 255 / 23%), transparent 68%); animation: wolf-light-pulse 4s ease-in-out infinite alternate; }
+.wolf-claws { position: absolute; top: 14%; right: 6%; display: flex; gap: 12px; transform: rotate(-24deg); opacity: .46; }
+.wolf-claws i { width: 7px; height: clamp(80px, 15vh, 150px); border-radius: 8px; background: linear-gradient(180deg, #f0c4ff, #8039ef 62%, transparent); filter: drop-shadow(0 0 11px #a24cff); }
+.wolf-claws i:nth-child(2) { transform: translateY(13px); }
+.wolf-claws i:nth-child(3) { transform: translateY(25px); }
+.wolf-runner { position: absolute; top: 7%; left: -95%; width: min(78vw, 850px); max-height: 65%; object-fit: contain; mix-blend-mode: screen; filter: drop-shadow(0 0 26px rgb(172 77 255 / 68%)); animation: wolf-dash 2800ms cubic-bezier(.15,.65,.25,1) both; animation-delay: calc(0ms - var(--elapsed)); }
+.wolf-particles { position: absolute; inset: 0; overflow: hidden; }
+.wolf-particles i { position: absolute; top: -14px; left: var(--particle-x); width: 8px; height: 13px; border-radius: 2px; background: hsl(calc(var(--particle-x) * 3.6), 95%, 67%); opacity: 0; animation: wolf-confetti 2600ms ease-out both; animation-delay: calc(var(--particle-start) + var(--particle-delay) - var(--elapsed)); }
+.wolf-finale-content { position: relative; z-index: 1; display: grid; align-content: center; justify-items: center; gap: 13px; padding: 32px 22px 24px; text-align: center; }
+.wolf-finale-eyebrow { margin: 0; color: #e0c3ff; font-size: 11px; font-weight: 800; letter-spacing: .24em; opacity: 0; animation: wolf-title-reveal 700ms ease-out both; animation-delay: calc(1600ms - var(--elapsed)); }
+.wolf-finale-title { margin: 0; color: white; font-family: Fraunces, Georgia, serif; font-size: clamp(25px, 4vw, 42px); font-weight: 500; text-shadow: 0 3px 25px rgb(166 88 255 / 75%); opacity: 0; animation: wolf-title-reveal 800ms ease-out both; animation-delay: calc(1800ms - var(--elapsed)); }
+.wolf-howler { padding: 8px 14px; border: 1px solid rgb(218 183 255 / 50%); border-radius: 20px; background: rgb(77 42 129 / 60%); color: #f7eaff; font-size: 12px; font-weight: 700; cursor: pointer; }
+.wolf-howler:hover:not(:disabled) { background: rgb(120 65 193 / 75%); }
+.wolf-howler:focus-visible { outline: 3px solid #ffdc72; outline-offset: 3px; }
+.wolf-howler:disabled { opacity: .6; cursor: wait; }
+.wolf-winners { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 12px; width: min(760px, 100%); margin-top: 10px; }
+.wolf-winner-card { position: relative; display: grid; justify-items: center; gap: 7px; min-width: 0; padding: 16px 10px 18px; border: 1px solid rgb(255 255 255 / 17%); border-radius: 12px 12px 4px 4px; background: linear-gradient(180deg, rgb(255 255 255 / 14%), rgb(24 22 58 / 88%)); box-shadow: 0 10px 28px rgb(0 0 0 / 28%); opacity: 0; transform: translateY(35px) scale(.92); animation: wolf-card-reveal 700ms cubic-bezier(.18,.8,.2,1) both; animation-delay: calc(var(--reveal-at) - var(--elapsed)); }
+.wolf-winner-card.place-1 { min-height: 205px; border-color: #ffd86a; background: linear-gradient(160deg, rgb(255 216 106 / 32%), rgb(49 35 74 / 94%) 56%); box-shadow: 0 0 30px rgb(255 190 48 / 25%); }
+.wolf-winner-card.place-2 { min-height: 170px; }
+.wolf-winner-card.place-3 { min-height: 145px; }
+.wolf-medal { font-size: clamp(25px, 4vw, 40px); filter: drop-shadow(0 0 12px rgb(255 216 106 / 46%)); }
+.wolf-place { color: #d7c8ff; font-size: 10px; font-weight: 800; letter-spacing: .1em; }
+.wolf-winner-card.place-1 .wolf-place { color: #ffdf79; }
+.wolf-winner-card strong { max-width: 100%; overflow-wrap: anywhere; font-size: clamp(12px, 1.8vw, 17px); }
+.wolf-points { color: #fff0bc; font-size: 13px; font-weight: 700; }
+.wolf-personal-result { display: grid; gap: 4px; margin: 0; color: #d8ccff; opacity: 0; animation: wolf-title-reveal 700ms ease-out both; animation-delay: calc(4350ms - var(--elapsed)); }
+.wolf-personal-result strong { color: white; font-size: 19px; }
+.wolf-paw-card { display: block; width: min(250px, 48vw); height: auto; margin-top: 2px; border: 1px solid rgb(195 133 255 / 38%); border-radius: 10px; box-shadow: 0 0 28px rgb(123 60 220 / 28%); opacity: 0; animation: wolf-title-reveal 800ms ease-out both; animation-delay: calc(4400ms - var(--elapsed)); }
+.live-stage-body:has(.wolf-finale) { padding: 12px; }
+@keyframes wolf-dash { 0% { left: -95%; opacity: 0; transform: scale(.8); } 12% { opacity: 1; } 76% { opacity: 1; } 100% { left: 112%; opacity: 0; transform: scale(1.05); } }
+@keyframes wolf-title-reveal { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes wolf-card-reveal { from { opacity: 0; transform: translateY(35px) scale(.92); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes wolf-confetti { 0% { opacity: 0; transform: translateY(-10px) rotate(0); } 12% { opacity: 1; } 100% { opacity: 0; transform: translateY(85vh) rotate(620deg); } }
+@keyframes wolf-light-pulse { from { opacity: .55; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .wolf-light, .wolf-runner, .wolf-particles i, .wolf-finale-eyebrow, .wolf-finale-title, .wolf-winner-card, .wolf-personal-result, .wolf-paw-card { animation: none; opacity: 1; transform: none; }
+  .wolf-runner { left: 5%; opacity: .22; }
+}
+@media (max-width: 560px) {
+  .wolf-finale { min-height: 560px; }
+  .wolf-finale-content { gap: 10px; padding: 28px 12px 16px; }
+  .wolf-winners { gap: 6px; margin-top: 5px; }
+  .wolf-winner-card { min-height: 120px !important; padding: 12px 5px; }
+  .wolf-winner-card.place-1 { min-height: 150px !important; }
+  .wolf-place { font-size: 8px; }
+  .wolf-points { font-size: 11px; }
+  .wolf-claws { right: 1%; }
+}
+
 /* Quiz en vivo en el celular del estudiante */
 .student-live { display: grid; gap: 14px; margin: 14px 0 22px; padding: 18px; border-radius: 8px; background: #0d2557; color: white; }
 .student-live-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
@@ -1230,9 +1270,11 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 @media (prefers-reduced-motion: reduce) { .live-pulse { animation: none; } }
 .student-live-question { display: flex; align-items: center; gap: 14px; }
 .student-live-question .live-timer { flex: 0 0 auto; min-width: 54px; height: 54px; font-size: 22px; }
-.student-live-prompt { margin: 0; font-size: 18px; font-weight: 600; line-height: 1.35; }
+.student-live-instruction { margin: 0; color: #f0e9ff; font-size: 15px; font-weight: 600; line-height: 1.4; }
 .student-live-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.live-answer { display: grid; gap: 6px; justify-items: start; min-height: 96px; padding: 14px; border: 0; border-radius: 8px; font-size: 16px; font-weight: 700; text-align: left; }
+.live-answer { min-height: 100px; padding: 14px; border: 2px solid rgb(255 255 255 / 65%); border-radius: 14px; box-shadow: 0 6px 16px rgb(0 0 0 / 22%), inset 0 1px 0 rgb(255 255 255 / 25%); cursor: pointer; transition: transform .12s ease, filter .12s ease; }
+.live-answer:hover:not(:disabled) { filter: brightness(1.12); transform: translateY(-2px); }
+.live-answer:disabled { cursor: wait; opacity: .65; }
 .live-answer:active { transform: scale(.98); }
 .live-answer:focus-visible { outline: 3px solid white; outline-offset: 2px; }
 .student-live-result { display: grid; justify-items: center; gap: 6px; padding: 24px 12px; border-radius: 8px; text-align: center; }

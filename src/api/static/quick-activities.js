@@ -1,6 +1,6 @@
-// Actividades rápidas — Sprint 7 (S12, 16–22 nov 2026).
+// Cacería en vivo — Sprint 7 (S12, 16–22 nov 2026).
 //
-// * Docente (pestaña "Actividades rápidas" del curso): prepara preguntas
+// * Docente (pestaña "Cacería en vivo" del curso): prepara preguntas
 //   cortas, publica la actividad con un código temporal y ve las respuestas
 //   registradas (HU-Q3). La generación de preguntas con IA (HU-Q1) y la
 //   imagen QR (HU-Q2) se conectan sobre esta misma pantalla: el QR solo
@@ -13,8 +13,7 @@
 // `escapeHtml`, `setBusy`, `setCourseView` y `elements`.
 
 const quickState = {
-  // "self_paced" (test a su ritmo) o "live" (quiz en vivo).
-  mode: "self_paced",
+  mode: "live",
   activities: [],
   drafts: [],
   responsesFor: null,
@@ -88,18 +87,7 @@ function qrUrl(activity) {
 // --------------------------------------------------------------------------
 
 function newQuestionDraft() {
-  return { prompt: "", type: quickState.mode === "live" ? "choice" : "open", options: "", correct: "" };
-}
-
-function setQuickMode(mode) {
-  quickState.mode = mode;
-  const live = mode === "live";
-  $("#quick-seconds-field").hidden = !live;
-  $("#quick-allow-multiple").closest(".quick-check").hidden = live;
-  // En vivo todas las preguntas son de opción múltiple con respuesta correcta.
-  if (live) quickState.drafts.forEach((draft) => { draft.type = "choice"; });
-  $("#quick-create-submit").textContent = live ? "Guardar quiz en vivo" : "Guardar borrador";
-  renderQuestionDrafts();
+  return { prompt: "", type: "choice", options: "", correct: "" };
 }
 
 function resetQuickActivities(reloadIfVisible = false) {
@@ -189,7 +177,7 @@ function renderQuickActivities() {
     <article class="quick-activity-row ${open || liveRunning ? "is-open" : ""}">
       <div class="quick-activity-main">
         <strong>${escapeHtml(activity.title)}</strong>
-        <span class="quick-chip ${live ? "is-live" : "is-test"}">${live ? `En vivo · ${activity.question_seconds} s` : "Test"}</span>
+        <span class="quick-chip ${live ? "is-live" : "is-legacy"}">${live ? `En vivo · ${activity.question_seconds} s` : "Actividad anterior"}</span>
         ${availabilityChip(activity)}
         <span class="form-note">${activity.questions.length} pregunta${activity.questions.length === 1 ? "" : "s"}
           · ${activity.response_count} envío${activity.response_count === 1 ? "" : "s"}
@@ -533,22 +521,17 @@ $("#quick-create-form")?.addEventListener("submit", async (event) => {
       method: "POST",
       body: JSON.stringify({
         title: $("#quick-title-input").value.trim(),
-        mode: quickState.mode,
-        question_seconds: quickState.mode === "live"
-          ? Number($("#quick-question-seconds").value) || 20
-          : null,
-        allow_multiple_responses: quickState.mode === "self_paced" && $("#quick-allow-multiple").checked,
+        mode: "live",
+        question_seconds: Number($("#quick-question-seconds").value) || 20,
+        allow_multiple_responses: false,
         class_session_id: state.session?.id || null,
         questions,
       }),
     });
     quickState.drafts = [newQuestionDraft()];
     $("#quick-title-input").value = "";
-    $("#quick-allow-multiple").checked = false;
     await loadQuickActivities();
-    notify(activity.mode === "live"
-      ? `Quiz en vivo “${activity.title}” guardado. Publícalo para generar el código y el QR.`
-      : `Actividad “${activity.title}” guardada como borrador. Publícala para generar el código.`);
+    notify(`Quiz en vivo “${activity.title}” guardado. Publícalo para generar el código y el QR.`);
   } catch (error) {
     notify(error.message, true);
   } finally {
@@ -642,10 +625,6 @@ $("#quick-responses")?.addEventListener("click", (event) => {
 });
 
 $("#refresh-quick")?.addEventListener("click", () => loadQuickActivities());
-
-document.querySelectorAll('input[name="quick-mode"]').forEach((radio) => {
-  radio.addEventListener("change", () => setQuickMode(radio.value));
-});
 
 elements.quickTab?.addEventListener("click", () => {
   setCourseView("quick");

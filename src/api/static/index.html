@@ -292,7 +292,7 @@
             <button class="workspace-tab" id="participations-tab" type="button" aria-selected="false">Historial de participación</button>
             <button class="workspace-tab" id="groups-tab" type="button" aria-selected="false">Trabajo en grupos</button>
             <button class="workspace-tab" id="materials-tab" type="button" aria-selected="false">Material académico</button>
-            <button class="workspace-tab" id="quick-tab" type="button" aria-selected="false">Actividades rápidas</button>
+            <button class="workspace-tab" id="quick-tab" type="button" aria-selected="false">Cacería en vivo</button>
           </nav>
 
           <div class="workspace-grid" id="attendance-view">
@@ -612,46 +612,31 @@
           <section class="quick-activities-panel" id="quick-view" hidden aria-labelledby="quick-title">
             <div class="panel-heading">
               <div>
-                <p class="eyebrow">ACTIVIDADES RÁPIDAS</p>
-                <h2 id="quick-title">Preguntas cortas con código</h2>
-                <p class="form-note">Prepara preguntas cortas, publícalas con un código temporal y revisa las respuestas que registran tus estudiantes desde su cuenta.</p>
+                <p class="eyebrow">CACERÍA EN VIVO</p>
+                <h2 id="quick-title">Quizzes en vivo</h2>
+                <p class="form-note">Prepara preguntas, proyéctalas en vivo y revisa las respuestas y puntajes de tus estudiantes.</p>
               </div>
               <button class="button button-quiet" id="refresh-quick" type="button">Actualizar</button>
             </div>
             <div class="quick-layout">
               <form id="quick-create-form" class="setup-card quick-create-form">
-                <h3>Nueva actividad</h3>
+                <h3>Nuevo quiz en vivo</h3>
                 <label class="form-label" for="quick-title-input">Título</label>
                 <input class="field" id="quick-title-input" type="text" maxlength="255" placeholder="Ej. Repaso de la sesión 9" required />
-                <fieldset class="quick-mode">
-                  <legend class="form-label">Tipo de actividad</legend>
-                  <label class="quick-mode-option">
-                    <input type="radio" name="quick-mode" value="self_paced" checked />
-                    <span><strong>Test</strong><small>Cada estudiante responde a su ritmo dentro del tiempo que definas.</small></span>
-                  </label>
-                  <label class="quick-mode-option">
-                    <input type="radio" name="quick-mode" value="live" />
-                    <span><strong>Quiz en vivo</strong><small>Proyectas una pregunta a la vez y responden desde su celular, con puntaje por rapidez.</small></span>
-                  </label>
-                </fieldset>
-                <label class="quick-seconds-field" id="quick-seconds-field" for="quick-question-seconds" hidden>
+                <label class="quick-seconds-field" id="quick-seconds-field" for="quick-question-seconds">
                   <span class="form-label">Segundos por pregunta</span>
                   <input class="field" id="quick-question-seconds" type="number" min="5" max="120" value="20" />
-                </label>
-                <label class="quick-check" for="quick-allow-multiple">
-                  <input id="quick-allow-multiple" type="checkbox" />
-                  <span>Permitir más de un envío por estudiante</span>
                 </label>
                 <div id="quick-question-list" class="quick-question-list"></div>
                 <div class="quick-form-actions">
                   <button class="button button-quiet" id="quick-add-question" type="button">＋ Agregar pregunta</button>
-                  <button class="button button-add" id="quick-create-submit" type="submit">Guardar borrador</button>
+                  <button class="button button-add" id="quick-create-submit" type="submit">Guardar quiz en vivo</button>
                 </div>
-                <p class="form-note">Las preguntas de opción múltiple llevan una alternativa por línea; marca la correcta si quieres que el sistema la compare.</p>
+                <p class="form-note">Cada pregunta debe tener alternativas y una respuesta correcta para calcular los puntajes en vivo.</p>
               </form>
               <section class="quick-activity-list-panel" aria-labelledby="quick-list-title">
                 <div class="panel-heading">
-                  <h3 id="quick-list-title">Actividades del curso</h3>
+                  <h3 id="quick-list-title">Quizzes del curso</h3>
                   <span class="count-badge" id="quick-count">0</span>
                 </div>
                 <div id="quick-activity-list" class="quick-activity-list"></div>

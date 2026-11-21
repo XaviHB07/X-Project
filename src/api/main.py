@@ -2724,9 +2724,14 @@ def publish_quick_activity(
 )
 def close_quick_activity(course_id: int, activity_id: int, request: Request) -> QuickActivityResponse:
     """Cierra la actividad: el código deja de aceptar ingresos y envíos."""
-    return QuickActivityResponse(**_quick_call(
+    result = _quick_call(
         lambda: _quick_service(request).close(course_id, activity_id)
-    ))
+    )
+    if result["mode"] == "live":
+        request.app.state.app_context.quick_activity_email_service.notify_finished(
+            course_id, activity_id
+        )
+    return QuickActivityResponse(**result)
 
 
 @app.get(
@@ -2900,9 +2905,16 @@ def live_state_teacher(course_id: int, activity_id: int, request: Request) -> Li
 )
 def live_advance(course_id: int, activity_id: int, request: Request) -> LiveTeacherStateResponse:
     """Avanza el quiz: sala → pregunta → resultados → siguiente → … → podio."""
-    return LiveTeacherStateResponse(**_quick_call(
+    result = _quick_call(
         lambda: _quick_service(request).live_advance(course_id, activity_id)
-    ))
+    )
+    if result["phase"] == "finished":
+        result.update(
+            request.app.state.app_context.quick_activity_email_service.notify_finished(
+                course_id, activity_id
+            )
+        )
+    return LiveTeacherStateResponse(**result)
 
 
 @app.get(

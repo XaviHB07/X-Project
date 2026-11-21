@@ -1168,6 +1168,11 @@ class LiveQuestionResponse(BaseModel):
     correct_option: Optional[int] = None
 
 
+class LiveStudentQuestionResponse(BaseModel):
+    id: int
+    position: int
+
+
 class LiveParticipantResponse(BaseModel):
     student_name: str
     student_code: str
@@ -1184,6 +1189,8 @@ class LiveRankingRow(BaseModel):
 class LiveTeacherStateResponse(BaseModel):
     activity: QuickActivityResponse
     phase: LivePhase
+    finished_at: Optional[datetime] = None
+    server_time: datetime
     position: Optional[int] = None
     question_count: int
     remaining_ms: int
@@ -1194,17 +1201,26 @@ class LiveTeacherStateResponse(BaseModel):
     # Respuestas por alternativa; solo al cerrar la pregunta.
     distribution: Optional[List[int]] = None
     leaderboard: List[LiveRankingRow]
+    result_email_status: Optional[Literal[
+        "disabled", "already_sent", "sent", "partial_failure", "failed", "no_recipients"
+    ]] = None
+    result_emails_sent: int = 0
+    result_emails_skipped: int = 0
+    result_emails_failed: int = 0
 
 
 class LiveStudentStateResponse(BaseModel):
     activity_id: int
     title: str
     phase: LivePhase
+    finished_at: Optional[datetime] = None
+    server_time: datetime
     position: Optional[int] = None
     question_count: int
     question_seconds: Optional[int] = None
     remaining_ms: int
-    question: Optional[LiveQuestionResponse] = None
+    question: Optional[LiveStudentQuestionResponse] = None
+    option_count: Optional[int] = None
     answered: bool
     selected_option: Optional[int] = None
     correct_option: Optional[int] = None
@@ -1218,7 +1234,7 @@ class LiveStudentStateResponse(BaseModel):
 
 class LiveAnswerRequest(BaseModel):
     question_id: int
-    selected_option: int = Field(..., ge=0, le=5)
+    selected_option: int = Field(..., ge=0, le=3)
 
 
 class LiveAnswerResponse(BaseModel):

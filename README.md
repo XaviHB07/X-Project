@@ -457,14 +457,15 @@ de inicio igual a su primera sesión). No toca sesiones, participaciones ni
 notas. El Administrador debe renombrar esa universidad, facultad y
 especialidad con los datos reales desde **Estructura institucional**.
 
-### Actividades rápidas (Sprint 7: HU-Q3 y HU-Q5)
+### Cacería en vivo (Sprint 7: HU-Q3 y HU-Q5)
 
-Pestaña **Actividades rápidas** del curso (docente): prepara preguntas cortas
-(abiertas o de opción múltiple, con alternativa correcta opcional), guárdalas
-como borrador y publícalas con un código de 6 caracteres válido por N minutos.
-Se muestra el código y el enlace `/?actividad=CÓDIGO` (el que codificará el QR
-de HU-Q2). **Ver respuestas** lista cada envío con el estudiante, la hora y
-sus respuestas (✓/✗ en opción múltiple).
+Pestaña **Cacería en vivo** del curso (docente): prepara quizzes de preguntas
+de opción múltiple con respuesta correcta, define los segundos por pregunta,
+guárdalos como borrador y publícalos con un código de 6 caracteres válido por
+N minutos. Se muestra el código y el enlace `/?actividad=CÓDIGO` (el que
+codificará el QR de HU-Q2). **Resultados** lista las respuestas, puntajes y
+ranking. La interfaz crea quizzes en vivo; las actividades antiguas de tipo
+Test siguen disponibles en el historial.
 
 Portal del estudiante → **Unirse a actividad** (HU-Q5): escribe el código o
 abre el enlace; si no tenía sesión, se le pide iniciarla y luego entra directo
@@ -478,23 +479,37 @@ cuenta y a la matrícula del estudiante (HU-Q3) y la restricción única
 La generación con IA (HU-Q1) solo debe enviar sus preguntas a
 `POST /courses/{id}/quick-activities` con el mismo formato.
 
-**Dos tipos de actividad** (se elige al crearla):
+El **Quiz en vivo** (tipo Kahoot/Quizizz) presenta una pregunta a la vez con
+cuenta regresiva y "X de Y respondieron". Al publicar se abre la **pantalla en
+vivo** para proyectar: sala de espera con el código, el QR y los participantes
+→ preguntas → resultados (respuesta correcta, distribución de alternativas y
+ranking) → podio final. La pregunta se cierra sola al acabarse el tiempo o
+cuando el docente la cierra. En el celular, el estudiante toca una alternativa
+y, al cerrarse la pregunta, ve si acertó, sus puntos y su puesto. Un acierto
+vale hasta 1000 puntos y baja hasta 500 según el tiempo que tardó; el reloj del
+servidor es la referencia. La sincronización es por consultas cortas (pantalla
+del docente cada 1 s, celulares cada 1,5 s), sin WebSockets. Conviene probarla
+en Render con un curso completo antes de usarla en clase.
 
-* **Test**: cada estudiante responde todas las preguntas a su ritmo dentro del
-  rango de tiempo que fija el docente (lo descrito arriba).
-* **Quiz en vivo** (tipo Kahoot/Quizizz): todas las preguntas son de opción
-  múltiple con alternativa correcta y tienen N segundos cada una. Al publicar
-  se abre la **pantalla en vivo** para proyectar: sala de espera con el código,
-  el QR y los participantes → pregunta con cuenta regresiva y "X de Y
-  respondieron" → resultados (respuesta correcta, cuántos eligieron cada
-  alternativa y ranking) → … → podio final. La pregunta se cierra sola al
-  acabarse el tiempo o cuando el docente la cierra. En el celular, el
-  estudiante toca una alternativa y, al cerrarse la pregunta, ve si acertó,
-  sus puntos y su puesto. Un acierto vale hasta 1000 puntos y baja hasta 500
-  según el tiempo que tardó; el reloj del servidor es la referencia. La
-  sincronización es por consultas cortas (pantalla del docente cada 1 s,
-  celulares cada 1,5 s), sin WebSockets. Conviene probarla en Render con un
-  curso completo antes de usarla en clase.
+Al finalizar, la presentación animada sincroniza su inicio usando el instante
+UTC de cierre devuelto por el servidor. El celular recibe únicamente la
+posición y el número de alternativas; sus botones de respuesta son rojo, azul,
+amarillo y verde, mientras que el enunciado y las alternativas completas solo
+se envían a la pantalla docente. La pantalla final incluye luz, partículas,
+marcas de garras, revelado escalonado del top 3 y un botón para reproducir un
+aullido sintetizado (el navegador requiere una acción del usuario para audio).
+
+El envío de resultados por correo está desactivado por defecto. Para habilitar
+el SMTP seguro configura `LIVE_RESULTS_EMAILS_ENABLED=true`, `SMTP_HOST`,
+`SMTP_PORT`, `SMTP_USERNAME` y `SMTP_PASSWORD` en el entorno del servidor. El
+remitente es **Lobo Feroz <loboferez.notificaciones@gmail.com>**; para Gmail
+usa una contraseña de aplicación, no la contraseña normal. Al cerrar un quiz,
+reciben correo todas las matrículas activas del curso con email registrado,
+incluidas las personas que no respondieron: su puntaje será 0 y el mensaje las
+animará a participar en la próxima cacería. Las preguntas sin respuesta se
+indican en el detalle. El resultado se reclama una sola vez para evitar
+duplicados. Si faltan credenciales, el envío no se habilita. Las pruebas usan
+SMTP simulado y bases SQLite temporales; nunca envían mensajes reales.
 
 **Resultados (HU-Q4).** El botón **Resultados** de cada actividad muestra un
 resumen para conocer el nivel de comprensión del grupo: participación (quienes

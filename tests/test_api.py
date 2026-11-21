@@ -28,6 +28,14 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
     monkeypatch.delenv("ADMIN_USERNAME", raising=False)
     monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
+    for variable in (
+        "LIVE_RESULTS_EMAILS_ENABLED",
+        "SMTP_HOST",
+        "SMTP_PORT",
+        "SMTP_USERNAME",
+        "SMTP_PASSWORD",
+    ):
+        monkeypatch.delenv(variable, raising=False)
 
     from src.api.main import app
 

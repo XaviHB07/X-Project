@@ -18,12 +18,14 @@ from sqlalchemy import select
 from src.repositories.sqlalchemy.models import (
     AcademicCycleORM,
     CourseORM,
+    QuickActivityORM,
     QuickActivityResponseORM,
     SchemaMigrationORM,
     StudentORM,
 )
 from src.services.bootstrap import MVP1_CYCLE, MVP1_MIGRATION, MVP1_SPECIALTY
 from src.services.bootstrap import _migrate_mvp1_institutional_schema
+from src.services.quick_activity_email_service import ResultsEmailSettings
 from tests.test_api import (  # noqa: F401  (fixture reutilizado)
     _create_second_teacher,
     _login_as_admin,
@@ -630,7 +632,9 @@ class TestFrontendSprint7:
         page = client.get("/").text
         institutions = client.get("/assets/institutions.js")
         quick = client.get("/assets/quick-activities.js")
+        live = client.get("/assets/live-quiz.js")
         assert institutions.status_code == 200 and quick.status_code == 200
+        assert live.status_code == 200
         assert '<script src="/assets/institutions.js" defer></script>' in page
         assert '<script src="/assets/quick-activities.js" defer></script>' in page
         # HU-A5 a A7 y HU-C2
@@ -641,14 +645,23 @@ class TestFrontendSprint7:
         assert 'id="course-code"' in page
         assert 'id="teacher-last-names"' in page and 'id="teacher-first-names"' in page
         # Sprint 7: pestaña del docente y vista del estudiante
-        assert 'id="quick-tab"' in page and 'id="quick-view"' in page
+        assert 'id="quick-tab"' in page and 'Cacería en vivo' in page
+        assert 'id="quick-view"' in page and 'Nuevo quiz en vivo' in page
         assert 'id="student-activity-view"' in page and 'id="student-join-form"' in page
+        assert 'name="quick-mode"' not in page
+        assert "Cada estudiante responde a su ritmo" not in page
         assert "/student/quick-activities/join" in quick.text
         assert 'params.get("actividad")' in quick.text
         for asset in ("live-quiz.js", "qr-scanner.js", "vendor/jsQR.js"):
             assert client.get(f"/assets/{asset}").status_code == 200
         assert 'id="live-stage"' in page and 'id="student-scan-button"' in page
-        assert 'name="quick-mode" value="live"' in page
+        assert "renderWolfFinale" in live.text
+        assert "data.question.prompt" not in live.text
+        assert "data.question.options" not in live.text
+        assert 'const LIVE_COLORS = ["live-red", "live-blue", "live-yellow", "live-green"]' in live.text
+        assert client.get("/assets/assets/wolf-run-scene.jpg").status_code == 200
+        assert client.get("/assets/assets/wolf-paw-card.jpg").status_code == 200
+        assert 'mode: "live"' in quick.text
 
 
 # --------------------------------------------------------------------------
@@ -723,6 +736,160 @@ class TestQrYQuizEnVivo:
         )
         assert response.status_code == 422
         assert "opción múltiple" in response.json()["detail"]
+
+        too_many_colors = client.post(
+            f"/courses/{course['id']}/quick-activities",
+            json={
+                "title": "Demasiados colores",
+                "mode": "live",
+                "question_seconds": 20,
+                "questions": [{
+                    "prompt": "Elige",
+                    "options": ["A", "B", "C", "D", "E"],
+                    "correct_option": 0,
+                }],
+            },
+        )
+        assert too_many_colors.status_code == 422
+        assert "cuatro alternativas" in too_many_colors.json()["detail"]
+
+    def test_finale_is_synchronized_and_emails_entire_active_roster(self, client: TestClient):
+        clock = _Clock()
+        client.app.state.app_context.quick_activity_service._clock = clock
+        _, course = _teacher_course(client, code="TESTKH", name="Test Kahoot")
+        student_codes = ("TEST001", "TEST002", "TEST003", "TEST004")
+        for index, code in enumerate(student_codes):
+            _enroll_and_login_student(client, course["id"], code, f"Estudiante {index + 1}")
+
+        with client.app.state.app_context.quick_activity_service._session_factory() as session:
+            students = session.execute(
+                select(StudentORM)
+                .where(StudentORM.course_id == course["id"])
+                .order_by(StudentORM.id)
+            ).scalars().all()
+            for index, student in enumerate(students, start=1):
+                student.email = f"test{index}@example.test"
+            session.commit()
+
+        email_service = client.app.state.app_context.quick_activity_email_service
+        email_service.settings = ResultsEmailSettings(
+            enabled=True,
+            host="smtp.example.test",
+            port=587,
+            username="test-account",
+            password="test-password",
+        )
+        sent_messages = []
+
+        class FakeSmtp:
+            def __init__(self, host, port, timeout):
+                assert (host, port, timeout) == ("smtp.example.test", 587, 20)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def starttls(self, context):
+                assert context is not None
+
+            def login(self, username, password):
+                assert (username, password) == ("test-account", "test-password")
+
+            def send_message(self, message):
+                sent_messages.append(message)
+                return {}
+
+        email_service._smtp_factory = FakeSmtp
+        quiz = _live_quiz(client, course["id"])
+        base = f"/courses/{course['id']}/quick-activities/{quiz['id']}"
+        for code in student_codes[:3]:
+            _login_student(client, code)
+            joined = client.post(
+                "/student/quick-activities/join", json={"code": quiz["join_code"]}
+            )
+            assert joined.status_code == 200
+            assert joined.json()["questions"] == []
+
+        _login_as_teacher(client)
+        question = client.post(f"{base}/live/advance").json()
+        assert question["phase"] == "question"
+        _login_student(client, student_codes[0])
+        student_state = client.get(f"/student/quick-activities/{quiz['id']}/live").json()
+        assert student_state["option_count"] == 3
+        assert set(student_state["question"]) == {"id", "position"}
+        assert "prompt" not in student_state["question"]
+        assert "options" not in student_state["question"]
+        client.post(
+            f"/student/quick-activities/{quiz['id']}/live/answers",
+            json={"question_id": question["question"]["id"], "selected_option": 1},
+        )
+        for code in student_codes[1:3]:
+            _login_student(client, code)
+            client.post(
+                f"/student/quick-activities/{quiz['id']}/live/answers",
+                json={"question_id": question["question"]["id"], "selected_option": 0},
+            )
+
+        _login_as_teacher(client)
+        client.post(f"{base}/live/advance")
+        question_two = client.post(f"{base}/live/advance").json()
+        for code, answer in zip(student_codes[:3], (0, 1, 0)):
+            _login_student(client, code)
+            client.post(
+                f"/student/quick-activities/{quiz['id']}/live/answers",
+                json={"question_id": question_two["question"]["id"], "selected_option": answer},
+            )
+
+        _login_as_teacher(client)
+        client.post(f"{base}/live/advance")
+        final = client.post(f"{base}/live/advance")
+        assert final.status_code == 200, final.text
+        result = final.json()
+        assert result["phase"] == "finished"
+        assert result["result_email_status"] == "sent"
+        assert result["result_emails_sent"] == 4
+        assert len(sent_messages) == 4
+        assert {
+            message["To"] for message in sent_messages
+        } == {
+            "test1@example.test", "test2@example.test",
+            "test3@example.test", "test4@example.test",
+        }
+        first_html = sent_messages[0].get_body(preferencelist=("html",)).get_content()
+        assert "Cacería en vivo" in sent_messages[0]["Subject"]
+        assert "image/jpeg" in str(sent_messages[0])
+        assert "posición" in first_html.casefold()
+        assert sent_messages[0]["From"] == "Lobo Feroz <loboferez.notificaciones@gmail.com>"
+        no_response = next(
+            message for message in sent_messages if message["To"] == "test4@example.test"
+        )
+        no_response_text = no_response.get_body(preferencelist=("plain",)).get_content()
+        no_response_html = no_response.get_body(preferencelist=("html",)).get_content()
+        assert "0 puntos" in no_response_text
+        assert "próxima cacería" in no_response_text.casefold()
+        assert "Sin respuesta" in no_response_html
+
+        _login_as_teacher(client)
+        replay = client.get(f"{base}/live")
+        assert replay.status_code == 200
+        assert replay.json()["phase"] == "finished"
+        assert len(sent_messages) == 4
+        duplicate = email_service.notify_finished(course["id"], quiz["id"])
+        assert duplicate["result_email_status"] == "already_sent"
+        assert len(sent_messages) == 4
+        for code in student_codes[:3]:
+            _login_student(client, code)
+            student_final = client.get(
+                f"/student/quick-activities/{quiz['id']}/live"
+            ).json()
+            assert student_final["phase"] == "finished"
+            assert student_final["finished_at"] == result["finished_at"]
+            assert student_final["question"] is None
+        with client.app.state.app_context.quick_activity_service._session_factory() as session:
+            saved_quiz = session.get(QuickActivityORM, quiz["id"])
+            assert saved_quiz.results_email_claimed_at is not None
 
     def test_full_live_game_with_speed_points_and_ranking(self, client: TestClient):
         clock = _Clock()

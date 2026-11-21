@@ -705,6 +705,9 @@ class QuickActivityORM(Base):
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    results_email_claimed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # HU-Q5: "cada estudiante responde una sola vez, salvo que el docente lo
     # permita".
     allow_multiple_responses: Mapped[bool] = mapped_column(

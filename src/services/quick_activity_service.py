@@ -155,6 +155,11 @@ class QuickActivityService:
                         f"En el quiz en vivo la pregunta {number} debe ser de opción "
                         "múltiple y tener marcada la alternativa correcta."
                     )
+                if len(question["options"]) > 4:
+                    raise InvalidQuickActivityError(
+                        f"La pregunta {number} admite como máximo cuatro alternativas "
+                        "para responder con los botones de colores."
+                    )
             question_seconds = int(question_seconds or DEFAULT_QUESTION_SECONDS)
             if not MIN_QUESTION_SECONDS <= question_seconds <= MAX_QUESTION_SECONDS:
                 raise InvalidQuickActivityError(
@@ -653,6 +658,8 @@ class QuickActivityService:
                 "activity_id": activity.id,
                 "title": activity.title,
                 "phase": phase,
+                "finished_at": _utc(activity.closed_at) if phase == "finished" else None,
+                "server_time": _utc(self._clock()),
                 "position": activity.live_position,
                 "question_count": len(activity.questions),
                 "question_seconds": activity.question_seconds,
@@ -660,9 +667,8 @@ class QuickActivityService:
                 "question": None if question is None else {
                     "id": question.id,
                     "position": question.position,
-                    "prompt": question.prompt,
-                    "options": question.options,
                 },
+                "option_count": len(question.options or []) if question is not None else None,
                 "answered": mine is not None,
                 "selected_option": mine.selected_option if mine else None,
                 # La respuesta correcta y el puntaje solo se muestran al cerrar
@@ -793,6 +799,8 @@ class QuickActivityService:
         return {
             "activity": self._teacher_view(session, activity),
             "phase": phase,
+            "finished_at": _utc(activity.closed_at) if phase == "finished" else None,
+            "server_time": _utc(self._clock()),
             "position": activity.live_position,
             "question_count": len(activity.questions),
             "remaining_ms": self._remaining_ms(activity) if phase == "question" else 0,
@@ -1038,7 +1046,7 @@ class QuickActivityService:
             "question_seconds": activity.question_seconds,
             "previous_attempts": previous_attempts,
             # Sin `correct_option`: el estudiante no debe ver la respuesta.
-            "questions": [
+            "questions": [] if activity.mode == MODE_LIVE else [
                 {
                     "id": question.id,
                     "position": question.position,
