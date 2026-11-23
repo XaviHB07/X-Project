@@ -495,9 +495,13 @@ Al finalizar, la presentación animada sincroniza su inicio usando el instante
 UTC de cierre devuelto por el servidor. El celular recibe únicamente la
 posición y el número de alternativas; sus botones de respuesta son rojo, azul,
 amarillo y verde, mientras que el enunciado y las alternativas completas solo
-se envían a la pantalla docente. La pantalla final incluye luz, partículas,
-marcas de garras, revelado escalonado del top 3 y un botón para reproducir un
-aullido sintetizado (el navegador requiere una acción del usuario para audio).
+se envían a la pantalla docente. La pantalla final usa un lobo vectorial SVG
+articulado (carrera, patas, cola, cabeza y cuerpo animados) frente a un paisaje
+nocturno en capas; la secuencia se sincroniza con el cierre del servidor e
+incluye luz, partículas, marcas de garras, revelado escalonado del top 3 y un
+botón para reproducir un aullido sintetizado (el navegador requiere una acción
+del usuario para audio). Se implementa con SVG/CSS nativos, sin dependencias
+adicionales.
 
 El envío de resultados por correo está desactivado por defecto. Para habilitar
 el SMTP seguro configura `LIVE_RESULTS_EMAILS_ENABLED=true`, `SMTP_HOST`,

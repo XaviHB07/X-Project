@@ -1206,16 +1206,71 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 
 /* Finale sincronizado de Cacería en vivo */
 .wolf-finale { position: relative; display: grid; min-height: min(650px, calc(100dvh - 190px)); overflow: hidden; isolation: isolate; border: 1px solid rgb(170 120 255 / 28%); border-radius: 12px; background: radial-gradient(ellipse at 50% 14%, #34206f 0, #121532 42%, #070b1a 100%); color: #fff; }
-.wolf-finale-sky { position: absolute; z-index: 0; inset: 0; overflow: hidden; background: radial-gradient(ellipse at 50% 100%, rgb(101 42 184 / 28%), transparent 58%); }
-.wolf-light { position: absolute; top: -25%; left: 50%; width: min(80vw, 820px); height: 95%; transform: translateX(-50%); background: radial-gradient(ellipse, rgb(174 101 255 / 23%), transparent 68%); animation: wolf-light-pulse 4s ease-in-out infinite alternate; }
-.wolf-claws { position: absolute; top: 14%; right: 6%; display: flex; gap: 12px; transform: rotate(-24deg); opacity: .46; }
+.wolf-finale-sky { position: absolute; z-index: 0; inset: 0; overflow: hidden; background: radial-gradient(ellipse at 48% 76%, rgb(121 54 220 / 28%), transparent 38%), radial-gradient(ellipse at 18% 44%, rgb(45 62 151 / 32%), transparent 42%), linear-gradient(180deg, #090d24 0%, #171a3c 54%, #111429 100%); }
+.wolf-stars { position: absolute; inset: 0; }
+.wolf-stars i { position: absolute; top: var(--star-y); left: var(--star-x); width: 2px; height: 2px; border-radius: 50%; background: #e5dcff; box-shadow: 0 0 8px #d4c2ff; animation: wolf-star-twinkle 2200ms ease-in-out infinite alternate; animation-delay: calc(var(--star-delay) - var(--elapsed)); }
+.wolf-moon { position: absolute; top: 9%; left: 17%; width: clamp(90px, 14vw, 170px); aspect-ratio: 1; border: 1px solid rgb(226 215 255 / 55%); border-radius: 50%; background: radial-gradient(circle at 35% 33%, #f8f3ff 0 5%, #dbd3fa 35%, #9696cc 76%, #585f99 100%); box-shadow: 0 0 34px rgb(202 183 255 / 58%), 0 0 110px rgb(147 106 233 / 34%); animation: wolf-moon-glow 4s ease-in-out infinite alternate; animation-delay: calc(0ms - var(--elapsed)); }
+.wolf-moon::before, .wolf-moon::after { position: absolute; border-radius: 50%; background: rgb(97 99 155 / 18%); content: ""; }
+.wolf-moon::before { top: 22%; left: 59%; width: 15%; aspect-ratio: 1; box-shadow: -38px 42px 0 -3px rgb(97 99 155 / 18%), 14px 65px 0 -6px rgb(97 99 155 / 22%); }
+.wolf-moon::after { top: 61%; left: 32%; width: 9%; aspect-ratio: 1; box-shadow: 48px -53px 0 -4px rgb(97 99 155 / 22%); }
+.wolf-landscape { position: absolute; inset: 0; width: 100%; height: 100%; }
+.wolf-mountain-back { fill: #242444; animation: wolf-ridge-drift 18s ease-in-out infinite alternate; animation-delay: calc(0ms - var(--elapsed)); transform-box: fill-box; transform-origin: center; }
+.wolf-mountain-snow { fill: #aaa4ce; opacity: .48; }
+.wolf-mountain-front { fill: #171d35; animation: wolf-ridge-drift 12s ease-in-out infinite alternate-reverse; animation-delay: calc(0ms - var(--elapsed)); transform-box: fill-box; transform-origin: center; }
+.wolf-forest { fill: #11182c; }
+.wolf-ground { fill: url(#wolf-ground); }
+.wolf-ground-light { fill: none; stroke: rgb(198 157 255 / 30%); stroke-width: 2; filter: drop-shadow(0 0 9px #a357ff); }
+.wolf-light { position: absolute; top: -25%; left: 50%; width: min(80vw, 820px); height: 95%; transform: translateX(-50%); background: radial-gradient(ellipse, rgb(174 101 255 / 23%), transparent 68%); animation: wolf-light-pulse 4s ease-in-out infinite alternate; animation-delay: calc(0ms - var(--elapsed)); }
+.wolf-claws { position: absolute; z-index: 2; top: -28%; right: 8%; display: flex; gap: 12px; transform: rotate(-24deg); opacity: 0; animation: wolf-claw-strike 700ms cubic-bezier(.15,.7,.25,1) both; animation-delay: calc(1900ms - var(--elapsed)); }
 .wolf-claws i { width: 7px; height: clamp(80px, 15vh, 150px); border-radius: 8px; background: linear-gradient(180deg, #f0c4ff, #8039ef 62%, transparent); filter: drop-shadow(0 0 11px #a24cff); }
 .wolf-claws i:nth-child(2) { transform: translateY(13px); }
 .wolf-claws i:nth-child(3) { transform: translateY(25px); }
-.wolf-runner { position: absolute; top: 7%; left: -95%; width: min(78vw, 850px); max-height: 65%; object-fit: contain; mix-blend-mode: screen; filter: drop-shadow(0 0 26px rgb(172 77 255 / 68%)); animation: wolf-dash 2800ms cubic-bezier(.15,.65,.25,1) both; animation-delay: calc(0ms - var(--elapsed)); }
+.wolf-runner { position: absolute; z-index: 1; top: 3%; left: -70%; display: block; width: clamp(270px, 48vw, 560px); color: #fff; filter: drop-shadow(0 0 24px rgb(172 77 255 / 62%)); animation: wolf-dash 3200ms cubic-bezier(.15,.65,.25,1) both; animation-delay: calc(0ms - var(--elapsed)); }
+.wolf-runner-art { display: block; width: 100%; height: auto; overflow: visible; }
+.wolf-runner-shadow { fill: rgb(7 9 23 / 66%); animation: wolf-shadow-run 420ms ease-in-out infinite alternate; animation-delay: calc(0ms - var(--elapsed)); transform-box: fill-box; transform-origin: center; }
+.wolf-runner-bob { animation: wolf-body-run 420ms ease-in-out infinite; animation-delay: calc(0ms - var(--elapsed)); transform-box: fill-box; transform-origin: center; }
+.wolf-speed-trails { fill: none; stroke: url(#wolf-violet); stroke-width: 3; stroke-linecap: round; opacity: .8; filter: url(#wolf-neon-glow); animation: wolf-trail-pulse 380ms ease-in-out infinite alternate; animation-delay: calc(0ms - var(--elapsed)); }
+.wolf-speed-trails path:nth-child(2) { stroke-width: 2; opacity: .55; }
+.wolf-tail { fill: url(#wolf-mane); stroke: #11152b; stroke-width: 9; stroke-linejoin: round; }
+.wolf-tail-mark { fill: none; stroke: #b36aff; stroke-width: 3; stroke-linecap: round; opacity: .72; filter: url(#wolf-neon-glow); }
+.wolf-tail { transform-box: fill-box; transform-origin: 95% 48%; animation: wolf-tail-run 420ms ease-in-out infinite alternate; animation-delay: calc(0ms - var(--elapsed)); }
+.wolf-leg-swing { transform-box: fill-box; transform-origin: 50% 4%; animation: wolf-leg-run 420ms ease-in-out infinite alternate; animation-delay: calc(0ms - var(--elapsed)); }
+.wolf-leg-rear-b, .wolf-leg-front-b { animation-delay: calc(-210ms - var(--elapsed)); }
+.wolf-leg-base { fill: url(#wolf-mane); stroke: #090c19; stroke-width: 7; stroke-linejoin: round; }
+.wolf-leg-detail { fill: none; stroke: #777caa; stroke-width: 5; stroke-linecap: round; opacity: .75; }
+.wolf-leg-paw { fill: #151a32; stroke: #080b17; stroke-width: 5; stroke-linejoin: round; }
+.wolf-torso { fill: url(#wolf-fur); stroke: #090d1d; stroke-width: 6; stroke-linejoin: round; }
+.wolf-shoulder, .wolf-haunch { fill: url(#wolf-mane); stroke: #151a32; stroke-width: 4; stroke-linejoin: round; }
+.wolf-belly { fill: url(#wolf-fur-light); opacity: .38; }
+.wolf-mane > path:first-child { fill: url(#wolf-mane); stroke: #0c1022; stroke-width: 6; stroke-linejoin: round; }
+.wolf-mane-strand { fill: none; stroke: #b6a9ec; stroke-width: 3; stroke-linecap: round; opacity: .8; }
+.wolf-back-ridge { fill: none; stroke: #b9b0e8; stroke-width: 3; stroke-linecap: round; opacity: .62; }
+.wolf-fur-detail { fill: none; stroke: #8584b4; stroke-width: 2.5; stroke-linecap: round; opacity: .66; }
+.wolf-violet-edge { fill: none; stroke: url(#wolf-violet); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; opacity: .92; filter: url(#wolf-neon-glow); }
+.wolf-leg-rim { fill: none; stroke: #9c55f5; stroke-width: 3; stroke-linecap: round; opacity: .78; filter: url(#wolf-neon-glow); }
+.wolf-neck-fur { fill: url(#wolf-mane); stroke: #0c1022; stroke-width: 6; stroke-linejoin: round; }
+.wolf-head { fill: url(#wolf-fur); stroke: #090d1d; stroke-width: 6; stroke-linejoin: round; }
+.wolf-ear-back { fill: #2c3153; stroke: #0a0d1d; stroke-width: 6; stroke-linejoin: round; }
+.wolf-ear { fill: url(#wolf-mane); stroke: #090d1d; stroke-width: 6; stroke-linejoin: round; }
+.wolf-ear-inner { fill: #a946ff; opacity: .78; }
+.wolf-cheek-plate { fill: url(#wolf-mane); stroke: #11152c; stroke-width: 5; stroke-linejoin: round; }
+.wolf-face-mark { fill: #9695bb; opacity: .74; }
+.wolf-muzzle { fill: #777691; stroke: #242842; stroke-width: 4; stroke-linejoin: round; }
+.wolf-mouth { fill: #080a16; stroke: #101326; stroke-width: 3; }
+.wolf-jaw { fill: #565a78; stroke: #171b32; stroke-width: 5; stroke-linejoin: round; transform-box: fill-box; transform-origin: 15% 0; animation: wolf-jaw-run 420ms ease-in-out infinite alternate; animation-delay: calc(0ms - var(--elapsed)); }
+.wolf-nose { fill: #090b18; stroke: #252840; stroke-width: 3; }
+.wolf-nostril { fill: none; stroke: #d8c8e8; stroke-width: 2; stroke-linecap: round; }
+.wolf-eye-socket { fill: #090b18; }
+.wolf-eye { fill: #2b154e; }
+.wolf-eye-light { fill: #ffc8ff; filter: url(#wolf-eye-glow); }
+.wolf-brow { fill: none; stroke: #111529; stroke-width: 8; stroke-linecap: round; }
+.wolf-fang { fill: #eee8ff; }
+.wolf-whisker { fill: none; stroke: #d0c8e7; stroke-width: 1.7; opacity: .75; }
+.wolf-face-glow { fill: none; stroke: #bd73ff; stroke-width: 3; stroke-linecap: round; opacity: .9; filter: url(#wolf-neon-glow); }
+.wolf-head-bob { transform-box: fill-box; transform-origin: 18% 82%; animation: wolf-head-run 420ms ease-in-out infinite alternate; animation-delay: calc(0ms - var(--elapsed)); }
 .wolf-particles { position: absolute; inset: 0; overflow: hidden; }
 .wolf-particles i { position: absolute; top: -14px; left: var(--particle-x); width: 8px; height: 13px; border-radius: 2px; background: hsl(calc(var(--particle-x) * 3.6), 95%, 67%); opacity: 0; animation: wolf-confetti 2600ms ease-out both; animation-delay: calc(var(--particle-start) + var(--particle-delay) - var(--elapsed)); }
-.wolf-finale-content { position: relative; z-index: 1; display: grid; align-content: center; justify-items: center; gap: 13px; padding: 32px 22px 24px; text-align: center; }
+.wolf-finale-content { position: relative; z-index: 3; display: grid; align-content: end; justify-items: center; gap: 13px; padding: 170px 22px 24px; text-align: center; }
 .wolf-finale-eyebrow { margin: 0; color: #e0c3ff; font-size: 11px; font-weight: 800; letter-spacing: .24em; opacity: 0; animation: wolf-title-reveal 700ms ease-out both; animation-delay: calc(1600ms - var(--elapsed)); }
 .wolf-finale-title { margin: 0; color: white; font-family: Fraunces, Georgia, serif; font-size: clamp(25px, 4vw, 42px); font-weight: 500; text-shadow: 0 3px 25px rgb(166 88 255 / 75%); opacity: 0; animation: wolf-title-reveal 800ms ease-out both; animation-delay: calc(1800ms - var(--elapsed)); }
 .wolf-howler { padding: 8px 14px; border: 1px solid rgb(218 183 255 / 50%); border-radius: 20px; background: rgb(77 42 129 / 60%); color: #f7eaff; font-size: 12px; font-weight: 700; cursor: pointer; }
@@ -1228,32 +1283,49 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .wolf-winner-card.place-2 { min-height: 170px; }
 .wolf-winner-card.place-3 { min-height: 145px; }
 .wolf-medal { font-size: clamp(25px, 4vw, 40px); filter: drop-shadow(0 0 12px rgb(255 216 106 / 46%)); }
+.place-1 .wolf-medal { animation: wolf-medal-glint 1500ms ease-in-out 2; animation-delay: calc(4900ms - var(--elapsed)); }
 .wolf-place { color: #d7c8ff; font-size: 10px; font-weight: 800; letter-spacing: .1em; }
 .wolf-winner-card.place-1 .wolf-place { color: #ffdf79; }
 .wolf-winner-card strong { max-width: 100%; overflow-wrap: anywhere; font-size: clamp(12px, 1.8vw, 17px); }
 .wolf-points { color: #fff0bc; font-size: 13px; font-weight: 700; }
-.wolf-personal-result { display: grid; gap: 4px; margin: 0; color: #d8ccff; opacity: 0; animation: wolf-title-reveal 700ms ease-out both; animation-delay: calc(4350ms - var(--elapsed)); }
+.wolf-personal-result { display: grid; gap: 4px; margin: 0; color: #d8ccff; opacity: 0; animation: wolf-title-reveal 700ms ease-out both; animation-delay: calc(5150ms - var(--elapsed)); }
 .wolf-personal-result strong { color: white; font-size: 19px; }
-.wolf-paw-card { display: block; width: min(250px, 48vw); height: auto; margin-top: 2px; border: 1px solid rgb(195 133 255 / 38%); border-radius: 10px; box-shadow: 0 0 28px rgb(123 60 220 / 28%); opacity: 0; animation: wolf-title-reveal 800ms ease-out both; animation-delay: calc(4400ms - var(--elapsed)); }
+.wolf-finale-signoff { margin: 0; color: #c8b3ee; font-size: 9px; font-weight: 800; letter-spacing: .22em; opacity: 0; animation: wolf-title-reveal 700ms ease-out both; animation-delay: calc(5500ms - var(--elapsed)); }
+.wolf-finale-signoff span { padding: 0 4px; color: #ffdc72; }
 .live-stage-body:has(.wolf-finale) { padding: 12px; }
-@keyframes wolf-dash { 0% { left: -95%; opacity: 0; transform: scale(.8); } 12% { opacity: 1; } 76% { opacity: 1; } 100% { left: 112%; opacity: 0; transform: scale(1.05); } }
+@keyframes wolf-dash { 0% { left: -70%; opacity: 0; transform: scale(.78); } 9% { opacity: 1; } 70% { opacity: 1; } 100% { left: 120%; opacity: 0; transform: scale(1.08); } }
+@keyframes wolf-body-run { 0%, 100% { transform: translateY(0) rotate(-1deg); } 50% { transform: translateY(-11px) rotate(1deg); } }
+@keyframes wolf-shadow-run { from { transform: scaleX(.86); opacity: .48; } to { transform: scaleX(1.08); opacity: .8; } }
+@keyframes wolf-trail-pulse { from { opacity: .28; transform: translateX(14px); } to { opacity: .92; transform: translateX(-8px); } }
+@keyframes wolf-leg-run { from { transform: rotate(38deg); } to { transform: rotate(-42deg); } }
+@keyframes wolf-tail-run { from { transform: rotate(-13deg); } to { transform: rotate(14deg); } }
+@keyframes wolf-head-run { from { transform: rotate(-4deg); } to { transform: rotate(4deg); } }
+@keyframes wolf-jaw-run { from { transform: rotate(0); } to { transform: rotate(8deg); } }
+@keyframes wolf-star-twinkle { from { opacity: .25; transform: scale(.7); } to { opacity: 1; transform: scale(1.45); } }
+@keyframes wolf-moon-glow { from { box-shadow: 0 0 24px rgb(212 191 255 / 42%), 0 0 70px rgb(147 106 233 / 18%); } to { box-shadow: 0 0 40px rgb(240 226 255 / 76%), 0 0 110px rgb(147 106 233 / 34%); } }
+@keyframes wolf-ridge-drift { from { transform: translateX(-1%); } to { transform: translateX(1%); } }
+@keyframes wolf-claw-strike { 0% { top: -28%; opacity: 0; } 32% { opacity: .8; } 100% { top: 16%; opacity: .38; } }
+@keyframes wolf-medal-glint { 0%, 100% { filter: drop-shadow(0 0 12px rgb(255 216 106 / 46%)); transform: rotate(0) scale(1); } 50% { filter: drop-shadow(0 0 24px #ffd86a); transform: rotate(-8deg) scale(1.15); } }
 @keyframes wolf-title-reveal { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes wolf-card-reveal { from { opacity: 0; transform: translateY(35px) scale(.92); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes wolf-confetti { 0% { opacity: 0; transform: translateY(-10px) rotate(0); } 12% { opacity: 1; } 100% { opacity: 0; transform: translateY(85vh) rotate(620deg); } }
 @keyframes wolf-light-pulse { from { opacity: .55; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
-  .wolf-light, .wolf-runner, .wolf-particles i, .wolf-finale-eyebrow, .wolf-finale-title, .wolf-winner-card, .wolf-personal-result, .wolf-paw-card { animation: none; opacity: 1; transform: none; }
-  .wolf-runner { left: 5%; opacity: .22; }
+  .wolf-light, .wolf-runner, .wolf-runner *, .wolf-stars i, .wolf-moon, .wolf-landscape path, .wolf-claws, .wolf-particles i, .wolf-finale-eyebrow, .wolf-finale-title, .wolf-winner-card, .wolf-personal-result, .wolf-finale-signoff, .wolf-medal { animation: none; }
+  .wolf-runner { opacity: 0; }
+  .wolf-claws, .wolf-finale-eyebrow, .wolf-finale-title, .wolf-winner-card, .wolf-personal-result, .wolf-finale-signoff { opacity: 1; transform: none; }
 }
 @media (max-width: 560px) {
   .wolf-finale { min-height: 560px; }
-  .wolf-finale-content { gap: 10px; padding: 28px 12px 16px; }
+  .wolf-finale-content { gap: 8px; padding: 145px 12px 12px; }
   .wolf-winners { gap: 6px; margin-top: 5px; }
   .wolf-winner-card { min-height: 120px !important; padding: 12px 5px; }
   .wolf-winner-card.place-1 { min-height: 150px !important; }
   .wolf-place { font-size: 8px; }
   .wolf-points { font-size: 11px; }
   .wolf-claws { right: 1%; }
+  .wolf-runner { top: 2%; width: clamp(235px, 76vw, 430px); }
+  .wolf-finale-signoff { font-size: 8px; }
 }
 
 /* Quiz en vivo en el celular del estudiante */

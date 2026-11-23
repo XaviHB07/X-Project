@@ -522,7 +522,7 @@ $("#quick-create-form")?.addEventListener("submit", async (event) => {
       body: JSON.stringify({
         title: $("#quick-title-input").value.trim(),
         mode: "live",
-        question_seconds: Number($("#quick-question-seconds").value) || 20,
+        question_seconds: Number($("#quick-question-seconds").value) || 30,
         allow_multiple_responses: false,
         class_session_id: state.session?.id || null,
         questions,

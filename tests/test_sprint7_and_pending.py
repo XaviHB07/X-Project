@@ -633,8 +633,9 @@ class TestFrontendSprint7:
         institutions = client.get("/assets/institutions.js")
         quick = client.get("/assets/quick-activities.js")
         live = client.get("/assets/live-quiz.js")
+        styles = client.get("/assets/styles.css")
         assert institutions.status_code == 200 and quick.status_code == 200
-        assert live.status_code == 200
+        assert live.status_code == 200 and styles.status_code == 200
         assert '<script src="/assets/institutions.js" defer></script>' in page
         assert '<script src="/assets/quick-activities.js" defer></script>' in page
         # HU-A5 a A7 y HU-C2
@@ -656,12 +657,22 @@ class TestFrontendSprint7:
             assert client.get(f"/assets/{asset}").status_code == 200
         assert 'id="live-stage"' in page and 'id="student-scan-button"' in page
         assert "renderWolfFinale" in live.text
+        assert "wolfRunnerMarkup" in live.text
+        assert "wolf-leg-swing" in live.text
+        assert "wolf-violet-edge" in live.text
+        assert "wolf-face-glow" in live.text
+        assert '<img class="wolf-runner"' not in live.text
+        assert "wolf-paw-card.jpg" not in live.text
+        assert "@keyframes wolf-leg-run" in styles.text
+        assert "@keyframes wolf-trail-pulse" in styles.text
+        assert "@keyframes wolf-dash" in styles.text
         assert "data.question.prompt" not in live.text
         assert "data.question.options" not in live.text
         assert 'const LIVE_COLORS = ["live-red", "live-blue", "live-yellow", "live-green"]' in live.text
-        assert client.get("/assets/assets/wolf-run-scene.jpg").status_code == 200
         assert client.get("/assets/assets/wolf-paw-card.jpg").status_code == 200
         assert 'mode: "live"' in quick.text
+        assert 'id="quick-question-seconds" type="number" min="5" max="120" value="30"' in page
+        assert 'Number($("#quick-question-seconds").value) || 30' in quick.text
 
 
 # --------------------------------------------------------------------------
@@ -707,6 +718,19 @@ def _live_quiz(client: TestClient, course_id: int, seconds: int = 20):
 
 
 class TestQrYQuizEnVivo:
+    def test_live_quiz_defaults_to_30_seconds(self, client: TestClient):
+        _, course = _teacher_course(client)
+        created = client.post(
+            f"/courses/{course['id']}/quick-activities",
+            json={
+                "title": "Tiempo predeterminado",
+                "mode": "live",
+                "questions": LIVE_QUESTIONS,
+            },
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["question_seconds"] == 30
+
     def test_teacher_gets_qr_with_public_join_link(self, client: TestClient):
         _, course = _teacher_course(client)
         activity = _published_activity(client, course["id"])
