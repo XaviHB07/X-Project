@@ -380,6 +380,7 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |POST|`/institutions/faculties/{id}/specialties`|Administrador: registrar especialidad (HU-A7)|
 |PATCH/DELETE|`/institutions/specialties/{id}`|Administrador: modificar, deshabilitar o eliminar especialidad (HU-A7)|
 |GET/POST|`/courses/{id}/quick-activities`|Listar o preparar actividades rápidas del curso|
+|GET|`/courses/{id}/live-ranking`|Ranking acumulado de quizzes en vivo finalizados, para usuarios con acceso al curso|
 |POST|`/courses/{id}/quick-activities/{aid}/publish`|Publicar con código temporal (o extender su vigencia)|
 |POST|`/courses/{id}/quick-activities/{aid}/close`|Cerrar la actividad|
 |GET|`/courses/{id}/quick-activities/{aid}/responses`|**HU-Q3**: respuestas registradas por estudiante|
@@ -527,6 +528,20 @@ opción múltiple con alternativa correcta. Las abiertas se listan para leerlas,
 sin nota, hasta que exista la calificación con IA (HU-E2/HU-E3). Si un test
 admitía reenvíos, cuenta el último envío. "Respuestas por estudiante" muestra
 el detalle de HU-Q3.
+
+**Ranking Acumulado – Lobo Feroz.** El panel independiente **Ranking
+acumulado** está disponible para docentes y estudiantes. Muestra todas las
+matrículas activas del curso, incluidos quienes aún tienen 0 puntos, y suma
+únicamente los puntos persistidos en el último intento de cada quiz en vivo
+finalizado. Se calcula al abrir el panel y se actualiza cada 10 segundos; no
+guarda totales ni modifica resultados. El acceso al endpoint verifica que el
+usuario esté autorizado para ese curso. Los empates se ordenan por apellido
+paterno y luego por nombre completo: como el modelo actual conserva un solo
+campo de nombre, se interpreta el primer apellido antes de la coma en nombres
+con formato `Apellidos, Nombres`, o el penúltimo componente si el nombre está
+en formato `Nombres ApellidoPaterno ApellidoMaterno` (si solo hay dos
+componentes, se usa el último). El gráfico horizontal permite desplazarse para
+consultar el curso completo.
 
 **Código QR (HU-Q2).** Al publicar, la actividad muestra un QR (generado en el
 servidor con `segno`, `GET /courses/{id}/quick-activities/{aid}/qr.svg`) con

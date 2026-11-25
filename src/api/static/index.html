@@ -58,6 +58,9 @@
           <button class="app-navigation-button" id="student-activity-view-button" type="button" hidden>
             <span aria-hidden="true">◎</span> Unirse a actividad
           </button>
+          <button class="app-navigation-button" id="live-ranking-view-button" type="button">
+            <span aria-hidden="true">↗</span> Ranking acumulado
+          </button>
           <button class="app-navigation-button active" id="daily-view-button" type="button" aria-current="page">
             <span aria-hidden="true">▦</span> Sesiones y asistencia
           </button>
@@ -218,6 +221,29 @@
             <h3 class="student-portal-section-title">Mis envíos</h3>
             <div id="student-submission-list" class="student-history-list"></div>
             <p id="student-submission-empty" class="setup-empty" hidden>Todavía no respondiste actividades rápidas.</p>
+          </section>
+        </section>
+
+        <section class="live-ranking-page" id="live-ranking-page" hidden aria-labelledby="live-ranking-title">
+          <div class="live-ranking-heading">
+            <p class="eyebrow">CACERÍA EN VIVO · LOBO FEROZ</p>
+            <h1 id="live-ranking-title">Ranking Acumulado – Lobo Feroz</h1>
+            <p class="heading-meta">Suma de puntos de quizzes en vivo finalizados. No incluye notas ni otras actividades.</p>
+            <button class="text-button live-ranking-back" id="live-ranking-back" type="button" hidden>← Volver al portal del estudiante</button>
+          </div>
+          <section class="live-ranking-panel" aria-label="Clasificación del curso">
+            <div class="live-ranking-toolbar">
+              <label class="form-field">
+                <span class="form-label">Curso</span>
+                <select id="live-ranking-course" class="field"></select>
+              </label>
+              <button class="button button-quiet" id="live-ranking-refresh" type="button">⟳ Actualizar</button>
+            </div>
+            <p class="form-note live-ranking-status" id="live-ranking-status" role="status" aria-live="polite"></p>
+            <div class="live-ranking-scroll" id="live-ranking-scroll" hidden>
+              <div class="live-ranking-chart" id="live-ranking-chart"></div>
+            </div>
+            <p class="setup-empty" id="live-ranking-empty" hidden></p>
           </section>
         </section>
 

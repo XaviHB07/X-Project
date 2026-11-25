@@ -1186,6 +1186,21 @@ class LiveRankingRow(BaseModel):
     correct: int
 
 
+class CumulativeLiveRankingStudent(BaseModel):
+    rank: int
+    student_id: int
+    student_name: str
+    points: int
+
+
+class CumulativeLiveRankingResponse(BaseModel):
+    course_id: int
+    course_name: str
+    quiz_count: int
+    student_count: int
+    students: List[CumulativeLiveRankingStudent]
+
+
 class LiveTeacherStateResponse(BaseModel):
     activity: QuickActivityResponse
     phase: LivePhase

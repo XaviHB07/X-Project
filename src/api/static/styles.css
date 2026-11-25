@@ -1404,3 +1404,53 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .quick-open-answers p { margin: 4px 0 0; overflow-wrap: anywhere; }
 @media (max-width: 960px) { .quick-result-cards { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 560px) { .quick-result-option { grid-template-columns: 1fr; } }
+
+/* Ranking acumulado de Caceria en vivo */
+.live-ranking-page { display: grid; gap: 20px; width: min(100%, 1120px); margin: 0 auto; padding: 8px 0 28px; }
+.live-ranking-heading { display: grid; gap: 7px; }
+.live-ranking-heading .eyebrow, .live-ranking-heading h1, .live-ranking-heading .heading-meta { margin: 0; }
+.live-ranking-heading h1 { color: var(--forest); font-family: Fraunces, Georgia, serif; font-size: clamp(26px, 4vw, 38px); font-weight: 500; }
+.live-ranking-panel { display: grid; gap: 12px; padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--white); }
+.live-ranking-toolbar { display: flex; align-items: end; gap: 12px; }
+.live-ranking-toolbar .form-field { display: grid; gap: 6px; width: min(100%, 380px); }
+.live-ranking-toolbar .button { flex: 0 0 auto; }
+.live-ranking-status { min-height: 18px; margin: 0; }
+.live-ranking-scroll { max-height: min(66vh, 720px); overflow-y: auto; overscroll-behavior: contain; padding: 2px 6px 2px 2px; scrollbar-gutter: stable; }
+.live-ranking-chart { display: grid; gap: 8px; }
+.live-rank-row { display: grid; grid-template-columns: 58px minmax(140px, 260px) minmax(80px, 1fr) 92px; align-items: center; gap: 13px; min-height: 58px; padding: 9px 13px; border: 1px solid #e4eaf3; border-radius: 7px; background: #fbfcff; }
+.live-rank-place { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; background: #e8edf5; color: #53627a; font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.live-rank-name { overflow: hidden; color: #202b3d; font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
+.live-rank-track { height: 17px; overflow: hidden; border-radius: 10px; background: #edf0f7; box-shadow: inset 0 1px 2px rgb(22 31 54 / 8%); }
+.live-rank-bar { display: block; width: var(--rank-width); height: 100%; min-width: 0; border-radius: inherit; background: linear-gradient(90deg, #5f45d9, #be68ef); box-shadow: 0 0 14px rgb(147 83 230 / 27%); transition: width .45s ease; }
+.live-rank-points { color: #2d2456; text-align: right; white-space: nowrap; font-size: 16px; font-variant-numeric: tabular-nums; }
+.live-rank-points small { color: #7a8090; font-size: 10px; }
+.live-rank-row.is-top-1 { border-color: #e8bf58; background: linear-gradient(100deg, #fff9e8, #fff 60%); box-shadow: 0 4px 14px rgb(194 147 40 / 12%); }
+.live-rank-row.is-top-1 .live-rank-place { background: linear-gradient(145deg, #ffe895, #e9af31); color: #563d0c; }
+.live-rank-row.is-top-1 .live-rank-bar { background: linear-gradient(90deg, #c58a16, #ffd968); }
+.live-rank-row.is-top-2 .live-rank-place { background: linear-gradient(145deg, #f3f5fa, #c4cbd9); color: #465166; }
+.live-rank-row.is-top-3 .live-rank-place { background: linear-gradient(145deg, #f5d4c2, #c98565); color: #542b1c; }
+.student-mode .live-ranking-page { width: min(100%, 900px); margin: 0 auto; padding: 24px 18px; }
+.student-mode .live-ranking-panel { border-color: #263d70; background: #101f43; color: white; }
+.student-mode .live-ranking-heading h1 { color: white; }
+.student-mode .live-ranking-heading .heading-meta, .student-mode .live-ranking-status { color: #c1cce3; }
+.student-mode .live-ranking-panel .live-rank-row { border-color: #344568; background: #17294f; }
+.student-mode .live-ranking-panel .live-rank-name { color: #f2f5ff; }
+.student-mode .live-ranking-panel .live-rank-track { background: #26395e; }
+.student-mode .live-ranking-panel .live-rank-points { color: #ffe6a0; }
+.student-mode .live-ranking-panel .is-top-1 { border-color: #8d7440; background: linear-gradient(100deg, #382f29, #17294f 75%); }
+.student-mode .live-ranking-panel .setup-empty { color: #d3ddf2; }
+@media (max-width: 650px) {
+  .live-ranking-page { gap: 14px; padding: 10px 0 20px; }
+  .live-ranking-panel { padding: 13px 10px; }
+  .live-ranking-toolbar { align-items: stretch; flex-direction: column; }
+  .live-ranking-toolbar .form-field { width: 100%; }
+  .live-ranking-toolbar .button { align-self: flex-start; }
+  .live-ranking-scroll { max-height: 68vh; padding-right: 2px; }
+  .live-ranking-chart { gap: 7px; }
+  .live-rank-row { grid-template-columns: 40px minmax(0, 1fr) 68px; gap: 7px 9px; min-height: 76px; padding: 9px; }
+  .live-rank-place { width: 34px; height: 34px; font-size: 13px; }
+  .live-rank-name { font-size: 12px; }
+  .live-rank-track { grid-column: 2 / 4; grid-row: 2; height: 13px; }
+  .live-rank-points { grid-column: 3; grid-row: 1; font-size: 14px; }
+  .student-mode .live-ranking-page { padding: 18px 12px; }
+}

@@ -65,6 +65,7 @@ from src.api.schemas import (
     InstitutionUpdateRequest,
     LiveAnswerRequest,
     LiveAnswerResponse,
+    CumulativeLiveRankingResponse,
     LiveStudentStateResponse,
     LiveTeacherStateResponse,
     QuickActivityCreateRequest,
@@ -2880,6 +2881,24 @@ def quick_activity_qr(course_id: int, activity_id: int, request: Request) -> Res
 # --------------------------------------------------------------------------
 # Quiz en vivo (tipo Kahoot / Quizizz)
 # --------------------------------------------------------------------------
+
+
+@app.get(
+    "/courses/{course_id}/live-ranking",
+    response_model=CumulativeLiveRankingResponse,
+    tags=["actividades rápidas"],
+)
+def cumulative_live_ranking(
+    course_id: int,
+    request: Request,
+    user: AuthenticatedUser = Depends(current_user),
+) -> CumulativeLiveRankingResponse:
+    """Ranking acumulado de quizzes en vivo para usuarios con acceso al curso."""
+    if not request.app.state.app_context.auth_service.has_course_access(user, course_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No se encontró el curso autorizado.")
+    return CumulativeLiveRankingResponse(**_quick_call(
+        lambda: _quick_service(request).cumulative_live_ranking(course_id)
+    ))
 
 
 @app.get(

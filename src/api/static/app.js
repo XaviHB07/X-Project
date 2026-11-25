@@ -15,6 +15,9 @@ const state = {
   selectedStudentCourse: null,
   studentPortalView: "courses",
   appView: "daily",
+  liveRankingCourseId: null,
+  liveRankingTimer: null,
+  liveRankingData: null,
   courseView: "attendance",
   selectedEvaluationId: null,
   groupPlans: [],
@@ -223,6 +226,15 @@ const elements = {
   institutionsPage: $("#institutions-page"),
   studentActivityViewButton: $("#student-activity-view-button"),
   studentActivityView: $("#student-activity-view"),
+  liveRankingViewButton: $("#live-ranking-view-button"),
+  liveRankingPage: $("#live-ranking-page"),
+  liveRankingBack: $("#live-ranking-back"),
+  liveRankingCourse: $("#live-ranking-course"),
+  liveRankingRefresh: $("#live-ranking-refresh"),
+  liveRankingStatus: $("#live-ranking-status"),
+  liveRankingScroll: $("#live-ranking-scroll"),
+  liveRankingChart: $("#live-ranking-chart"),
+  liveRankingEmpty: $("#live-ranking-empty"),
   quickTab: $("#quick-tab"),
   quickView: $("#quick-view"),
 };
@@ -556,6 +568,93 @@ function renderStudentWeeks(data) {
           ? new Date(`${session.session_date}T00:00:00`).toLocaleDateString("es")
           : "sin fecha"
       }</li>`).join("")}</ul>` : "";
+}
+
+function renderLiveRanking(data) {
+  const rows = data.students || [];
+  elements.liveRankingScroll.hidden = rows.length === 0;
+  elements.liveRankingEmpty.hidden = rows.length > 0;
+  elements.liveRankingEmpty.textContent = rows.length
+    ? ""
+    : "No hay estudiantes activos matriculados en este curso.";
+  if (!rows.length) {
+    elements.liveRankingChart.innerHTML = "";
+    return;
+  }
+  const maximum = Math.max(0, ...rows.map((row) => row.points));
+  elements.liveRankingChart.innerHTML = rows.map((row) => {
+    const width = maximum ? (row.points / maximum) * 100 : 0;
+    const topClass = row.rank <= 3 ? ` is-top-${row.rank}` : "";
+    return `
+      <article class="live-rank-row${topClass}">
+        <span class="live-rank-place">${row.rank}.º</span>
+        <strong class="live-rank-name" title="${escapeHtml(row.student_name)}">${escapeHtml(row.student_name)}</strong>
+        <div class="live-rank-track" role="img" aria-label="${escapeHtml(row.student_name)}: ${row.points} puntos">
+          <span class="live-rank-bar" style="--rank-width:${width}%"></span>
+        </div>
+        <strong class="live-rank-points">${row.points.toLocaleString("es")} <small>pts</small></strong>
+      </article>`;
+  }).join("");
+}
+
+function renderLiveRankingCourseOptions() {
+  const student = state.authenticatedUser?.role === "estudiante";
+  const courses = student
+    ? state.studentCourses.map((course) => ({
+        id: course.course_id,
+        name: course.course_name,
+      }))
+    : state.availableCourses.map((course) => ({ id: course.id, name: course.name }));
+  const options = courses.map((course) =>
+    `<option value="${course.id}">${escapeHtml(course.name)}</option>`
+  ).join("");
+  elements.liveRankingCourse.innerHTML = options || '<option value="">No hay cursos disponibles</option>';
+  elements.liveRankingCourse.disabled = courses.length === 0;
+  const preferredCourseId = student
+    ? state.liveRankingCourseId || courses[0]?.id
+    : state.course?.id || state.liveRankingCourseId || courses[0]?.id;
+  state.liveRankingCourseId = courses.some((course) => course.id === Number(preferredCourseId))
+    ? Number(preferredCourseId)
+    : courses[0]?.id || null;
+  elements.liveRankingCourse.value = state.liveRankingCourseId
+    ? String(state.liveRankingCourseId)
+    : "";
+}
+
+async function loadLiveRanking() {
+  const courseId = Number(elements.liveRankingCourse.value);
+  if (!courseId) {
+    elements.liveRankingStatus.textContent = "Selecciona un curso para consultar su ranking.";
+    elements.liveRankingScroll.hidden = true;
+    elements.liveRankingEmpty.hidden = true;
+    return;
+  }
+  state.liveRankingCourseId = courseId;
+  elements.liveRankingStatus.textContent = "Actualizando puntuaciones acumuladas…";
+  try {
+    const data = await api(`/courses/${courseId}/live-ranking`);
+    if (Number(elements.liveRankingCourse.value) !== courseId) return;
+    state.liveRankingData = data;
+    renderLiveRanking(data);
+    const quizLabel = `${data.quiz_count} quiz${data.quiz_count === 1 ? "" : "es"} finalizado${data.quiz_count === 1 ? "" : "s"}`;
+    elements.liveRankingStatus.textContent =
+      `${data.course_name} · ${data.student_count} estudiantes activos · ${quizLabel}. Se actualiza automáticamente.`;
+  } catch (error) {
+    elements.liveRankingChart.innerHTML = "";
+    elements.liveRankingScroll.hidden = true;
+    elements.liveRankingEmpty.hidden = false;
+    elements.liveRankingEmpty.textContent = error.message;
+    elements.liveRankingStatus.textContent = "No se pudo actualizar el ranking.";
+  }
+}
+
+function openLiveRanking() {
+  renderLiveRankingCourseOptions();
+  loadLiveRanking();
+  if (state.liveRankingTimer) clearInterval(state.liveRankingTimer);
+  state.liveRankingTimer = setInterval(() => {
+    if (state.appView === "ranking") loadLiveRanking();
+  }, 10000);
 }
 
 async function loadStudentHistory() {
@@ -1417,16 +1516,31 @@ function setAppView(view) {
   const previousView = state.appView;
   const isStudent = state.authenticatedUser?.role === "estudiante";
   elements.appShell.classList.toggle("student-mode", isStudent);
+  if (state.liveRankingTimer && view !== "ranking") {
+    clearInterval(state.liveRankingTimer);
+    state.liveRankingTimer = null;
+  }
   if (isStudent) {
-    if (previousView !== "studentPortal") window.scrollTo(0, 0);
-    state.appView = "studentPortal";
-    elements.studentPortal.hidden = false;
+    const ranking = view === "ranking";
+    if (previousView !== (ranking ? "ranking" : "studentPortal")) window.scrollTo(0, 0);
+    state.appView = ranking ? "ranking" : "studentPortal";
+    elements.studentPortal.hidden = ranking;
+    elements.liveRankingPage.hidden = !ranking;
     document.querySelector(".app-navigation").hidden = false;
-    elements.studentCoursesViewButton.hidden = false;
-    elements.studentHistoryViewButton.hidden = false;
-    elements.studentReviewViewButton.hidden = false;
-    elements.studentActivityViewButton.hidden = false;
-    setStudentPortalView(state.studentPortalView);
+    elements.studentCoursesViewButton.hidden = ranking;
+    elements.studentHistoryViewButton.hidden = ranking;
+    elements.studentReviewViewButton.hidden = ranking;
+    elements.studentActivityViewButton.hidden = ranking;
+    elements.liveRankingViewButton.hidden = false;
+    elements.liveRankingBack.hidden = !ranking;
+    elements.liveRankingViewButton.classList.toggle("active", ranking);
+    if (ranking) {
+      elements.liveRankingViewButton.setAttribute("aria-current", "page");
+      openLiveRanking();
+    } else {
+      elements.liveRankingViewButton.removeAttribute("aria-current");
+      setStudentPortalView(state.studentPortalView);
+    }
     [
       elements.dailyViewButton,
       elements.gradesViewButton,
@@ -1460,6 +1574,8 @@ function setAppView(view) {
     return;
   }
   elements.studentPortal.hidden = true;
+  elements.liveRankingPage.hidden = view !== "ranking";
+  elements.liveRankingBack.hidden = true;
   [
     elements.studentCoursesViewButton,
     elements.studentHistoryViewButton,
@@ -1500,6 +1616,7 @@ function setAppView(view) {
   const enrollment = view === "enrollment";
   const daily = view === "daily";
   const grades = view === "grades";
+  const ranking = view === "ranking";
   const course = state.course;
   const cycle = state.cycles.find((item) => item.id === course?.cycle_id);
   elements.cyclesSetupPage.hidden = !cycles;
@@ -1522,6 +1639,7 @@ function setAppView(view) {
   elements.studentAccountsViewButton.classList.toggle("active", studentAccounts);
   elements.coursesViewButton.classList.toggle("active", createCourse);
   elements.enrollmentViewButton.classList.toggle("active", enrollment);
+  elements.liveRankingViewButton.classList.toggle("active", ranking);
   [
     elements.dailyViewButton,
     elements.gradesViewButton,
@@ -1531,12 +1649,15 @@ function setAppView(view) {
     elements.studentAccountsViewButton,
     elements.coursesViewButton,
     elements.enrollmentViewButton,
+    elements.liveRankingViewButton,
   ]
     .forEach((button) => button.removeAttribute("aria-current"));
   const activeButton = daily
     ? elements.dailyViewButton
     : grades
       ? elements.gradesViewButton
+    : ranking
+      ? elements.liveRankingViewButton
     : institutions
       ? elements.institutionsViewButton
     : cycles
@@ -1556,6 +1677,7 @@ function setAppView(view) {
   elements.teachersViewButton.hidden = !isAdminView;
   elements.studentAccountsViewButton.hidden = !isAdminView;
   elements.coursesViewButton.hidden = false;
+  elements.liveRankingViewButton.hidden = false;
   elements.activeRole.closest(".sidebar-role").hidden = state.authenticatedUser?.role !== "administrador";
   elements.studentAccountForm.hidden = !isAdminView;
   $("#create-course-form button[type=submit]").disabled =
@@ -1564,6 +1686,8 @@ function setAppView(view) {
     state.authenticatedUser?.role === "administrador" ? "Administrador" : "Docente"
   }`;
   if (grades) loadGradeMatrix();
+  if (ranking) openLiveRanking();
+  document.querySelector(".page-heading").hidden = ranking;
   if (institutions) {
     elements.courseTitle.textContent = "Estructura institucional";
     elements.pageEyebrow.firstChild.textContent = "ADMINISTRACIÓN ";
@@ -4682,6 +4806,10 @@ $("#edit-withdraw").addEventListener("click", () => {
 });
 
 elements.dailyViewButton.addEventListener("click", () => setAppView("daily"));
+elements.liveRankingViewButton.addEventListener("click", () => setAppView("ranking"));
+elements.liveRankingBack.addEventListener("click", () => setAppView("studentPortal"));
+elements.liveRankingCourse.addEventListener("change", loadLiveRanking);
+elements.liveRankingRefresh.addEventListener("click", loadLiveRanking);
 elements.cyclesViewButton.addEventListener("click", () => setAppView("cycles"));
 elements.institutionsViewButton.addEventListener("click", () => setAppView("institutions"));
 elements.teachersViewButton.addEventListener("click", () => setAppView("teachers"));

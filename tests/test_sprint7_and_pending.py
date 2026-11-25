@@ -18,6 +18,8 @@ from sqlalchemy import select
 from src.repositories.sqlalchemy.models import (
     AcademicCycleORM,
     CourseORM,
+    QuickActivityAnswerORM,
+    QuickActivityQuestionORM,
     QuickActivityORM,
     QuickActivityResponseORM,
     SchemaMigrationORM,
@@ -55,12 +57,18 @@ def _institution(client: TestClient, university="UNI", faculty="FIIS", specialty
     return uni.json()["id"], fac.json()["id"], spe.json()["id"]
 
 
-def _teacher_course(client: TestClient, code="SI807U", name="Inteligencia de Negocios"):
+def _teacher_course(
+    client: TestClient,
+    code="SI807U",
+    name="Inteligencia de Negocios",
+    university="UNI",
+    cycle_name="2026-II",
+):
     """El docente registra su ciclo (con especialidad) y su curso."""
-    _, _, specialty_id = _institution(client)
+    _, _, specialty_id = _institution(client, university=university)
     _login_as_teacher(client)
     cycle = client.post(
-        "/cycles", json={"name": "2026-II", "starts_on": "2026-08-24", "specialty_id": specialty_id}
+        "/cycles", json={"name": cycle_name, "starts_on": "2026-08-24", "specialty_id": specialty_id}
     )
     assert cycle.status_code == 201, cycle.text
     course = client.post(
@@ -718,6 +726,107 @@ def _live_quiz(client: TestClient, course_id: int, seconds: int = 20):
 
 
 class TestQrYQuizEnVivo:
+    def test_cumulative_ranking_uses_only_finished_live_quiz_points(self, client: TestClient):
+        _, course = _teacher_course(client, code="RANK", name="Ranking")
+        for code, name in (
+            ("RANK001", "Ana María Zuluaga Pérez"),
+            ("RANK002", "Beatriz Álvarez Torres"),
+            ("RANK003", "Carlos Ibarra Ruiz"),
+        ):
+            _enroll_and_login_student(client, course["id"], code, name)
+
+        service = client.app.state.app_context.quick_activity_service
+        with service._session_factory() as session:
+            students = session.execute(
+                select(StudentORM)
+                .where(StudentORM.course_id == course["id"])
+                .order_by(StudentORM.id)
+            ).scalars().all()
+
+            def create_completed_activity(mode: str, title: str) -> tuple:
+                activity = QuickActivityORM(
+                    course_id=course["id"],
+                    title=title,
+                    status="closed",
+                    mode=mode,
+                    live_phase="finished" if mode == "live" else None,
+                )
+                session.add(activity)
+                session.flush()
+                question = QuickActivityQuestionORM(
+                    activity_id=activity.id,
+                    position=1,
+                    prompt="P",
+                    options=["A", "B"],
+                    correct_option=0,
+                )
+                session.add(question)
+                session.flush()
+                return activity, question
+
+            def add_result(activity, question, student, attempt: int, points: int) -> None:
+                response = QuickActivityResponseORM(
+                    activity_id=activity.id,
+                    student_id=student.id,
+                    user_id=student.user_id,
+                    attempt=attempt,
+                )
+                session.add(response)
+                session.flush()
+                session.add(QuickActivityAnswerORM(
+                    response_id=response.id,
+                    question_id=question.id,
+                    selected_option=0,
+                    is_correct=True,
+                    points=points,
+                    response_ms=100,
+                ))
+
+            first, first_question = create_completed_activity("live", "Primera cacería")
+            second, second_question = create_completed_activity("live", "Segunda cacería")
+            unrelated, unrelated_question = create_completed_activity("self_paced", "Test")
+            unfinished, unfinished_question = create_completed_activity("live", "En curso")
+            unfinished.status = "published"
+            unfinished.live_phase = "question"
+            add_result(first, first_question, students[0], 1, 999)
+            add_result(first, first_question, students[0], 2, 100)
+            add_result(first, first_question, students[1], 1, 100)
+            add_result(second, second_question, students[0], 1, 100)
+            add_result(second, second_question, students[1], 1, 100)
+            add_result(unrelated, unrelated_question, students[0], 1, 9000)
+            add_result(unfinished, unfinished_question, students[0], 1, 8000)
+            session.commit()
+
+        response = client.get(f"/courses/{course['id']}/live-ranking")
+        assert response.status_code == 200, response.text
+        ranking = response.json()
+        assert ranking["quiz_count"] == 2
+        assert ranking["student_count"] == 3
+        assert [
+            (row["rank"], row["student_name"], row["points"])
+            for row in ranking["students"]
+        ] == [
+            (1, "Beatriz Álvarez Torres", 200),
+            (2, "Ana María Zuluaga Pérez", 200),
+            (3, "Carlos Ibarra Ruiz", 0),
+        ]
+        _login_as_teacher(client)
+        assert client.get(f"/courses/{course['id']}/live-ranking").status_code == 200
+
+        other_course = _teacher_course(
+            client,
+            code="OTHER",
+            name="Otro curso",
+            university="OTHER-UNI",
+            cycle_name="2026-III",
+        )[1]
+        _login_student(client, "RANK001")
+        student_ranking = client.get(f"/courses/{course['id']}/live-ranking")
+        assert student_ranking.status_code == 200
+        assert client.get(
+            f"/courses/{other_course['id']}/live-ranking"
+        ).status_code == 404
+
     def test_live_quiz_defaults_to_30_seconds(self, client: TestClient):
         _, course = _teacher_course(client)
         created = client.post(

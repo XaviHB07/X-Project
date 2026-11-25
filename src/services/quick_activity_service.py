@@ -34,6 +34,7 @@ Igual que `AuthService`, trabaja con la sesión de SQLAlchemy directamente.
 from __future__ import annotations
 
 import secrets
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, List, Optional, Sequence
 
@@ -681,6 +682,116 @@ class QuickActivityService:
                 "participant_count": participant_count,
                 "podium": board[:3] if phase == "finished" else [],
             }
+
+    def cumulative_live_ranking(self, course_id: int) -> dict:
+        """Calcula el ranking desde el puntaje final persistido de cada quiz."""
+        with self._session_factory() as session:
+            course = session.get(CourseORM, course_id)
+            if course is None:
+                raise QuickActivityNotFoundError(f"Curso {course_id} no encontrado.")
+
+            completed_live_quizzes = (
+                select(QuickActivityORM.id)
+                .where(
+                    QuickActivityORM.course_id == course_id,
+                    QuickActivityORM.mode == MODE_LIVE,
+                    QuickActivityORM.status == "closed",
+                    QuickActivityORM.live_phase == "finished",
+                )
+            )
+            latest_attempts = (
+                select(
+                    QuickActivityResponseORM.activity_id.label("activity_id"),
+                    QuickActivityResponseORM.student_id.label("student_id"),
+                    func.max(QuickActivityResponseORM.attempt).label("attempt"),
+                )
+                .where(QuickActivityResponseORM.activity_id.in_(completed_live_quizzes))
+                .group_by(
+                    QuickActivityResponseORM.activity_id,
+                    QuickActivityResponseORM.student_id,
+                )
+                .subquery()
+            )
+            points_by_student = (
+                select(
+                    QuickActivityResponseORM.student_id.label("student_id"),
+                    func.sum(func.coalesce(QuickActivityAnswerORM.points, 0)).label("points"),
+                )
+                .join(
+                    latest_attempts,
+                    (latest_attempts.c.activity_id == QuickActivityResponseORM.activity_id)
+                    & (latest_attempts.c.student_id == QuickActivityResponseORM.student_id)
+                    & (latest_attempts.c.attempt == QuickActivityResponseORM.attempt),
+                )
+                .join(
+                    QuickActivityAnswerORM,
+                    QuickActivityAnswerORM.response_id == QuickActivityResponseORM.id,
+                )
+                .group_by(QuickActivityResponseORM.student_id)
+                .subquery()
+            )
+            roster = session.execute(
+                select(
+                    StudentORM.id,
+                    StudentORM.display_name,
+                    func.coalesce(points_by_student.c.points, 0).label("points"),
+                )
+                .outerjoin(
+                    points_by_student,
+                    points_by_student.c.student_id == StudentORM.id,
+                )
+                .where(
+                    StudentORM.course_id == course_id,
+                    StudentORM.active.is_(True),
+                )
+            ).all()
+            quiz_count = session.execute(
+                select(func.count(QuickActivityORM.id)).where(
+                    QuickActivityORM.course_id == course_id,
+                    QuickActivityORM.mode == MODE_LIVE,
+                    QuickActivityORM.status == "closed",
+                    QuickActivityORM.live_phase == "finished",
+                )
+            ).scalar_one()
+
+            ordered = sorted(
+                roster,
+                key=lambda row: (
+                    -int(row.points),
+                    self._paternal_surname_key(row.display_name),
+                    self._name_sort_key(row.display_name),
+                    row.id,
+                ),
+            )
+            return {
+                "course_id": course.id,
+                "course_name": course.name,
+                "quiz_count": int(quiz_count),
+                "student_count": len(ordered),
+                "students": [
+                    {
+                        "rank": rank,
+                        "student_id": row.id,
+                        "student_name": row.display_name,
+                        "points": int(row.points),
+                    }
+                    for rank, row in enumerate(ordered, start=1)
+                ],
+            }
+
+    @staticmethod
+    def _name_sort_key(name: str) -> str:
+        normalized = unicodedata.normalize("NFKD", name.casefold())
+        return "".join(char for char in normalized if not unicodedata.combining(char))
+
+    @classmethod
+    def _paternal_surname_key(cls, full_name: str) -> str:
+        surname_part = full_name.split(",", 1)[0] if "," in full_name else full_name
+        parts = surname_part.split()
+        surname = parts[0] if "," in full_name else (
+            parts[-2] if len(parts) > 2 else parts[-1] if parts else ""
+        )
+        return cls._name_sort_key(surname)
 
     def live_answer(
         self, student_user_id: int, activity_id: int, question_id: int, selected_option: int
