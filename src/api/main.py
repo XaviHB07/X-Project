@@ -2897,7 +2897,10 @@ def cumulative_live_ranking(
     if not request.app.state.app_context.auth_service.has_course_access(user, course_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No se encontró el curso autorizado.")
     return CumulativeLiveRankingResponse(**_quick_call(
-        lambda: _quick_service(request).cumulative_live_ranking(course_id)
+        lambda: _quick_service(request).cumulative_live_ranking(
+            course_id,
+            student_user_id=user.id if user.role == "estudiante" else None,
+        )
     ))
 
 

@@ -11,6 +11,7 @@ Usan la misma base SQLite temporal y las mismas cuentas que `test_api.py`.
 """
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -728,6 +729,13 @@ def _live_quiz(client: TestClient, course_id: int, seconds: int = 20):
 class TestQrYQuizEnVivo:
     def test_cumulative_ranking_uses_only_finished_live_quiz_points(self, client: TestClient):
         _, course = _teacher_course(client, code="RANK", name="Ranking")
+        today = datetime.now(timezone.utc).astimezone(ZoneInfo("America/Lima")).date()
+        cycle_start = today - timedelta(days=9 * 7)
+        with client.app.state.app_context.quick_activity_service._session_factory() as session:
+            cycle = session.get(AcademicCycleORM, course["cycle_id"])
+            cycle.starts_on = cycle_start
+            cycle.ends_on = cycle_start + timedelta(days=15 * 7 - 1)
+            session.commit()
         for code, name in (
             ("RANK001", "Ana María Zuluaga Pérez"),
             ("RANK002", "Beatriz Álvarez Torres"),
@@ -743,13 +751,16 @@ class TestQrYQuizEnVivo:
                 .order_by(StudentORM.id)
             ).scalars().all()
 
-            def create_completed_activity(mode: str, title: str) -> tuple:
+            def create_completed_activity(
+                mode: str, title: str, closed_at: datetime
+            ) -> tuple:
                 activity = QuickActivityORM(
                     course_id=course["id"],
                     title=title,
                     status="closed",
                     mode=mode,
                     live_phase="finished" if mode == "live" else None,
+                    closed_at=closed_at,
                 )
                 session.add(activity)
                 session.flush()
@@ -782,10 +793,25 @@ class TestQrYQuizEnVivo:
                     response_ms=100,
                 ))
 
-            first, first_question = create_completed_activity("live", "Primera cacería")
-            second, second_question = create_completed_activity("live", "Segunda cacería")
-            unrelated, unrelated_question = create_completed_activity("self_paced", "Test")
-            unfinished, unfinished_question = create_completed_activity("live", "En curso")
+            def quiz_close(week: int) -> datetime:
+                date = cycle_start + timedelta(days=(week - 1) * 7 + 1)
+                return datetime(date.year, date.month, date.day, 18, tzinfo=timezone.utc)
+
+            first, first_question = create_completed_activity(
+                "live", "Cacería Apertura", quiz_close(2)
+            )
+            second, second_question = create_completed_activity(
+                "live", "Cacería Clausura", quiz_close(10)
+            )
+            exam_quiz, exam_question = create_completed_activity(
+                "live", "Cacería en semana de examen", quiz_close(8)
+            )
+            unrelated, unrelated_question = create_completed_activity(
+                "self_paced", "Test", quiz_close(3)
+            )
+            unfinished, unfinished_question = create_completed_activity(
+                "live", "En curso", quiz_close(5)
+            )
             unfinished.status = "published"
             unfinished.live_phase = "question"
             add_result(first, first_question, students[0], 1, 999)
@@ -793,21 +819,43 @@ class TestQrYQuizEnVivo:
             add_result(first, first_question, students[1], 1, 100)
             add_result(second, second_question, students[0], 1, 100)
             add_result(second, second_question, students[1], 1, 100)
+            add_result(exam_quiz, exam_question, students[0], 1, 750)
             add_result(unrelated, unrelated_question, students[0], 1, 9000)
             add_result(unfinished, unfinished_question, students[0], 1, 8000)
             session.commit()
 
+        _login_as_teacher(client)
         response = client.get(f"/courses/{course['id']}/live-ranking")
         assert response.status_code == 200, response.text
         ranking = response.json()
-        assert ranking["quiz_count"] == 2
+        assert ranking["view"] == "teacher"
         assert ranking["student_count"] == 3
+        periods = {period["code"]: period for period in ranking["periods"]}
+        assert periods["apertura"]["quiz_count"] == 1
+        assert periods["clausura"]["quiz_count"] == 1
+        assert periods["total"]["quiz_count"] == 3
         assert [
             (row["rank"], row["student_name"], row["points"])
-            for row in ranking["students"]
+            for row in periods["total"]["students"]
         ] == [
-            (1, "Beatriz Álvarez Torres", 200),
-            (2, "Ana María Zuluaga Pérez", 200),
+            (1, "Ana María Zuluaga Pérez", 950),
+            (2, "Beatriz Álvarez Torres", 200),
+            (3, "Carlos Ibarra Ruiz", 0),
+        ]
+        assert [
+            (row["rank"], row["student_name"], row["points"])
+            for row in periods["apertura"]["students"]
+        ] == [
+            (1, "Beatriz Álvarez Torres", 100),
+            (2, "Ana María Zuluaga Pérez", 100),
+            (3, "Carlos Ibarra Ruiz", 0),
+        ]
+        assert [
+            (row["rank"], row["student_name"], row["points"])
+            for row in periods["clausura"]["students"]
+        ] == [
+            (1, "Beatriz Álvarez Torres", 100),
+            (2, "Ana María Zuluaga Pérez", 100),
             (3, "Carlos Ibarra Ruiz", 0),
         ]
         _login_as_teacher(client)
@@ -823,6 +871,22 @@ class TestQrYQuizEnVivo:
         _login_student(client, "RANK001")
         student_ranking = client.get(f"/courses/{course['id']}/live-ranking")
         assert student_ranking.status_code == 200
+        student_result = student_ranking.json()
+        assert student_result["view"] == "student"
+        assert student_result["phase"] == "clausura"
+        assert student_result["rank"] == 2
+        assert student_result["periods"] == []
+        assert "students" not in student_result
+        assert "points" not in student_result
+
+        with client.app.state.app_context.quick_activity_service._session_factory() as session:
+            cycle = session.get(AcademicCycleORM, course["cycle_id"])
+            cycle.starts_on = today - timedelta(days=7 * 7)
+            session.commit()
+        exam_week = client.get(f"/courses/{course['id']}/live-ranking").json()
+        assert exam_week["phase"] == "exam"
+        assert exam_week["rank"] is None
+        assert "examen parcial" in exam_week["message"].lower()
         assert client.get(
             f"/courses/{other_course['id']}/live-ranking"
         ).status_code == 404

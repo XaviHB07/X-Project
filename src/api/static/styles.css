@@ -1414,7 +1414,16 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .live-ranking-toolbar { display: flex; align-items: end; gap: 12px; }
 .live-ranking-toolbar .form-field { display: grid; gap: 6px; width: min(100%, 380px); }
 .live-ranking-toolbar .button { flex: 0 0 auto; }
+.live-ranking-tabs { display: flex; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid var(--line); }
+.live-ranking-tab { padding: 10px 13px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: #647087; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.live-ranking-tab:hover { color: #4b36bf; }
+.live-ranking-tab.is-active { border-bottom-color: #7851df; color: #4b36bf; }
 .live-ranking-status { min-height: 18px; margin: 0; }
+.live-ranking-position { display: grid; justify-items: center; gap: 10px; padding: 36px 16px; border: 1px solid #dfe5f0; border-radius: 12px; background: radial-gradient(circle at 50% 25%, #f6f1ff, #fff 65%); text-align: center; }
+.live-ranking-position .eyebrow, .live-ranking-position p { margin: 0; }
+.live-ranking-position .eyebrow { color: #6b50c5; font-weight: 800; letter-spacing: .12em; }
+.live-ranking-position-number { color: #29204f; font-size: clamp(32px, 7vw, 56px); font-weight: 850; line-height: 1.1; }
+.live-ranking-position p:last-child { max-width: 520px; color: #68748a; font-size: 14px; line-height: 1.5; }
 .live-ranking-scroll { max-height: min(66vh, 720px); overflow-y: auto; overscroll-behavior: contain; padding: 2px 6px 2px 2px; scrollbar-gutter: stable; }
 .live-ranking-chart { display: grid; gap: 8px; }
 .live-rank-row { display: grid; grid-template-columns: 58px minmax(140px, 260px) minmax(80px, 1fr) 92px; align-items: center; gap: 13px; min-height: 58px; padding: 9px 13px; border: 1px solid #e4eaf3; border-radius: 7px; background: #fbfcff; }
@@ -1433,6 +1442,11 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .student-mode .live-ranking-panel { border-color: #263d70; background: #101f43; color: white; }
 .student-mode .live-ranking-heading h1 { color: white; }
 .student-mode .live-ranking-heading .heading-meta, .student-mode .live-ranking-status { color: #c1cce3; }
+.student-mode .live-ranking-position { width: min(100%, 560px); justify-self: center; border-color: #344568; background: radial-gradient(circle at 50% 25%, #27365d, #17294f 68%); }
+.student-mode .live-ranking-position .eyebrow { color: #c8b6ff; }
+.student-mode .live-ranking-position-number { color: #fff0b5; }
+.student-mode .live-ranking-position p:last-child { color: #cfdaee; }
+.student-mode .live-ranking-tabs { display: none; }
 .student-mode .live-ranking-panel .live-rank-row { border-color: #344568; background: #17294f; }
 .student-mode .live-ranking-panel .live-rank-name { color: #f2f5ff; }
 .student-mode .live-ranking-panel .live-rank-track { background: #26395e; }
@@ -1445,6 +1459,9 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
   .live-ranking-toolbar { align-items: stretch; flex-direction: column; }
   .live-ranking-toolbar .form-field { width: 100%; }
   .live-ranking-toolbar .button { align-self: flex-start; }
+  .live-ranking-tabs { flex-wrap: nowrap; overflow-x: auto; }
+  .live-ranking-tab { flex: 0 0 auto; padding: 9px 10px; font-size: 11px; }
+  .live-ranking-position { padding: 29px 12px; }
   .live-ranking-scroll { max-height: 68vh; padding-right: 2px; }
   .live-ranking-chart { gap: 7px; }
   .live-rank-row { grid-template-columns: 40px minmax(0, 1fr) 68px; gap: 7px 9px; min-height: 76px; padding: 9px; }

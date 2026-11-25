@@ -18,6 +18,7 @@ const state = {
   liveRankingCourseId: null,
   liveRankingTimer: null,
   liveRankingData: null,
+  liveRankingPeriod: "apertura",
   courseView: "attendance",
   selectedEvaluationId: null,
   groupPlans: [],
@@ -228,10 +229,16 @@ const elements = {
   studentActivityView: $("#student-activity-view"),
   liveRankingViewButton: $("#live-ranking-view-button"),
   liveRankingPage: $("#live-ranking-page"),
+  liveRankingDescription: $("#live-ranking-description"),
   liveRankingBack: $("#live-ranking-back"),
   liveRankingCourse: $("#live-ranking-course"),
   liveRankingRefresh: $("#live-ranking-refresh"),
+  liveRankingTabs: $("#live-ranking-tabs"),
   liveRankingStatus: $("#live-ranking-status"),
+  liveRankingPosition: $("#live-ranking-position"),
+  liveRankingPositionPhase: $("#live-ranking-position-phase"),
+  liveRankingPositionNumber: $("#live-ranking-position-number"),
+  liveRankingPositionMessage: $("#live-ranking-position-message"),
   liveRankingScroll: $("#live-ranking-scroll"),
   liveRankingChart: $("#live-ranking-chart"),
   liveRankingEmpty: $("#live-ranking-empty"),
@@ -571,16 +578,71 @@ function renderStudentWeeks(data) {
 }
 
 function renderLiveRanking(data) {
-  const rows = data.students || [];
-  elements.liveRankingScroll.hidden = rows.length === 0;
-  elements.liveRankingEmpty.hidden = rows.length > 0;
-  elements.liveRankingEmpty.textContent = rows.length
-    ? ""
-    : "No hay estudiantes activos matriculados en este curso.";
-  if (!rows.length) {
-    elements.liveRankingChart.innerHTML = "";
+  const isStudent = data.view === "student";
+  elements.liveRankingTabs.hidden = isStudent;
+  elements.liveRankingPosition.hidden = !isStudent;
+  elements.liveRankingScroll.hidden = true;
+  elements.liveRankingEmpty.hidden = true;
+  elements.liveRankingChart.innerHTML = "";
+
+  if (isStudent) {
+    const phaseLabels = {
+      apertura: "RANKING DEL APERTURA · SEMANAS 1–7",
+      exam: "SEMANA 8 · EXAMEN PARCIAL",
+      clausura: "RANKING DE CLAUSURA · SEMANA 9 EN ADELANTE",
+      not_started: "CICLO ACADÉMICO",
+      cycle_not_configured: "RANKING NO DISPONIBLE",
+      cycle_finished: "CICLO FINALIZADO",
+    };
+    elements.liveRankingDescription.textContent =
+      "Consulta únicamente tu posición relativa en la fase vigente.";
+    elements.liveRankingPositionPhase.textContent = phaseLabels[data.phase] || "TU RANKING";
+    elements.liveRankingPositionNumber.textContent = data.rank
+      ? `Tu puesto: ${data.rank}.º`
+      : "Sin puesto disponible";
+    elements.liveRankingPositionMessage.textContent = data.message
+      || `Posición entre ${data.student_count} estudiantes activos del curso.`;
+    elements.liveRankingStatus.textContent = "";
     return;
   }
+
+  elements.liveRankingDescription.textContent =
+    "Consulta las clasificaciones por periodo y el total acumulado del curso.";
+  elements.liveRankingPosition.hidden = true;
+  const period = (data.periods || []).find(
+    (item) => item.code === state.liveRankingPeriod,
+  );
+  if (!period) {
+    elements.liveRankingStatus.textContent = "No hay datos de ranking disponibles.";
+    return;
+  }
+  const periodLabels = {
+    apertura: "Ranking del Apertura · Semanas 1–7",
+    clausura: `Ranking de Clausura · Semanas 9–${data.cycle_week_count}`,
+    total: "Ranking Acumulado total",
+  };
+  elements.liveRankingTabs.querySelectorAll("[data-ranking-period]").forEach((button) => {
+    const active = button.dataset.rankingPeriod === state.liveRankingPeriod;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  const rows = period.students || [];
+  elements.liveRankingEmpty.hidden = period.available && rows.length > 0;
+  elements.liveRankingEmpty.textContent = !period.available
+    ? "Configura las fechas del ciclo para calcular este periodo."
+    : rows.length
+      ? ""
+      : "No hay estudiantes activos matriculados en este curso.";
+  if (!period.available || !rows.length) {
+    elements.liveRankingStatus.textContent = period.available
+      ? `${periodLabels[period.code]} · ${period.quiz_count} quizzes finalizados.`
+      : (data.message || "Este periodo todavía no está disponible.");
+    return;
+  }
+  elements.liveRankingScroll.hidden = false;
+  elements.liveRankingStatus.textContent =
+    `${data.course_name} · ${periodLabels[period.code]} · ${period.quiz_count} quizzes finalizados · ${period.student_count} estudiantes activos.`;
+  elements.liveRankingScroll.hidden = rows.length === 0;
   const maximum = Math.max(0, ...rows.map((row) => row.points));
   elements.liveRankingChart.innerHTML = rows.map((row) => {
     const width = maximum ? (row.points / maximum) * 100 : 0;
@@ -627,24 +689,23 @@ async function loadLiveRanking() {
     elements.liveRankingStatus.textContent = "Selecciona un curso para consultar su ranking.";
     elements.liveRankingScroll.hidden = true;
     elements.liveRankingEmpty.hidden = true;
+    elements.liveRankingPosition.hidden = true;
     return;
   }
   state.liveRankingCourseId = courseId;
-  elements.liveRankingStatus.textContent = "Actualizando puntuaciones acumuladas…";
+  elements.liveRankingStatus.textContent = "Actualizando puntuaciones…";
   try {
     const data = await api(`/courses/${courseId}/live-ranking`);
     if (Number(elements.liveRankingCourse.value) !== courseId) return;
     state.liveRankingData = data;
     renderLiveRanking(data);
-    const quizLabel = `${data.quiz_count} quiz${data.quiz_count === 1 ? "" : "es"} finalizado${data.quiz_count === 1 ? "" : "s"}`;
-    elements.liveRankingStatus.textContent =
-      `${data.course_name} · ${data.student_count} estudiantes activos · ${quizLabel}. Se actualiza automáticamente.`;
   } catch (error) {
     elements.liveRankingChart.innerHTML = "";
     elements.liveRankingScroll.hidden = true;
-    elements.liveRankingEmpty.hidden = false;
-    elements.liveRankingEmpty.textContent = error.message;
+    elements.liveRankingPosition.hidden = true;
+    elements.liveRankingEmpty.hidden = true;
     elements.liveRankingStatus.textContent = "No se pudo actualizar el ranking.";
+    notify(error.message, true);
   }
 }
 
@@ -4810,6 +4871,13 @@ elements.liveRankingViewButton.addEventListener("click", () => setAppView("ranki
 elements.liveRankingBack.addEventListener("click", () => setAppView("studentPortal"));
 elements.liveRankingCourse.addEventListener("change", loadLiveRanking);
 elements.liveRankingRefresh.addEventListener("click", loadLiveRanking);
+elements.liveRankingTabs.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-ranking-period]");
+  if (!button) return;
+  state.liveRankingPeriod = button.dataset.rankingPeriod;
+  if (state.liveRankingData?.view === "teacher") renderLiveRanking(state.liveRankingData);
+  else loadLiveRanking();
+});
 elements.cyclesViewButton.addEventListener("click", () => setAppView("cycles"));
 elements.institutionsViewButton.addEventListener("click", () => setAppView("institutions"));
 elements.teachersViewButton.addEventListener("click", () => setAppView("teachers"));

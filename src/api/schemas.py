@@ -1193,12 +1193,34 @@ class CumulativeLiveRankingStudent(BaseModel):
     points: int
 
 
-class CumulativeLiveRankingResponse(BaseModel):
-    course_id: int
-    course_name: str
+class CumulativeLiveRankingPeriod(BaseModel):
+    code: Literal["apertura", "clausura", "total"]
+    available: bool
+    start_week: Optional[int] = None
+    end_week: Optional[int] = None
     quiz_count: int
     student_count: int
     students: List[CumulativeLiveRankingStudent]
+
+
+class CumulativeLiveRankingResponse(BaseModel):
+    view: Literal["teacher", "student"]
+    course_id: int
+    course_name: str
+    current_week: Optional[int] = None
+    cycle_week_count: int
+    phase: Literal[
+        "apertura",
+        "exam",
+        "clausura",
+        "not_started",
+        "cycle_not_configured",
+        "cycle_finished",
+    ]
+    message: Optional[str] = None
+    rank: Optional[int] = None
+    student_count: int
+    periods: List[CumulativeLiveRankingPeriod]
 
 
 class LiveTeacherStateResponse(BaseModel):

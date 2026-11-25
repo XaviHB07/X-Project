@@ -37,12 +37,14 @@ import secrets
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, List, Optional, Sequence
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from src.repositories.sqlalchemy.models import (
+    AcademicCycleORM,
     ClassSessionORM,
     CourseORM,
     QuickActivityAnswerORM,
@@ -56,6 +58,8 @@ SessionFactory = Callable[[], Session]
 
 # Sin 0/O ni 1/I/L para que el código se dicte y se copie sin confusiones.
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+RANKING_WEEK_COUNT = 15
+RANKING_TIMEZONE = ZoneInfo("America/Lima")
 CODE_LENGTH = 6
 MAX_QUESTIONS = 20
 MAX_OPTIONS = 6
@@ -683,38 +687,52 @@ class QuickActivityService:
                 "podium": board[:3] if phase == "finished" else [],
             }
 
-    def cumulative_live_ranking(self, course_id: int) -> dict:
-        """Calcula el ranking desde el puntaje final persistido de cada quiz."""
+    def cumulative_live_ranking(
+        self, course_id: int, student_user_id: Optional[int] = None
+    ) -> dict:
+        """Calcula Apertura, Clausura y total desde los puntos persistidos."""
         with self._session_factory() as session:
             course = session.get(CourseORM, course_id)
             if course is None:
                 raise QuickActivityNotFoundError(f"Curso {course_id} no encontrado.")
+            cycle = session.get(AcademicCycleORM, course.cycle_id) if course.cycle_id else None
+            cycle_start = cycle.starts_on if cycle else None
+            cycle_week_count = RANKING_WEEK_COUNT
+            if cycle_start is not None and cycle and cycle.ends_on is not None:
+                cycle_week_count = max(
+                    1, (cycle.ends_on - cycle_start).days // 7 + 1
+                )
 
-            completed_live_quizzes = (
-                select(QuickActivityORM.id)
-                .where(
+            completed_quizzes = session.execute(
+                select(QuickActivityORM.id, QuickActivityORM.closed_at).where(
                     QuickActivityORM.course_id == course_id,
                     QuickActivityORM.mode == MODE_LIVE,
                     QuickActivityORM.status == "closed",
                     QuickActivityORM.live_phase == "finished",
                 )
-            )
+            ).all()
+            quiz_ids = [quiz.id for quiz in completed_quizzes]
+            quiz_weeks = {
+                quiz.id: self._ranking_week(quiz.closed_at, cycle_start)
+                for quiz in completed_quizzes
+            }
             latest_attempts = (
                 select(
                     QuickActivityResponseORM.activity_id.label("activity_id"),
                     QuickActivityResponseORM.student_id.label("student_id"),
                     func.max(QuickActivityResponseORM.attempt).label("attempt"),
                 )
-                .where(QuickActivityResponseORM.activity_id.in_(completed_live_quizzes))
+                .where(QuickActivityResponseORM.activity_id.in_(quiz_ids))
                 .group_by(
                     QuickActivityResponseORM.activity_id,
                     QuickActivityResponseORM.student_id,
                 )
                 .subquery()
             )
-            points_by_student = (
+            score_rows = session.execute(
                 select(
-                    QuickActivityResponseORM.student_id.label("student_id"),
+                    QuickActivityResponseORM.activity_id,
+                    QuickActivityResponseORM.student_id,
                     func.sum(func.coalesce(QuickActivityAnswerORM.points, 0)).label("points"),
                 )
                 .join(
@@ -727,57 +745,215 @@ class QuickActivityService:
                     QuickActivityAnswerORM,
                     QuickActivityAnswerORM.response_id == QuickActivityResponseORM.id,
                 )
-                .group_by(QuickActivityResponseORM.student_id)
-                .subquery()
-            )
+                .group_by(
+                    QuickActivityResponseORM.activity_id,
+                    QuickActivityResponseORM.student_id,
+                )
+            ).all() if quiz_ids else []
+
+            points_by_period = {
+                "apertura": {},
+                "clausura": {},
+                "total": {},
+            }
+            for row in score_rows:
+                points = int(row.points or 0)
+                points_by_period["total"][row.student_id] = (
+                    points_by_period["total"].get(row.student_id, 0) + points
+                )
+                week = quiz_weeks.get(row.activity_id)
+                period = (
+                    "apertura" if week is not None and 1 <= week <= 7
+                    else "clausura" if week is not None and 9 <= week <= cycle_week_count
+                    else None
+                )
+                if period:
+                    points_by_period[period][row.student_id] = (
+                        points_by_period[period].get(row.student_id, 0) + points
+                    )
+
             roster = session.execute(
-                select(
-                    StudentORM.id,
-                    StudentORM.display_name,
-                    func.coalesce(points_by_student.c.points, 0).label("points"),
-                )
-                .outerjoin(
-                    points_by_student,
-                    points_by_student.c.student_id == StudentORM.id,
-                )
-                .where(
+                select(StudentORM.id, StudentORM.display_name).where(
                     StudentORM.course_id == course_id,
                     StudentORM.active.is_(True),
                 )
             ).all()
-            quiz_count = session.execute(
-                select(func.count(QuickActivityORM.id)).where(
-                    QuickActivityORM.course_id == course_id,
-                    QuickActivityORM.mode == MODE_LIVE,
-                    QuickActivityORM.status == "closed",
-                    QuickActivityORM.live_phase == "finished",
-                )
-            ).scalar_one()
-
-            ordered = sorted(
-                roster,
-                key=lambda row: (
-                    -int(row.points),
-                    self._paternal_surname_key(row.display_name),
-                    self._name_sort_key(row.display_name),
-                    row.id,
-                ),
-            )
-            return {
+            base = {
                 "course_id": course.id,
                 "course_name": course.name,
-                "quiz_count": int(quiz_count),
-                "student_count": len(ordered),
-                "students": [
-                    {
-                        "rank": rank,
-                        "student_id": row.id,
-                        "student_name": row.display_name,
-                        "points": int(row.points),
-                    }
-                    for rank, row in enumerate(ordered, start=1)
-                ],
+                "current_week": (
+                    self._current_ranking_week(cycle_start) if cycle_start is not None else None
+                ),
+                "cycle_week_count": cycle_week_count,
             }
+            aperture_quiz_count = sum(
+                1 for week in quiz_weeks.values() if week is not None and 1 <= week <= 7
+            )
+            closing_quiz_count = sum(
+                1 for week in quiz_weeks.values()
+                if week is not None and 9 <= week <= cycle_week_count
+            )
+            periods = {
+                "apertura": self._ranking_period(
+                    "apertura",
+                    roster,
+                    points_by_period["apertura"],
+                    aperture_quiz_count,
+                    available=cycle_start is not None,
+                    start_week=1,
+                    end_week=7,
+                ),
+                "clausura": self._ranking_period(
+                    "clausura",
+                    roster,
+                    points_by_period["clausura"],
+                    closing_quiz_count,
+                    available=cycle_start is not None and cycle_week_count >= 9,
+                    start_week=9,
+                    end_week=cycle_week_count,
+                ),
+                "total": self._ranking_period(
+                    "total",
+                    roster,
+                    points_by_period["total"],
+                    len(completed_quizzes),
+                    available=True,
+                    start_week=None,
+                    end_week=None,
+                ),
+            }
+
+            if student_user_id is not None:
+                student = session.execute(
+                    select(StudentORM.id).where(
+                        StudentORM.course_id == course_id,
+                        StudentORM.user_id == student_user_id,
+                        StudentORM.active.is_(True),
+                    )
+                ).scalar_one_or_none()
+                if student is None:
+                    raise QuickActivityNotFoundError("No se encontró la matrícula activa.")
+                phase, message = self._student_ranking_phase(
+                    base["current_week"], cycle_start is not None, cycle_week_count
+                )
+                selected_period = periods.get(phase)
+                student_rank = None
+                student_count = len(roster)
+                if selected_period and selected_period["available"]:
+                    student_row = next(
+                        (
+                            item for item in selected_period["students"]
+                            if item["student_id"] == student
+                        ),
+                        None,
+                    )
+                    student_rank = student_row["rank"] if student_row else None
+                return {
+                    **base,
+                    "view": "student",
+                    "phase": phase,
+                    "message": message,
+                    "rank": student_rank,
+                    "student_count": student_count,
+                    "periods": [],
+                }
+
+            return {
+                **base,
+                "view": "teacher",
+                "phase": self._teacher_ranking_phase(
+                    base["current_week"], cycle_start is not None, cycle_week_count
+                ),
+                "message": None if cycle_start is not None else (
+                    "Configura la fecha de inicio del ciclo para separar Apertura y Clausura."
+                ),
+                "rank": None,
+                "student_count": len(roster),
+                "periods": list(periods.values()),
+            }
+
+    @classmethod
+    def _ranking_period(
+        cls,
+        code: str,
+        roster,
+        points_by_student: dict[int, int],
+        quiz_count: int,
+        available: bool,
+        start_week: Optional[int],
+        end_week: Optional[int],
+    ) -> dict:
+        ordered = sorted(
+            roster,
+            key=lambda row: (
+                -points_by_student.get(row.id, 0),
+                cls._paternal_surname_key(row.display_name),
+                cls._name_sort_key(row.display_name),
+                row.id,
+            ),
+        )
+        return {
+            "code": code,
+            "available": available,
+            "start_week": start_week,
+            "end_week": end_week,
+            "quiz_count": quiz_count,
+            "student_count": len(ordered),
+            "students": [
+                {
+                    "rank": rank,
+                    "student_id": row.id,
+                    "student_name": row.display_name,
+                    "points": points_by_student.get(row.id, 0),
+                }
+                for rank, row in enumerate(ordered, start=1)
+            ] if available else [],
+        }
+
+    @staticmethod
+    def _ranking_week(value: Optional[datetime], cycle_start) -> Optional[int]:
+        if value is None or cycle_start is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        local_date = value.astimezone(RANKING_TIMEZONE).date()
+        return (local_date - cycle_start).days // 7 + 1
+
+    def _current_ranking_week(self, cycle_start) -> int:
+        now = self._clock()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        local_date = now.astimezone(RANKING_TIMEZONE).date()
+        return (local_date - cycle_start).days // 7 + 1
+
+    @staticmethod
+    def _student_ranking_phase(
+        current_week: Optional[int], cycle_available: bool, week_count: int
+    ) -> tuple[str, Optional[str]]:
+        if not cycle_available or current_week is None:
+            return "cycle_not_configured", (
+                "El docente debe configurar la fecha de inicio del ciclo para habilitar el ranking."
+            )
+        if current_week < 1:
+            return "not_started", "El ciclo académico todavía no comienza."
+        if current_week <= 7:
+            return "apertura", None
+        if current_week == 8:
+            return "exam", "Semana 8: semana de examen parcial. El ranking de fase está en pausa."
+        if current_week <= week_count:
+            return "clausura", None
+        if week_count >= 9:
+            return "clausura", "Ciclo finalizado. Esta es tu posición final de Clausura."
+        return "cycle_finished", "El ciclo académico ya finalizó."
+
+    @staticmethod
+    def _teacher_ranking_phase(
+        current_week: Optional[int], cycle_available: bool, week_count: int
+    ) -> str:
+        phase, _ = QuickActivityService._student_ranking_phase(
+            current_week, cycle_available, week_count
+        )
+        return phase
 
     @staticmethod
     def _name_sort_key(name: str) -> str:

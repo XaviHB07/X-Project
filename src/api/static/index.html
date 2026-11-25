@@ -227,8 +227,8 @@
         <section class="live-ranking-page" id="live-ranking-page" hidden aria-labelledby="live-ranking-title">
           <div class="live-ranking-heading">
             <p class="eyebrow">CACERÍA EN VIVO · LOBO FEROZ</p>
-            <h1 id="live-ranking-title">Ranking Acumulado – Lobo Feroz</h1>
-            <p class="heading-meta">Suma de puntos de quizzes en vivo finalizados. No incluye notas ni otras actividades.</p>
+            <h1 id="live-ranking-title">Rankings de Cacería en vivo – Lobo Feroz</h1>
+            <p class="heading-meta" id="live-ranking-description">Apertura, Clausura y acumulado total por curso.</p>
             <button class="text-button live-ranking-back" id="live-ranking-back" type="button" hidden>← Volver al portal del estudiante</button>
           </div>
           <section class="live-ranking-panel" aria-label="Clasificación del curso">
@@ -239,7 +239,17 @@
               </label>
               <button class="button button-quiet" id="live-ranking-refresh" type="button">⟳ Actualizar</button>
             </div>
+            <div class="live-ranking-tabs" id="live-ranking-tabs" role="tablist" aria-label="Periodo del ranking">
+              <button class="live-ranking-tab is-active" type="button" role="tab" aria-selected="true" data-ranking-period="apertura">Apertura · Semanas 1–7</button>
+              <button class="live-ranking-tab" type="button" role="tab" aria-selected="false" data-ranking-period="clausura">Clausura · Semana 9 en adelante</button>
+              <button class="live-ranking-tab" type="button" role="tab" aria-selected="false" data-ranking-period="total">Acumulado total</button>
+            </div>
             <p class="form-note live-ranking-status" id="live-ranking-status" role="status" aria-live="polite"></p>
+            <section class="live-ranking-position" id="live-ranking-position" hidden aria-live="polite">
+              <p class="eyebrow" id="live-ranking-position-phase"></p>
+              <strong class="live-ranking-position-number" id="live-ranking-position-number"></strong>
+              <p id="live-ranking-position-message"></p>
+            </section>
             <div class="live-ranking-scroll" id="live-ranking-scroll" hidden>
               <div class="live-ranking-chart" id="live-ranking-chart"></div>
             </div>
