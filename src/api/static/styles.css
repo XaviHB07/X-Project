@@ -673,6 +673,23 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .student-history-item dl > div { min-width: 0; }
 .student-history-item dt { margin-bottom: 4px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
 .student-history-item dd { margin: 0; overflow-wrap: anywhere; color: var(--ink); font-size: 12px; }
+.student-hunt-history-list { display: grid; gap: 12px; }
+.student-hunt-history-card { display: grid; gap: 15px; padding: 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--white); }
+.student-hunt-history-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.student-hunt-history-heading > div { display: grid; gap: 5px; }
+.student-hunt-history-heading .eyebrow, .student-hunt-history-heading h3 { margin: 0; }
+.student-hunt-history-heading .eyebrow { color: #7154cb; font-size: 10px; font-weight: 800; letter-spacing: .07em; }
+.student-hunt-history-heading h3 { color: var(--forest); font-size: 16px; }
+.student-hunt-history-datetime { display: flex; flex-wrap: wrap; gap: 12px; }
+.student-hunt-history-datetime > div { display: grid; gap: 4px; }
+.student-hunt-history-datetime span { color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.student-hunt-history-datetime time { color: #48566c; font-size: 11px; white-space: nowrap; }
+.student-hunt-history-results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.student-hunt-history-results > div { display: grid; gap: 5px; padding: 12px; border-radius: 6px; background: #f4f6fb; }
+.student-hunt-history-results span { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.student-hunt-history-results strong { color: #30255f; font-size: 22px; font-variant-numeric: tabular-nums; }
+.student-hunt-history-results small { color: var(--muted); font-size: 11px; }
+.student-hunt-history-participation { margin: 0; color: var(--muted); font-size: 12px; }
 .student-history-comment { grid-column: 1 / -1; }
 .student-review-form { display: grid; gap: 9px; max-width: 720px; margin: 18px 0 24px; padding: 18px; border: 1px solid var(--line); border-radius: 7px; background: var(--white); }
 .student-review-form textarea { resize: vertical; }
@@ -822,6 +839,9 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
   .student-history-item { padding: 14px; }
   .student-history-item-heading { flex-direction: column; gap: 7px; }
   .student-history-item dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .student-hunt-history-card { padding: 14px; }
+  .student-hunt-history-heading { flex-direction: column; gap: 7px; }
+  .student-hunt-history-results > div { padding: 10px; }
   .student-review-request { align-items: stretch; flex-direction: column; }
   .student-review-request-meta { justify-items: start; }
   .review-request-status-label { width: 100%; }
@@ -1202,6 +1222,16 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .place-3 .live-podium-block { height: 80px; background: #e7a9a0; }
 .live-podium-step.is-empty { opacity: .35; }
 .live-final .live-board { width: min(560px, 100%); }
+.live-finale-view { display: grid; justify-items: center; gap: 14px; }
+.live-final-ranking { width: min(980px, 100%); padding: 14px 18px; border: 1px solid rgb(170 120 255 / 28%); border-radius: 10px; background: #10152a; color: white; }
+.live-final-ranking h4 { margin: 0 0 10px; color: #e0c3ff; font-size: 13px; letter-spacing: .1em; }
+.live-final-ranking-scroll { max-height: min(34vh, 300px); overflow: auto; overscroll-behavior: contain; border-radius: 6px; scrollbar-color: #9c70e8 #1a2038; }
+.live-final-ranking-scroll:focus-visible { outline: 2px solid #e0c3ff; outline-offset: 2px; }
+.live-final-ranking-table { width: 100%; min-width: 700px; border-collapse: collapse; font-size: 14px; text-align: left; }
+.live-final-ranking-table th, .live-final-ranking-table td { padding: 9px 10px; border-bottom: 1px solid rgb(255 255 255 / 10%); white-space: nowrap; }
+.live-final-ranking-table thead { position: sticky; top: 0; z-index: 1; background: #202744; color: #d7c6ff; }
+.live-final-ranking-table tbody tr:nth-child(even) { background: rgb(255 255 255 / 4%); }
+.live-final-ranking-table tbody th { font-weight: 600; }
 @media (max-width: 760px) { .live-lobby { grid-template-columns: 1fr; justify-items: center; text-align: center; } .live-options { grid-template-columns: 1fr; } }
 
 /* Finale sincronizado de Cacería en vivo */
@@ -1419,39 +1449,65 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
 .live-ranking-tab:hover { color: #4b36bf; }
 .live-ranking-tab.is-active { border-bottom-color: #7851df; color: #4b36bf; }
 .live-ranking-status { min-height: 18px; margin: 0; }
-.live-ranking-position { display: grid; justify-items: center; gap: 10px; padding: 36px 16px; border: 1px solid #dfe5f0; border-radius: 12px; background: radial-gradient(circle at 50% 25%, #f6f1ff, #fff 65%); text-align: center; }
+.live-ranking-position { display: grid; gap: 14px; padding: 24px 18px; border: 1px solid #dfe5f0; border-radius: 12px; background: radial-gradient(circle at 50% 25%, #f6f1ff, #fff 65%); text-align: center; }
 .live-ranking-position .eyebrow, .live-ranking-position p { margin: 0; }
 .live-ranking-position .eyebrow { color: #6b50c5; font-weight: 800; letter-spacing: .12em; }
-.live-ranking-position-number { color: #29204f; font-size: clamp(32px, 7vw, 56px); font-weight: 850; line-height: 1.1; }
-.live-ranking-position p:last-child { max-width: 520px; color: #68748a; font-size: 14px; line-height: 1.5; }
+.live-ranking-position > p:not(.eyebrow) { justify-self: center; max-width: 720px; color: #68748a; font-size: 14px; line-height: 1.5; }
+.live-ranking-student-periods { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; width: 100%; }
+.live-ranking-student-period { display: grid; align-content: start; gap: 10px; min-width: 0; padding: 16px; border: 1px solid #e1e5ef; border-radius: 9px; background: #fff; text-align: left; }
+.live-ranking-student-period h3 { margin: 0; color: #30255f; font-size: 14px; }
+.live-ranking-student-period > p { color: #788296; font-size: 11px; }
+.live-ranking-student-result { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.live-ranking-student-result > span { display: grid; gap: 4px; padding: 10px; border-radius: 6px; background: #f4f6fb; }
+.live-ranking-student-result small { color: #727d91; font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.live-ranking-student-result strong { color: #30255f; font-size: 22px; font-variant-numeric: tabular-nums; }
+.live-ranking-student-result em { color: #788296; font-size: 10px; font-style: normal; }
+.live-ranking-student-quiz-count { color: #7a8497; font-size: 10px; }
+.live-ranking-student-period.is-pending { background: #f7f8fb; }
+.live-ranking-student-period .live-ranking-student-pending { align-self: center; color: #788296; font-size: 12px; line-height: 1.5; }
 .live-ranking-scroll { max-height: min(66vh, 720px); overflow-y: auto; overscroll-behavior: contain; padding: 2px 6px 2px 2px; scrollbar-gutter: stable; }
 .live-ranking-chart { display: grid; gap: 8px; }
 .live-rank-row { display: grid; grid-template-columns: 58px minmax(140px, 260px) minmax(80px, 1fr) 92px; align-items: center; gap: 13px; min-height: 58px; padding: 9px 13px; border: 1px solid #e4eaf3; border-radius: 7px; background: #fbfcff; }
 .live-rank-place { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; background: #e8edf5; color: #53627a; font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .live-rank-name { overflow: hidden; color: #202b3d; font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
 .live-rank-track { height: 17px; overflow: hidden; border-radius: 10px; background: #edf0f7; box-shadow: inset 0 1px 2px rgb(22 31 54 / 8%); }
-.live-rank-bar { display: block; width: var(--rank-width); height: 100%; min-width: 0; border-radius: inherit; background: linear-gradient(90deg, #5f45d9, #be68ef); box-shadow: 0 0 14px rgb(147 83 230 / 27%); transition: width .45s ease; }
+.live-rank-bar { display: block; width: var(--rank-width); height: 100%; min-width: 0; border-radius: inherit; background: linear-gradient(90deg, #8793a7, #b8c1cf); transition: width .45s ease; }
 .live-rank-points { color: #2d2456; text-align: right; white-space: nowrap; font-size: 16px; font-variant-numeric: tabular-nums; }
 .live-rank-points small { color: #7a8090; font-size: 10px; }
 .live-rank-row.is-top-1 { border-color: #e8bf58; background: linear-gradient(100deg, #fff9e8, #fff 60%); box-shadow: 0 4px 14px rgb(194 147 40 / 12%); }
 .live-rank-row.is-top-1 .live-rank-place { background: linear-gradient(145deg, #ffe895, #e9af31); color: #563d0c; }
 .live-rank-row.is-top-1 .live-rank-bar { background: linear-gradient(90deg, #c58a16, #ffd968); }
-.live-rank-row.is-top-2 .live-rank-place { background: linear-gradient(145deg, #f3f5fa, #c4cbd9); color: #465166; }
-.live-rank-row.is-top-3 .live-rank-place { background: linear-gradient(145deg, #f5d4c2, #c98565); color: #542b1c; }
+.live-rank-row.is-top-2 { border-color: #c4ccd7; background: linear-gradient(100deg, #f3f5f8, #fff 60%); }
+.live-rank-row.is-top-2 .live-rank-place { background: linear-gradient(145deg, #f3f5f8, #aeb8c6); color: #3e4a5b; }
+.live-rank-row.is-top-2 .live-rank-bar { background: linear-gradient(90deg, #8995a5, #e1e5eb); }
+.live-rank-row.is-top-3 { border-color: #d3a184; background: linear-gradient(100deg, #fff5ef, #fff 60%); }
+.live-rank-row.is-top-3 .live-rank-place { background: linear-gradient(145deg, #f2c4a8, #b97651); color: #512d1d; }
+.live-rank-row.is-top-3 .live-rank-bar { background: linear-gradient(90deg, #a9613d, #dfa27b); }
 .student-mode .live-ranking-page { width: min(100%, 900px); margin: 0 auto; padding: 24px 18px; }
 .student-mode .live-ranking-panel { border-color: #263d70; background: #101f43; color: white; }
 .student-mode .live-ranking-heading h1 { color: white; }
 .student-mode .live-ranking-heading .heading-meta, .student-mode .live-ranking-status { color: #c1cce3; }
-.student-mode .live-ranking-position { width: min(100%, 560px); justify-self: center; border-color: #344568; background: radial-gradient(circle at 50% 25%, #27365d, #17294f 68%); }
+.student-mode .live-ranking-position { width: 100%; justify-self: center; border-color: #344568; background: radial-gradient(circle at 50% 25%, #27365d, #17294f 68%); }
 .student-mode .live-ranking-position .eyebrow { color: #c8b6ff; }
-.student-mode .live-ranking-position-number { color: #fff0b5; }
-.student-mode .live-ranking-position p:last-child { color: #cfdaee; }
+.student-mode .live-ranking-position > p:not(.eyebrow) { color: #cfdaee; }
+.student-mode .live-ranking-student-period { border-color: #344568; background: #17294f; }
+.student-mode .live-ranking-student-period h3 { color: #f0ebff; }
+.student-mode .live-ranking-student-period > p, .student-mode .live-ranking-student-quiz-count { color: #c1cce3; }
+.student-mode .live-ranking-student-result > span { background: #23375f; }
+.student-mode .live-ranking-student-result small, .student-mode .live-ranking-student-result em { color: #c1cce3; }
+.student-mode .live-ranking-student-result strong { color: #ffe6a0; }
+.student-mode .live-ranking-student-period.is-pending { background: #142443; }
+.student-mode .live-ranking-student-period .live-ranking-student-pending { color: #c1cce3; }
 .student-mode .live-ranking-tabs { display: none; }
 .student-mode .live-ranking-panel .live-rank-row { border-color: #344568; background: #17294f; }
+.student-mode .live-ranking-panel .live-rank-bar { background: linear-gradient(90deg, #66748c, #8b98ad); }
 .student-mode .live-ranking-panel .live-rank-name { color: #f2f5ff; }
 .student-mode .live-ranking-panel .live-rank-track { background: #26395e; }
 .student-mode .live-ranking-panel .live-rank-points { color: #ffe6a0; }
 .student-mode .live-ranking-panel .is-top-1 { border-color: #8d7440; background: linear-gradient(100deg, #382f29, #17294f 75%); }
+.student-mode .live-ranking-panel .is-top-1 .live-rank-bar { background: linear-gradient(90deg, #c58a16, #ffd968); }
+.student-mode .live-ranking-panel .is-top-2 .live-rank-bar { background: linear-gradient(90deg, #8995a5, #e1e5eb); }
+.student-mode .live-ranking-panel .is-top-3 .live-rank-bar { background: linear-gradient(90deg, #a9613d, #dfa27b); }
 .student-mode .live-ranking-panel .setup-empty { color: #d3ddf2; }
 @media (max-width: 650px) {
   .live-ranking-page { gap: 14px; padding: 10px 0 20px; }
@@ -1462,6 +1518,8 @@ h1 { margin-bottom: 6px; color: var(--forest); font-family: Fraunces, Georgia, s
   .live-ranking-tabs { flex-wrap: nowrap; overflow-x: auto; }
   .live-ranking-tab { flex: 0 0 auto; padding: 9px 10px; font-size: 11px; }
   .live-ranking-position { padding: 29px 12px; }
+  .live-ranking-student-periods { grid-template-columns: 1fr; }
+  .live-ranking-student-period { padding: 14px; }
   .live-ranking-scroll { max-height: 68vh; padding-right: 2px; }
   .live-ranking-chart { gap: 7px; }
   .live-rank-row { grid-template-columns: 40px minmax(0, 1fr) 68px; gap: 7px 9px; min-height: 76px; padding: 9px; }

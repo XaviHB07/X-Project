@@ -727,6 +727,109 @@ def _live_quiz(client: TestClient, course_id: int, seconds: int = 20):
 
 
 class TestQrYQuizEnVivo:
+    def test_wolf_howl_recording_is_served_as_audio(self, client: TestClient):
+        response = client.get("/assets/assets/wolf-howls.mp3")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("audio/mpeg")
+        assert len(response.content) > 10_000
+
+    def test_student_caceria_history_includes_zero_score_and_own_rank(self, client: TestClient):
+        _, course = _teacher_course(client, code="HIST", name="Historial")
+        for code, name in (
+            ("HIST001", "Ana Estudiante"),
+            ("HIST002", "Beatriz Estudiante"),
+            ("HIST003", "Carlos Estudiante"),
+        ):
+            _enroll_and_login_student(client, course["id"], code, name)
+
+        service = client.app.state.app_context.quick_activity_service
+        with service._session_factory() as session:
+            students = session.execute(
+                select(StudentORM)
+                .where(StudentORM.course_id == course["id"])
+                .order_by(StudentORM.id)
+            ).scalars().all()
+
+            def create_quiz(title: str, closed_at: datetime):
+                activity = QuickActivityORM(
+                    course_id=course["id"],
+                    title=title,
+                    status="closed",
+                    mode="live",
+                    live_phase="finished",
+                    closed_at=closed_at,
+                )
+                session.add(activity)
+                session.flush()
+                question = QuickActivityQuestionORM(
+                    activity_id=activity.id,
+                    position=1,
+                    prompt="Pregunta",
+                    options=["Sí", "No"],
+                    correct_option=0,
+                )
+                session.add(question)
+                session.flush()
+                return activity, question
+
+            def add_answer(activity, question, student, points: int, response_ms: int):
+                response = QuickActivityResponseORM(
+                    activity_id=activity.id,
+                    student_id=student.id,
+                    user_id=student.user_id,
+                    attempt=1,
+                )
+                session.add(response)
+                session.flush()
+                session.add(QuickActivityAnswerORM(
+                    response_id=response.id,
+                    question_id=question.id,
+                    selected_option=0,
+                    is_correct=True,
+                    points=points,
+                    response_ms=response_ms,
+                ))
+
+            older_quiz, older_question = create_quiz(
+                "Cacería respondida", datetime(2026, 11, 20, tzinfo=timezone.utc)
+            )
+            newest_quiz, newest_question = create_quiz(
+                "Cacería sin participar", datetime(2026, 11, 22, tzinfo=timezone.utc)
+            )
+            add_answer(older_quiz, older_question, students[0], 500, 200)
+            add_answer(older_quiz, older_question, students[1], 500, 100)
+            add_answer(newest_quiz, newest_question, students[1], 700, 150)
+            session.commit()
+
+        _login_as_teacher(client)
+        assert client.get("/student/live-activity-history").status_code == 403
+        _login_student(client, "HIST001")
+        response = client.get("/student/live-activity-history")
+        assert response.status_code == 200, response.text
+        assert response.headers["cache-control"] == "no-store"
+        history = response.json()
+        assert [item["activity_title"] for item in history] == [
+            "Cacería respondida",
+            "Cacería sin participar",
+        ]
+        assert (
+            history[0]["points"],
+            history[0]["rank"],
+            history[0]["active_student_count"],
+            history[0]["participated"],
+        ) == (500, 2, 3, True)
+        assert (
+            history[1]["points"],
+            history[1]["active_student_count"],
+            history[1]["participated"],
+        ) == (0, 3, False)
+        assert history[1]["rank"] in (2, 3)
+        repeated_history = client.get("/student/live-activity-history").json()
+        assert [item["rank"] for item in repeated_history] == [
+            item["rank"] for item in history
+        ]
+        assert all("student_name" not in item and "students" not in item for item in history)
+
     def test_cumulative_ranking_uses_only_finished_live_quiz_points(self, client: TestClient):
         _, course = _teacher_course(client, code="RANK", name="Ranking")
         today = datetime.now(timezone.utc).astimezone(ZoneInfo("America/Lima")).date()
@@ -842,22 +945,28 @@ class TestQrYQuizEnVivo:
             (2, "Beatriz Álvarez Torres", 200),
             (3, "Carlos Ibarra Ruiz", 0),
         ]
-        assert [
-            (row["rank"], row["student_name"], row["points"])
-            for row in periods["apertura"]["students"]
-        ] == [
-            (1, "Beatriz Álvarez Torres", 100),
-            (2, "Ana María Zuluaga Pérez", 100),
-            (3, "Carlos Ibarra Ruiz", 0),
-        ]
-        assert [
-            (row["rank"], row["student_name"], row["points"])
-            for row in periods["clausura"]["students"]
-        ] == [
-            (1, "Beatriz Álvarez Torres", 100),
-            (2, "Ana María Zuluaga Pérez", 100),
-            (3, "Carlos Ibarra Ruiz", 0),
-        ]
+        for code in ("apertura", "clausura"):
+            tied_rows = periods[code]["students"]
+            assert [(row["rank"], row["points"]) for row in tied_rows] == [
+                (1, 100),
+                (2, 100),
+                (3, 0),
+            ]
+            assert {row["student_name"] for row in tied_rows[:2]} == {
+                "Ana María Zuluaga Pérez",
+                "Beatriz Álvarez Torres",
+            }
+        repeated_ranking = client.get(f"/courses/{course['id']}/live-ranking").json()
+        repeated_periods = {
+            period["code"]: period for period in repeated_ranking["periods"]
+        }
+        assert {
+            code: [row["student_id"] for row in periods[code]["students"]]
+            for code in ("apertura", "clausura", "total")
+        } == {
+            code: [row["student_id"] for row in repeated_periods[code]["students"]]
+            for code in ("apertura", "clausura", "total")
+        }
         _login_as_teacher(client)
         assert client.get(f"/courses/{course['id']}/live-ranking").status_code == 200
 
@@ -874,7 +983,24 @@ class TestQrYQuizEnVivo:
         student_result = student_ranking.json()
         assert student_result["view"] == "student"
         assert student_result["phase"] == "clausura"
-        assert student_result["rank"] == 2
+        student_periods = {
+            period["code"]: period for period in student_result["student_periods"]
+        }
+        for code in ("apertura", "clausura"):
+            student_row = next(
+                row for row in periods[code]["students"]
+                if row["student_name"] == "Ana María Zuluaga Pérez"
+            )
+            assert (
+                student_periods[code]["available"],
+                student_periods[code]["rank"],
+                student_periods[code]["points"],
+            ) == (True, student_row["rank"], 100)
+        assert (
+            student_periods["total"]["available"],
+            student_periods["total"]["rank"],
+            student_periods["total"]["points"],
+        ) == (True, 1, 950)
         assert student_result["periods"] == []
         assert "students" not in student_result
         assert "points" not in student_result
@@ -885,8 +1011,13 @@ class TestQrYQuizEnVivo:
             session.commit()
         exam_week = client.get(f"/courses/{course['id']}/live-ranking").json()
         assert exam_week["phase"] == "exam"
-        assert exam_week["rank"] is None
         assert "examen parcial" in exam_week["message"].lower()
+        exam_periods = {
+            period["code"]: period for period in exam_week["student_periods"]
+        }
+        assert exam_periods["apertura"]["available"] is True
+        assert exam_periods["clausura"]["available"] is False
+        assert exam_periods["total"]["available"] is True
         assert client.get(
             f"/courses/{other_course['id']}/live-ranking"
         ).status_code == 404
@@ -1180,6 +1311,7 @@ class TestQrYQuizEnVivo:
         podium = client.get(f"/student/quick-activities/{quiz['id']}/live").json()
         assert podium["phase"] == "finished" and podium["rank"] == 1
         assert [row["student_code"] for row in podium["podium"]] == ["20200001A", "20200002B"]
+        assert [row["points"] for row in podium["podium"]] == [950, 750]
 
         # HU-Q3: las respuestas quedan registradas con su puntaje.
         _login_as_teacher(client)
@@ -1187,6 +1319,117 @@ class TestQrYQuizEnVivo:
         assert recorded["respondent_count"] == 2
         points = sorted(a["points"] for r in recorded["responses"] for a in r["answers"])
         assert points == [0, 750, 950]
+
+    def test_finished_live_quiz_includes_full_ranking_and_answer_stats(self, client: TestClient):
+        _, course = _teacher_course(client, code="RANK", name="Ranking")
+        students = [
+            ("RANK001", "Ana Uno"),
+            ("RANK002", "Beto Dos"),
+            ("RANK003", "Carla Tres"),
+            ("RANK004", "Dario Cuatro"),
+        ]
+        for code, name in students:
+            _enroll_and_login_student(client, course["id"], code, name)
+        quiz = _live_quiz(client, course["id"])
+        base = f"/courses/{course['id']}/quick-activities/{quiz['id']}"
+
+        for code, _ in students:
+            _login_student(client, code)
+            assert client.post(
+                "/student/quick-activities/join",
+                json={"code": quiz["join_code"]},
+            ).status_code == 200
+
+        _login_as_teacher(client)
+        first_question = client.post(f"{base}/live/advance").json()["question"]
+        for code, option in (("RANK001", 1), ("RANK002", 0), ("RANK003", 1)):
+            _login_student(client, code)
+            assert client.post(
+                f"/student/quick-activities/{quiz['id']}/live/answers",
+                json={"question_id": first_question["id"], "selected_option": option},
+            ).status_code == 201
+
+        _login_as_teacher(client)
+        client.post(f"{base}/live/advance")
+        second_question = client.post(f"{base}/live/advance").json()["question"]
+        for code, option in (("RANK001", 0), ("RANK003", 1)):
+            _login_student(client, code)
+            assert client.post(
+                f"/student/quick-activities/{quiz['id']}/live/answers",
+                json={"question_id": second_question["id"], "selected_option": option},
+            ).status_code == 201
+
+        _login_as_teacher(client)
+        client.post(f"{base}/live/advance")
+        final = client.post(f"{base}/live/advance").json()
+        assert final["phase"] == "finished"
+        assert len(final["leaderboard"]) == 4
+        by_name = {row["student_name"]: row for row in final["leaderboard"]}
+        recorded = client.get(f"{base}/responses").json()
+        stored_points = {
+            response["student_code"]: sum(answer["points"] for answer in response["answers"])
+            for response in recorded["responses"]
+        }
+        assert (
+            by_name["Ana Uno"]["correct"],
+            by_name["Ana Uno"]["incorrect"],
+            by_name["Ana Uno"]["unanswered"],
+        ) == (2, 0, 0)
+        assert by_name["Ana Uno"]["points"] == stored_points["RANK001"]
+        assert (
+            by_name["Beto Dos"]["correct"],
+            by_name["Beto Dos"]["incorrect"],
+            by_name["Beto Dos"]["unanswered"],
+        ) == (0, 1, 1)
+        assert (
+            by_name["Carla Tres"]["correct"],
+            by_name["Carla Tres"]["incorrect"],
+            by_name["Carla Tres"]["unanswered"],
+        ) == (1, 1, 0)
+        assert (
+            by_name["Dario Cuatro"]["correct"],
+            by_name["Dario Cuatro"]["incorrect"],
+            by_name["Dario Cuatro"]["unanswered"],
+        ) == (0, 0, 2)
+
+        _login_student(client, "RANK001")
+        student_final = client.get(
+            f"/student/quick-activities/{quiz['id']}/live"
+        ).json()
+        assert len(student_final["leaderboard"]) == 4
+        assert student_final["leaderboard"][-1]["student_name"] == "Dario Cuatro"
+        assert all("student_code" not in row for row in student_final["leaderboard"])
+        assert [row["student_name"] for row in student_final["podium"]] == [
+            "Ana Uno",
+            "Carla Tres",
+        ]
+        assert all(row["points"] > 0 for row in student_final["podium"])
+
+    def test_finished_live_quiz_with_no_points_has_no_podium(self, client: TestClient):
+        _, course = _teacher_course(client, code="ZERO", name="Sin puntaje")
+        for code, name in (("ZERO001", "Estudiante Uno"), ("ZERO002", "Estudiante Dos")):
+            _enroll_and_login_student(client, course["id"], code, name)
+        quiz = _live_quiz(client, course["id"])
+        base = f"/courses/{course['id']}/quick-activities/{quiz['id']}"
+        for code, _ in (("ZERO001", "Estudiante Uno"), ("ZERO002", "Estudiante Dos")):
+            _login_student(client, code)
+            assert client.post(
+                "/student/quick-activities/join",
+                json={"code": quiz["join_code"]},
+            ).status_code == 200
+
+        _login_as_teacher(client)
+        for _ in range(5):
+            final = client.post(f"{base}/live/advance").json()
+        assert final["phase"] == "finished"
+        assert [row["points"] for row in final["leaderboard"]] == [0, 0]
+
+        _login_student(client, "ZERO001")
+        student_final = client.get(
+            f"/student/quick-activities/{quiz['id']}/live"
+        ).json()
+        assert student_final["podium"] == []
+        assert len(student_final["leaderboard"]) == 2
 
     def test_live_endpoints_check_membership(self, client: TestClient):
         cycle, course = _teacher_course(client)

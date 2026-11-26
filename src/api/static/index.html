@@ -50,7 +50,7 @@
             <span aria-hidden="true">▦</span> Mis cursos
           </button>
           <button class="app-navigation-button" id="student-history-view-button" type="button" hidden>
-            <span aria-hidden="true">◷</span> Mi historial
+            <span aria-hidden="true">◷</span> Historial de Cacería
           </button>
           <button class="app-navigation-button" id="student-review-view-button" type="button" hidden>
             <span aria-hidden="true">✉</span> Solicitar revisión
@@ -143,7 +143,7 @@
           <div class="student-portal-heading">
             <p class="eyebrow">PORTAL DEL ESTUDIANTE</p>
             <h1 id="student-portal-title">Portal del estudiante</h1>
-            <p class="heading-meta">Consulta tus cursos, participaciones y opciones de revisión.</p>
+            <p class="heading-meta">Consulta tus cursos, el historial de cacerías y participa en actividades.</p>
           </div>
           <div id="student-courses-view">
             <h2 class="student-portal-section-title">Mis cursos</h2>
@@ -163,13 +163,18 @@
             <p id="student-courses-empty" class="setup-empty" hidden>No tienes cursos matriculados en este momento.</p>
           </div>
           <section id="student-history-view" class="student-history-view" hidden aria-labelledby="student-history-title">
-            <h2 class="student-portal-section-title" id="student-history-title">Mi historial</h2>
+            <h2 class="student-portal-section-title" id="student-history-title">Historial de Cacería</h2>
+            <p class="heading-meta">Tus puntos y tu puesto en cada cacería finalizada de tus cursos.</p>
+            <div id="student-hunt-history-list" class="student-hunt-history-list"></div>
+            <p id="student-hunt-history-empty" class="setup-empty" hidden></p>
+            <!-- Historial anterior de participaciones y evaluaciones, reservado para una futura implementación.
             <p class="heading-meta">Tus participaciones y notas publicadas por el docente.</p>
             <div id="student-history-list" class="student-history-list"></div>
             <p id="student-history-empty" class="setup-empty" hidden></p>
             <h3 class="student-portal-section-title">Evaluaciones y retroalimentación</h3>
             <div id="student-evaluation-list" class="student-history-list"></div>
             <p id="student-evaluation-empty" class="setup-empty" hidden></p>
+            -->
           </section>
           <section id="student-review-view" class="student-review-view" hidden aria-labelledby="student-review-title">
             <h2 class="student-portal-section-title" id="student-review-title">Solicitar revisión</h2>
@@ -247,8 +252,8 @@
             <p class="form-note live-ranking-status" id="live-ranking-status" role="status" aria-live="polite"></p>
             <section class="live-ranking-position" id="live-ranking-position" hidden aria-live="polite">
               <p class="eyebrow" id="live-ranking-position-phase"></p>
-              <strong class="live-ranking-position-number" id="live-ranking-position-number"></strong>
               <p id="live-ranking-position-message"></p>
+              <div class="live-ranking-student-periods" id="live-ranking-student-periods"></div>
             </section>
             <div class="live-ranking-scroll" id="live-ranking-scroll" hidden>
               <div class="live-ranking-chart" id="live-ranking-chart"></div>

@@ -120,14 +120,19 @@ asociado al ciclo; la matrícula y edición individual siguen disponibles.
   iniciar la aplicación. La vista de administrador permite registrar cuentas
   y restablecer accesos.
 * **Portal de estudiante**: solo aparece para el rol estudiante y muestra
-  navegación a **Mis cursos**, **Mi historial** y **Solicitar revisión**.
+  navegación a **Mis cursos**, **Historial de Cacería** y **Unirse a actividad**;
+  también puede consultar sus puntos y puestos de Apertura, Clausura y Total en
+  el **Ranking acumulado**, sin ver las filas de sus compañeros.
   Mis cursos incluye matrículas activas aunque el curso todavía no tenga ciclo
   académico; cuando existe ciclo, las sesiones se ordenan en 16 semanas
   consecutivas de siete días desde su fecha inicial. Las sesiones sin fecha o
-  fuera del periodo aparecen aparte. Mi historial muestra solo participaciones
-  propias no anuladas; la nota se omite de la respuesta del servidor mientras
-  no esté publicada. Solicitar revisión permite pedir explicación de una nota
-  publicada y consultar el estado de la solicitud.
+  fuera del periodo aparecen aparte. **Historial de Cacería** muestra cada quiz
+  en vivo finalizado de sus cursos en orden cronológico ascendente, con fecha,
+  hora, puntos y puesto individual; si no participó, muestra 0 puntos y el
+  puesto calculado entre las matrículas activas. No se exponen nombres ni
+  puntuaciones de compañeros. El historial anterior
+  de participaciones/evaluaciones se conserva temporalmente comentado mientras
+  se define su nueva presentación.
 * **`student\_state`**: el estado bayesiano mutable — `alpha`, `beta`,
 `n\_present`, `n\_selected`. Es la tabla que sufre escrituras
 concurrentes; por eso está separada de `students`.
@@ -352,6 +357,7 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |POST|`/auth/logout`|Cerrar sesión|
 |GET|`/student/courses`|Estudiante: listar solo sus cursos con matrícula activa|
 |GET|`/student/courses/{course_id}/weeks`|Estudiante: consultar sesiones solo de un curso propio|
+|GET|`/student/live-activity-history`|Estudiante: cacerías finalizadas de sus cursos, con solo sus puntos y puesto|
 |GET|`/student/history`|Estudiante: fecha, pregunta, dificultad y solo notas publicadas de sus participaciones no anuladas|
 |GET|`/student/evaluations`|Estudiante: consultar evaluaciones y feedback publicado|
 |POST|`/student/review-requests`|Estudiante: solicitar revisión de una participación o resultado de evaluación propio publicado|
@@ -380,7 +386,7 @@ curl http://127.0.0.1:8000/courses/1/fairness-metrics
 |POST|`/institutions/faculties/{id}/specialties`|Administrador: registrar especialidad (HU-A7)|
 |PATCH/DELETE|`/institutions/specialties/{id}`|Administrador: modificar, deshabilitar o eliminar especialidad (HU-A7)|
 |GET/POST|`/courses/{id}/quick-activities`|Listar o preparar actividades rápidas del curso|
-|GET|`/courses/{id}/live-ranking`|Rankings de Apertura/Clausura/total; estudiantes reciben solo su puesto|
+|GET|`/courses/{id}/live-ranking`|Rankings de Apertura/Clausura/total; estudiantes reciben solo sus puntos y puestos|
 |POST|`/courses/{id}/quick-activities/{aid}/publish`|Publicar con código temporal (o extender su vigencia)|
 |POST|`/courses/{id}/quick-activities/{aid}/close`|Cerrar la actividad|
 |GET|`/courses/{id}/quick-activities/{aid}/responses`|**HU-Q3**: respuestas registradas por estudiante|
@@ -490,7 +496,11 @@ y, al cerrarse la pregunta, ve si acertó, sus puntos y su puesto. Un acierto
 vale hasta 1000 puntos y baja hasta 500 según el tiempo que tardó; el reloj del
 servidor es la referencia. La sincronización es por consultas cortas (pantalla
 del docente cada 1 s, celulares cada 1,5 s), sin WebSockets. Conviene probarla
-en Render con un curso completo antes de usarla en clase.
+en Render con un curso completo antes de usarla en clase. El podio muestra
+hasta tres estudiantes con puntaje positivo; si nadie acertó, lo indica sin
+presentar ganadores con 0 puntos. Debajo muestra al resto de participantes en
+una lista con desplazamiento, incluyendo aciertos, desaciertos, preguntas sin
+responder y puntaje.
 
 Al finalizar, la presentación animada sincroniza su inicio usando el instante
 UTC de cierre devuelto por el servidor. El celular recibe únicamente la
@@ -500,9 +510,11 @@ se envían a la pantalla docente. La pantalla final usa un lobo vectorial SVG
 articulado (carrera, patas, cola, cabeza y cuerpo animados) frente a un paisaje
 nocturno en capas; la secuencia se sincroniza con el cierre del servidor e
 incluye luz, partículas, marcas de garras, revelado escalonado del top 3 y un
-botón para reproducir un aullido sintetizado (el navegador requiere una acción
-del usuario para audio). Se implementa con SVG/CSS nativos, sin dependencias
-adicionales.
+botón que reproduce una grabación de aullidos de lobo (el navegador requiere
+una acción del usuario para audio). El fragmento de siete segundos es una obra
+de dominio público del U.S. Fish and Wildlife Service, disponible en
+[Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Wolf_howls.ogg).
+La animación se implementa con SVG/CSS nativos, sin dependencias adicionales.
 
 El envío de resultados por correo está desactivado por defecto. Para habilitar
 el SMTP seguro configura `LIVE_RESULTS_EMAILS_ENABLED=true`, `SMTP_HOST`,
@@ -542,18 +554,17 @@ docente puede consultar tres tablas completas:
   de la semana 8.
 
 La semana 8 es el examen parcial y no se suma a Apertura ni Clausura. El
-estudiante solo recibe su puesto y la cantidad de estudiantes activos de la
-fase vigente; nunca recibe los nombres ni puntuaciones de sus compañeros. En
-semana 8 ve un aviso sin posición de fase. El panel se recalcula al abrirse y
-cada 10 segundos, sin persistir totales. En cada ranking se suma el último
+estudiante recibe solo sus puntos y puestos de Apertura, Clausura y Total;
+nunca recibe los nombres ni puntuaciones de sus compañeros. Antes de iniciar
+la Clausura, ese periodo aparece como pendiente; durante la semana 8 se muestra
+además el aviso del examen parcial. El panel se recalcula al abrirse y cada 10
+segundos, sin persistir totales. En cada ranking se suma el último
 intento de cada estudiante por quiz, y se incluyen con 0 puntos las matrículas
-activas que no participaron. Los empates se ordenan por apellido paterno y
-luego por nombre completo: como el modelo conserva un único campo de nombre,
-se interpreta el primer apellido antes de la coma en nombres `Apellidos,
-Nombres`, o el penúltimo componente en nombres `Nombres ApellidoPaterno
-ApellidoMaterno` (si hay dos componentes, se usa el último). Sin fecha de
-inicio de ciclo, Apertura/Clausura y la posición estudiantil no están
-disponibles; el Acumulado total del docente sí.
+activas que no participaron. Los empates se resuelven con un orden
+pseudoaleatorio estable por curso y periodo, para que las posiciones no cambien
+en cada actualización y no dependan del apellido. Sin fecha de
+inicio de ciclo, Apertura/Clausura del estudiante aparecen pendientes; su
+Acumulado total sigue disponible.
 
 **Código QR (HU-Q2).** Al publicar, la actividad muestra un QR (generado en el
 servidor con `segno`, `GET /courses/{id}/quick-activities/{aid}/qr.svg`) con

@@ -33,8 +33,8 @@ Igual que `AuthService`, trabaja con la sesión de SQLAlchemy directamente.
 
 from __future__ import annotations
 
+import hashlib
 import secrets
-import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, List, Optional, Sequence
 from zoneinfo import ZoneInfo
@@ -564,6 +564,111 @@ class QuickActivityService:
                 for response, activity, course in rows
             ]
 
+    def student_live_activity_history(self, student_user_id: int) -> List[dict]:
+        """Puntaje y puesto propio en cada quiz en vivo finalizado de sus cursos."""
+        with self._session_factory() as session:
+            enrollments = session.execute(
+                select(StudentORM).where(
+                    StudentORM.user_id == student_user_id,
+                    StudentORM.active.is_(True),
+                )
+            ).scalars().all()
+            course_ids = {student.course_id for student in enrollments}
+            student_by_course = {
+                student.course_id: student for student in enrollments
+            }
+            if not course_ids:
+                return []
+
+            activities = session.execute(
+                select(QuickActivityORM, CourseORM.name)
+                .join(CourseORM, CourseORM.id == QuickActivityORM.course_id)
+                .where(
+                    QuickActivityORM.course_id.in_(course_ids),
+                    QuickActivityORM.mode == MODE_LIVE,
+                    QuickActivityORM.status == "closed",
+                    QuickActivityORM.live_phase == "finished",
+                )
+                .order_by(QuickActivityORM.closed_at.asc(), QuickActivityORM.id.asc())
+                .options(selectinload(QuickActivityORM.questions))
+            ).all()
+            if not activities:
+                return []
+
+            activity_ids = [activity.id for activity, _ in activities]
+            roster = session.execute(
+                select(StudentORM).where(
+                    StudentORM.course_id.in_(course_ids),
+                    StudentORM.active.is_(True),
+                )
+            ).scalars().all()
+            roster_by_course: dict[int, list[StudentORM]] = {}
+            for student in roster:
+                roster_by_course.setdefault(student.course_id, []).append(student)
+
+            responses = session.execute(
+                select(QuickActivityResponseORM)
+                .where(QuickActivityResponseORM.activity_id.in_(activity_ids))
+                .options(selectinload(QuickActivityResponseORM.answers))
+                .order_by(QuickActivityResponseORM.attempt)
+            ).scalars().all()
+            latest_responses: dict[tuple[int, int], QuickActivityResponseORM] = {}
+            for response in responses:
+                latest_responses[(response.activity_id, response.student_id)] = response
+
+            history = []
+            for activity, course_name in activities:
+                own_student = student_by_course.get(activity.course_id)
+                if own_student is None:
+                    continue
+                ranking = []
+                for student in roster_by_course.get(activity.course_id, []):
+                    response = latest_responses.get((activity.id, student.id))
+                    answers = response.answers if response else []
+                    points = sum(answer.points or 0 for answer in answers)
+                    correct_answers = sum(1 for answer in answers if answer.is_correct)
+                    response_time = sum(
+                        answer.response_ms or 0
+                        for answer in answers
+                        if answer.is_correct
+                    )
+                    ranking.append({
+                        "student": student,
+                        "points": points,
+                        "correct_answers": correct_answers,
+                        "response_time": response_time,
+                        "participated": bool(answers),
+                    })
+                ranking.sort(key=lambda item: (
+                    -item["points"],
+                    item["response_time"],
+                    self._random_tie_key(
+                        activity.join_code or str(activity.id), item["student"].id
+                    ),
+                ))
+                own_result = next(
+                    item for item in ranking if item["student"].id == own_student.id
+                )
+                rank = next(
+                    position
+                    for position, item in enumerate(ranking, start=1)
+                    if item["student"].id == own_student.id
+                )
+                history.append({
+                    "activity_id": activity.id,
+                    "course_id": activity.course_id,
+                    "course_name": course_name,
+                    "activity_title": activity.title,
+                    "closed_at": _utc(activity.closed_at),
+                    "points": own_result["points"],
+                    "rank": rank,
+                    "active_student_count": len(ranking),
+                    "participated": own_result["participated"],
+                    "correct_answers": own_result["correct_answers"],
+                    "question_count": len(activity.questions),
+                })
+            return history
+
 
     # ------------------------------------------------------------------
     # Quiz en vivo (tipo Kahoot / Quizizz)
@@ -684,7 +789,20 @@ class QuickActivityService:
                 "total_points": my_row["points"] if (my_row and reveal) else None,
                 "rank": my_row["rank"] if (my_row and reveal) else None,
                 "participant_count": participant_count,
-                "podium": board[:3] if phase == "finished" else [],
+                "podium": [
+                    row for row in board if row["points"] > 0
+                ][:3] if phase == "finished" else [],
+                "leaderboard": [
+                    {
+                        "rank": row["rank"],
+                        "student_name": row["student_name"],
+                        "points": row["points"],
+                        "correct": row["correct"],
+                        "incorrect": row["incorrect"],
+                        "unanswered": row["unanswered"],
+                    }
+                    for row in board
+                ] if phase == "finished" else [],
             }
 
     def cumulative_live_ranking(
@@ -799,6 +917,7 @@ class QuickActivityService:
                     roster,
                     points_by_period["apertura"],
                     aperture_quiz_count,
+                    tie_scope=f"{course.id}:apertura",
                     available=cycle_start is not None,
                     start_week=1,
                     end_week=7,
@@ -808,6 +927,7 @@ class QuickActivityService:
                     roster,
                     points_by_period["clausura"],
                     closing_quiz_count,
+                    tie_scope=f"{course.id}:clausura",
                     available=cycle_start is not None and cycle_week_count >= 9,
                     start_week=9,
                     end_week=cycle_week_count,
@@ -817,6 +937,7 @@ class QuickActivityService:
                     roster,
                     points_by_period["total"],
                     len(completed_quizzes),
+                    tie_scope=f"{course.id}:total",
                     available=True,
                     start_week=None,
                     end_week=None,
@@ -836,25 +957,74 @@ class QuickActivityService:
                 phase, message = self._student_ranking_phase(
                     base["current_week"], cycle_start is not None, cycle_week_count
                 )
-                selected_period = periods.get(phase)
-                student_rank = None
-                student_count = len(roster)
-                if selected_period and selected_period["available"]:
+                phase_availability = {
+                    "apertura": (
+                        cycle_start is not None
+                        and base["current_week"] is not None
+                        and base["current_week"] >= 1
+                    ),
+                    "clausura": (
+                        cycle_start is not None
+                        and cycle_week_count >= 9
+                        and base["current_week"] is not None
+                        and base["current_week"] >= 9
+                    ),
+                    "total": True,
+                }
+                period_messages = {
+                    "apertura": (
+                        "Configura la fecha de inicio del ciclo."
+                        if cycle_start is None
+                        else "Disponible desde la semana 1."
+                    ),
+                    "clausura": (
+                        "Configura la fecha de inicio del ciclo."
+                        if cycle_start is None
+                        else "Este ciclo no llega a la semana 9."
+                        if cycle_week_count < 9
+                        else "Disponible desde la semana 9."
+                    ),
+                }
+                student_periods = []
+                for code, period in periods.items():
+                    available = phase_availability[code]
                     student_row = next(
                         (
-                            item for item in selected_period["students"]
+                            item for item in period["students"]
                             if item["student_id"] == student
                         ),
                         None,
                     )
-                    student_rank = student_row["rank"] if student_row else None
+                    student_periods.append({
+                        "code": code,
+                        "available": available,
+                        "start_week": period["start_week"],
+                        "end_week": period["end_week"],
+                        "quiz_count": period["quiz_count"],
+                        "rank": (
+                            student_row["rank"]
+                            if available and student_row is not None
+                            else None
+                        ),
+                        "points": (
+                            student_row["points"]
+                            if available and student_row is not None
+                            else None
+                        ),
+                        "message": None if available else (
+                            "El curso todavía no inicia."
+                            if phase == "not_started"
+                            else period_messages.get(code)
+                        ),
+                    })
                 return {
                     **base,
                     "view": "student",
                     "phase": phase,
                     "message": message,
-                    "rank": student_rank,
-                    "student_count": student_count,
+                    "rank": None,
+                    "student_count": len(roster),
+                    "student_periods": student_periods,
                     "periods": [],
                 }
 
@@ -869,6 +1039,7 @@ class QuickActivityService:
                 ),
                 "rank": None,
                 "student_count": len(roster),
+                "student_periods": [],
                 "periods": list(periods.values()),
             }
 
@@ -879,6 +1050,7 @@ class QuickActivityService:
         roster,
         points_by_student: dict[int, int],
         quiz_count: int,
+        tie_scope: str,
         available: bool,
         start_week: Optional[int],
         end_week: Optional[int],
@@ -887,9 +1059,7 @@ class QuickActivityService:
             roster,
             key=lambda row: (
                 -points_by_student.get(row.id, 0),
-                cls._paternal_surname_key(row.display_name),
-                cls._name_sort_key(row.display_name),
-                row.id,
+                cls._random_tie_key(tie_scope, row.id),
             ),
         )
         return {
@@ -956,18 +1126,9 @@ class QuickActivityService:
         return phase
 
     @staticmethod
-    def _name_sort_key(name: str) -> str:
-        normalized = unicodedata.normalize("NFKD", name.casefold())
-        return "".join(char for char in normalized if not unicodedata.combining(char))
-
-    @classmethod
-    def _paternal_surname_key(cls, full_name: str) -> str:
-        surname_part = full_name.split(",", 1)[0] if "," in full_name else full_name
-        parts = surname_part.split()
-        surname = parts[0] if "," in full_name else (
-            parts[-2] if len(parts) > 2 else parts[-1] if parts else ""
-        )
-        return cls._name_sort_key(surname)
+    def _random_tie_key(scope: str, student_id: int) -> bytes:
+        """Stable pseudo-random tie order that does not change between refreshes."""
+        return hashlib.sha256(f"{scope}:{student_id}".encode()).digest()
 
     def live_answer(
         self, student_user_id: int, activity_id: int, question_id: int, selected_option: int
@@ -1054,10 +1215,17 @@ class QuickActivityService:
                 "student_code": row.student.external_ref,
                 "points": sum(answer.points or 0 for answer in row.answers),
                 "correct": sum(1 for answer in row.answers if answer.is_correct),
+                "incorrect": sum(1 for answer in row.answers if not answer.is_correct),
+                "unanswered": max(0, len(activity.questions) - len(row.answers)),
                 "time_ms": sum(answer.response_ms or 0 for answer in row.answers if answer.is_correct),
             })
-        # Más puntos primero; a igualdad, quien acertó más rápido.
-        board.sort(key=lambda item: (-item["points"], item["time_ms"], item["student_name"]))
+        board.sort(key=lambda item: (
+            -item["points"],
+            item["time_ms"],
+            self._random_tie_key(
+                activity.join_code or str(activity.id), item["student_id"]
+            ),
+        ))
         for index, item in enumerate(board, start=1):
             item["rank"] = index
         return board
@@ -1105,7 +1273,11 @@ class QuickActivityService:
             },
             "answered_count": len(answers),
             "distribution": distribution,
-            "leaderboard": board[:LEADERBOARD_SIZE] if reveal else [],
+            "leaderboard": (
+                board if phase == "finished"
+                else board[:LEADERBOARD_SIZE] if reveal
+                else []
+            ),
         }
 
     # ------------------------------------------------------------------

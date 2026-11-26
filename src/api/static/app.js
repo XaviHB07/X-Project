@@ -168,8 +168,6 @@ const elements = {
   courseEvaluationList: $("#course-evaluation-list"),
   courseEvaluationEmpty: $("#course-evaluation-empty"),
   courseEvaluationRoster: $("#course-evaluation-roster"),
-  studentEvaluationList: $("#student-evaluation-list"),
-  studentEvaluationEmpty: $("#student-evaluation-empty"),
   groupsView: $("#groups-view"),
   groupPlanSelect: $("#group-plan-select"),
   groupEditor: $("#group-editor"),
@@ -215,8 +213,8 @@ const elements = {
   studentCoursesView: $("#student-courses-view"),
   studentHistoryView: $("#student-history-view"),
   studentReviewView: $("#student-review-view"),
-  studentHistoryList: $("#student-history-list"),
-  studentHistoryEmpty: $("#student-history-empty"),
+  studentHuntHistoryList: $("#student-hunt-history-list"),
+  studentHuntHistoryEmpty: $("#student-hunt-history-empty"),
   studentReviewForm: $("#student-review-form"),
   studentReviewParticipation: $("#student-review-participation"),
   studentReviewList: $("#student-review-list"),
@@ -237,8 +235,8 @@ const elements = {
   liveRankingStatus: $("#live-ranking-status"),
   liveRankingPosition: $("#live-ranking-position"),
   liveRankingPositionPhase: $("#live-ranking-position-phase"),
-  liveRankingPositionNumber: $("#live-ranking-position-number"),
   liveRankingPositionMessage: $("#live-ranking-position-message"),
+  liveRankingStudentPeriods: $("#live-ranking-student-periods"),
   liveRankingScroll: $("#live-ranking-scroll"),
   liveRankingChart: $("#live-ranking-chart"),
   liveRankingEmpty: $("#live-ranking-empty"),
@@ -499,18 +497,18 @@ function setStudentPortalView(view) {
   const views = {
     courses: elements.studentCoursesView,
     history: elements.studentHistoryView,
-    review: elements.studentReviewView,
     activity: elements.studentActivityView,
   };
   if (!views[view]) return;
   state.studentPortalView = view;
+  elements.studentReviewView.hidden = true;
+  elements.studentReviewViewButton.hidden = true;
   Object.entries(views).forEach(([name, section]) => {
     section.hidden = name !== view;
   });
   [
     [elements.studentCoursesViewButton, "courses"],
     [elements.studentHistoryViewButton, "history"],
-    [elements.studentReviewViewButton, "review"],
     [elements.studentActivityViewButton, "activity"],
   ].forEach(([button, name]) => {
     const active = name === view;
@@ -518,8 +516,7 @@ function setStudentPortalView(view) {
     if (active) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
-  if (view === "history") loadStudentHistory();
-  if (view === "review") loadStudentReviewData();
+  if (view === "history") loadStudentHuntHistory();
   if (view === "activity" && typeof openStudentActivityView === "function") openStudentActivityView();
 }
 
@@ -587,21 +584,39 @@ function renderLiveRanking(data) {
 
   if (isStudent) {
     const phaseLabels = {
-      apertura: "RANKING DEL APERTURA · SEMANAS 1–7",
-      exam: "SEMANA 8 · EXAMEN PARCIAL",
-      clausura: "RANKING DE CLAUSURA · SEMANA 9 EN ADELANTE",
-      not_started: "CICLO ACADÉMICO",
-      cycle_not_configured: "RANKING NO DISPONIBLE",
-      cycle_finished: "CICLO FINALIZADO",
+      apertura: "TUS RANKINGS · APERTURA EN CURSO",
+      exam: "TUS RANKINGS · SEMANA DE EXAMEN PARCIAL",
+      clausura: "TUS RANKINGS · CLAUSURA EN CURSO",
+      not_started: "TUS RANKINGS · CICLO POR INICIAR",
+      cycle_not_configured: "TUS RANKINGS",
+      cycle_finished: "TUS RANKINGS · CICLO FINALIZADO",
+    };
+    const periodLabels = {
+      apertura: "Ranking del Apertura",
+      clausura: "Ranking de Clausura",
+      total: "Ranking Acumulado",
     };
     elements.liveRankingDescription.textContent =
-      "Consulta únicamente tu posición relativa en la fase vigente.";
+      "Consulta tus puntos y tu puesto en cada periodo.";
     elements.liveRankingPositionPhase.textContent = phaseLabels[data.phase] || "TU RANKING";
-    elements.liveRankingPositionNumber.textContent = data.rank
-      ? `Tu puesto: ${data.rank}.º`
-      : "Sin puesto disponible";
     elements.liveRankingPositionMessage.textContent = data.message
-      || `Posición entre ${data.student_count} estudiantes activos del curso.`;
+      || "Estos resultados son privados y solo muestran tus propios puntos y puestos.";
+    elements.liveRankingStudentPeriods.innerHTML = (data.student_periods || []).map((period) => `
+      <article class="live-ranking-student-period${period.available ? "" : " is-pending"}">
+        <h3>${periodLabels[period.code] || "Ranking"}</h3>
+        <p>${period.code === "apertura"
+          ? "Semanas 1–7"
+          : period.code === "clausura"
+            ? `Semana 9–${data.cycle_week_count}`
+            : "Todos los quizzes finalizados"}</p>
+        ${period.available
+          ? `<div class="live-ranking-student-result">
+              <span><small>Puesto</small><strong>${period.rank ? `${period.rank}.º` : "—"}</strong></span>
+              <span><small>Puntaje</small><strong>${Number(period.points || 0).toLocaleString("es")} <em>pts</em></strong></span>
+            </div>
+            <small class="live-ranking-student-quiz-count">${period.quiz_count} cacería${period.quiz_count === 1 ? "" : "s"} finalizada${period.quiz_count === 1 ? "" : "s"}</small>`
+          : `<p class="live-ranking-student-pending">${escapeHtml(period.message || "Este periodo todavía no está disponible.")}</p>`}
+      </article>`).join("");
     elements.liveRankingStatus.textContent = "";
     return;
   }
@@ -718,6 +733,9 @@ function openLiveRanking() {
   }, 10000);
 }
 
+/*
+Historial anterior de participaciones/evaluaciones: se conserva comentado para
+retomarlo cuando se implemente esa vista.
 async function loadStudentHistory() {
   elements.studentHistoryEmpty.hidden = false;
   elements.studentHistoryEmpty.textContent = "Cargando tu historial…";
@@ -769,6 +787,48 @@ async function loadStudentHistory() {
     elements.studentHistoryEmpty.hidden = false;
     elements.studentEvaluationList.innerHTML = "";
     elements.studentEvaluationEmpty.hidden = true;
+  }
+}
+*/
+
+async function loadStudentHuntHistory() {
+  elements.studentHuntHistoryEmpty.hidden = false;
+  elements.studentHuntHistoryEmpty.textContent = "Cargando el historial de cacerías…";
+  try {
+    const records = await api("/student/live-activity-history");
+    elements.studentHuntHistoryList.innerHTML = records.map((record) => `
+      <article class="student-hunt-history-card">
+        <div class="student-hunt-history-heading">
+          <div>
+            <p class="eyebrow">${escapeHtml(record.course_name)}</p>
+            <h3>${escapeHtml(record.activity_title)}</h3>
+          </div>
+          <div class="student-hunt-history-datetime">
+            <div><span>Fecha</span><time datetime="${record.closed_at || ""}">${
+              record.closed_at ? escapeHtml(formatDateOnly(record.closed_at)) : "—"
+            }</time></div>
+            <div><span>Hora</span><time datetime="${record.closed_at || ""}">${
+              record.closed_at ? escapeHtml(formatTime(record.closed_at)) : "—"
+            }</time></div>
+          </div>
+        </div>
+        <div class="student-hunt-history-results">
+          <div><span>Puntaje</span><strong>${record.points.toLocaleString("es")} <small>pts</small></strong></div>
+          <div><span>Tu puesto</span><strong>${record.rank}.º <small>de ${record.active_student_count}</small></strong></div>
+        </div>
+        <p class="student-hunt-history-participation">${
+          record.participated
+            ? `${record.correct_answers} de ${record.question_count} respuestas correctas`
+            : "No participaste en esta cacería; se registra 0 puntos."
+        }</p>
+      </article>`).join("");
+    elements.studentHuntHistoryEmpty.hidden = records.length > 0;
+    elements.studentHuntHistoryEmpty.textContent =
+      "Todavía no se han realizado cacerías en tus cursos.";
+  } catch (error) {
+    elements.studentHuntHistoryList.innerHTML = "";
+    elements.studentHuntHistoryEmpty.textContent = error.message;
+    elements.studentHuntHistoryEmpty.hidden = false;
   }
 }
 
@@ -1590,7 +1650,7 @@ function setAppView(view) {
     document.querySelector(".app-navigation").hidden = false;
     elements.studentCoursesViewButton.hidden = ranking;
     elements.studentHistoryViewButton.hidden = ranking;
-    elements.studentReviewViewButton.hidden = ranking;
+    elements.studentReviewViewButton.hidden = true;
     elements.studentActivityViewButton.hidden = ranking;
     elements.liveRankingViewButton.hidden = false;
     elements.liveRankingBack.hidden = !ranking;
@@ -2089,6 +2149,14 @@ async function checkApi() {
 
 function formatDate(value) {
   return new Intl.DateTimeFormat("es", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function formatDateOnly(value) {
+  return new Intl.DateTimeFormat("es", { dateStyle: "medium" }).format(new Date(value));
+}
+
+function formatTime(value) {
+  return new Intl.DateTimeFormat("es", { timeStyle: "short" }).format(new Date(value));
 }
 
 async function loadParticipationHistory() {
@@ -4893,7 +4961,6 @@ elements.studentCoursesViewButton.addEventListener("click", () => {
   setStudentPortalView("courses");
 });
 elements.studentHistoryViewButton.addEventListener("click", () => setStudentPortalView("history"));
-elements.studentReviewViewButton.addEventListener("click", () => setStudentPortalView("review"));
 elements.studentActivityViewButton.addEventListener("click", () => setStudentPortalView("activity"));
 elements.studentReviewForm.addEventListener("submit", async (event) => {
   event.preventDefault();

@@ -116,6 +116,7 @@ from src.api.schemas import (
     StudentCourseResponse,
     StudentEvaluationCreate,
     StudentEvaluationHistoryResponse,
+    StudentLiveActivityHistoryResponse,
     StudentEvaluationResponse,
     EvaluationStudentResponse,
     EvaluationStudentResultUpdate,
@@ -733,6 +734,22 @@ def list_student_participation_history(
         user.id
     )
     return [StudentParticipationHistoryResponse(**entry) for entry in history]
+
+
+@app.get(
+    "/student/live-activity-history",
+    response_model=List[StudentLiveActivityHistoryResponse],
+    tags=["estudiantes"],
+    dependencies=[Depends(current_user)],
+)
+def list_student_live_activity_history(
+    request: Request,
+    user: AuthenticatedUser = Depends(current_user),
+) -> List[StudentLiveActivityHistoryResponse]:
+    if user.role != ROLE_STUDENT:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Este recurso es exclusivo para estudiantes.")
+    history = _quick_service(request).student_live_activity_history(user.id)
+    return [StudentLiveActivityHistoryResponse(**entry) for entry in history]
 
 
 def _student_review_request_response(record) -> StudentReviewRequestResponse:

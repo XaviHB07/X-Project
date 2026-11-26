@@ -580,6 +580,20 @@ class StudentParticipationHistoryResponse(BaseModel):
     created_at: datetime
 
 
+class StudentLiveActivityHistoryResponse(BaseModel):
+    activity_id: int
+    course_id: int
+    course_name: str
+    activity_title: str
+    closed_at: Optional[datetime] = None
+    points: int
+    rank: int
+    active_student_count: int
+    participated: bool
+    correct_answers: int
+    question_count: int
+
+
 class StudentEvaluationCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
 
@@ -1184,6 +1198,17 @@ class LiveRankingRow(BaseModel):
     student_code: str
     points: int
     correct: int
+    incorrect: int
+    unanswered: int
+
+
+class LiveStudentRankingRow(BaseModel):
+    rank: int
+    student_name: str
+    points: int
+    correct: int
+    incorrect: int
+    unanswered: int
 
 
 class CumulativeLiveRankingStudent(BaseModel):
@@ -1203,6 +1228,17 @@ class CumulativeLiveRankingPeriod(BaseModel):
     students: List[CumulativeLiveRankingStudent]
 
 
+class StudentLiveRankingPeriod(BaseModel):
+    code: Literal["apertura", "clausura", "total"]
+    available: bool
+    start_week: Optional[int] = None
+    end_week: Optional[int] = None
+    quiz_count: int
+    rank: Optional[int] = None
+    points: Optional[int] = None
+    message: Optional[str] = None
+
+
 class CumulativeLiveRankingResponse(BaseModel):
     view: Literal["teacher", "student"]
     course_id: int
@@ -1220,6 +1256,7 @@ class CumulativeLiveRankingResponse(BaseModel):
     message: Optional[str] = None
     rank: Optional[int] = None
     student_count: int
+    student_periods: List[StudentLiveRankingPeriod] = Field(default_factory=list)
     periods: List[CumulativeLiveRankingPeriod]
 
 
@@ -1267,6 +1304,7 @@ class LiveStudentStateResponse(BaseModel):
     rank: Optional[int] = None
     participant_count: int
     podium: List[LiveRankingRow]
+    leaderboard: List[LiveStudentRankingRow] = Field(default_factory=list)
 
 
 class LiveAnswerRequest(BaseModel):

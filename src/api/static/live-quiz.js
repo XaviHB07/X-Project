@@ -19,12 +19,15 @@ const LIVE_POLL_MS = 1000;
 const LIVE_STUDENT_POLL_MS = 1500;
 const LIVE_COLORS = ["live-red", "live-blue", "live-yellow", "live-green"];
 const LIVE_COLOR_NAMES = ["Rojo", "Azul", "Amarillo", "Verde"];
+const WOLF_HOWL_BUTTON_TEXT = "♪ Escuchar aullido";
 
 const liveState = {
   teacher: null, // { courseId, activityId, data, fetchedAt, timer }
   student: null, // { activityId, title, data, fetchedAt, timer, sending }
   tick: null,
 };
+let wolfHowlAudio = null;
+let wolfHowlButton = null;
 
 function liveRemainingSeconds(data, fetchedAt) {
   if (!data || data.phase !== "question") return 0;
@@ -41,6 +44,27 @@ function liveRanking(rows, limit = 5) {
   return `<ol class="live-ranking">${rows.slice(0, limit).map((row) => `
     <li><span class="live-rank">${row.rank}</span><strong>${escapeHtml(row.student_name)}</strong>
       <span>${row.points} pts · ${row.correct} acierto${row.correct === 1 ? "" : "s"}</span></li>`).join("")}</ol>`;
+}
+
+function renderFinalLeaderboard(rows) {
+  const remaining = rows?.filter((row) => row.rank > 3 || row.points <= 0) || [];
+  const ranking = remaining.length ? `
+    <div class="live-final-ranking-scroll" tabindex="0" aria-label="Resto de estudiantes en la clasificación">
+      <table class="live-final-ranking-table">
+        <thead><tr><th scope="col">Puesto</th><th scope="col">Estudiante</th><th scope="col">Aciertos</th>
+          <th scope="col">Desaciertos</th><th scope="col">Sin responder</th><th scope="col">Puntaje</th></tr></thead>
+        <tbody>${remaining.map((row) => `
+          <tr><td>${row.rank}°</td><th scope="row">${escapeHtml(row.student_name)}</th>
+            <td>${row.correct}</td><td>${row.incorrect}</td><td>${row.unanswered}</td>
+            <td>${Number(row.points || 0).toLocaleString("es")} pts</td></tr>`).join("")}
+        </tbody>
+      </table>
+    </div>` : '<p class="form-note">No hay más estudiantes después del podio.</p>';
+  return `
+    <section class="live-final-ranking" aria-label="Resto del ranking">
+      <h4>RESTO DEL RANKING</h4>
+      ${ranking}
+    </section>`;
 }
 
 function liveFinishElapsed(data, fetchedAt) {
@@ -150,8 +174,9 @@ function wolfRunnerMarkup() {
 }
 
 function renderWolfFinale(rows, elapsed, personalResult = null) {
+  const podium = rows?.filter((row) => row.points > 0).slice(0, 3) || [];
   const placements = [2, 1, 3].map((rank) => {
-    const winner = rows?.find((row) => row.rank === rank);
+    const winner = podium.find((row) => row.rank === rank);
     const delay = rank === 3 ? 3200 : rank === 2 ? 3900 : 4600;
     const medal = rank === 1 ? "🥇" : rank === 2 ? "🥈" : "🥉";
     return winner ? `
@@ -170,10 +195,13 @@ function renderWolfFinale(rows, elapsed, personalResult = null) {
   `).join("");
   const personal = personalResult ? `
     <p class="wolf-personal-result">
-      ${personalResult.rank === 1 ? "¡Eres el líder de la manada!" : "Tu lugar en la manada"}
+      ${personalResult.points <= 0
+        ? "Esta vez no sumaste puntos"
+        : personalResult.rank === 1 ? "¡Eres el líder de la manada!" : "Tu lugar en la manada"}
       <strong>#${personalResult.rank ?? "—"} · ${(personalResult.points ?? 0).toLocaleString("es")} pts</strong>
     </p>` : "";
   return `
+    <div class="live-finale-view">
     <section class="wolf-finale" style="--elapsed:${Math.max(0, elapsed)}ms" aria-label="Resultados finales del quiz">
       <div class="wolf-finale-sky" aria-hidden="true">
         <div class="wolf-stars">${stars}</div>
@@ -199,52 +227,44 @@ function renderWolfFinale(rows, elapsed, personalResult = null) {
       </div>
       <div class="wolf-finale-content">
         <p class="wolf-finale-eyebrow">CACERÍA CONCLUIDA</p>
-        <h3 class="wolf-finale-title">¡La manada ya tiene líderes!</h3>
+        <h3 class="wolf-finale-title">${podium.length ? "¡La manada ya tiene líderes!" : "La cacería terminó"}</h3>
         <button class="wolf-howler" type="button" data-wolf-howl>♪ Escuchar aullido</button>
-        <div class="wolf-winners">${placements || '<p class="form-note">No hubo participantes en esta cacería.</p>'}</div>
+        <div class="wolf-winners">${placements || '<p class="form-note">Nadie logró acertar ninguna pregunta en esta cacería.</p>'}</div>
         ${personal}
         <p class="wolf-finale-signoff">FUERZA <span>·</span> INSTINTO <span>·</span> MANADA</p>
       </div>
-    </section>`;
+    </section>
+    ${renderFinalLeaderboard(rows)}
+    </div>`;
+}
+
+function resetWolfHowlButton() {
+  if (!wolfHowlButton) return;
+  wolfHowlButton.disabled = false;
+  wolfHowlButton.textContent = WOLF_HOWL_BUTTON_TEXT;
+  wolfHowlButton = null;
 }
 
 function playWolfHowl(button) {
-  const AudioContext = window.AudioContext;
-  if (!AudioContext) {
+  if (typeof Audio === "undefined") {
     notify("Este navegador no permite reproducir el aullido.", true);
     return;
   }
-  const context = new AudioContext();
-  const now = context.currentTime;
-  const gain = context.createGain();
-  const filter = context.createBiquadFilter();
-  const howl = context.createOscillator();
-  const undertone = context.createOscillator();
-  filter.type = "lowpass";
-  filter.frequency.setValueAtTime(1150, now);
-  gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.exponentialRampToValueAtTime(0.12, now + 0.25);
-  gain.gain.setValueAtTime(0.12, now + 1.65);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + 2.8);
-  howl.type = "triangle";
-  howl.frequency.setValueAtTime(330, now);
-  howl.frequency.exponentialRampToValueAtTime(620, now + 0.8);
-  howl.frequency.exponentialRampToValueAtTime(280, now + 2.8);
-  undertone.type = "sine";
-  undertone.frequency.setValueAtTime(165, now);
-  undertone.frequency.exponentialRampToValueAtTime(140, now + 2.8);
-  howl.connect(filter);
-  undertone.connect(filter);
-  filter.connect(gain);
-  gain.connect(context.destination);
+  if (!wolfHowlAudio) {
+    wolfHowlAudio = new Audio("/assets/assets/wolf-howls.mp3");
+    wolfHowlAudio.preload = "none";
+    wolfHowlAudio.addEventListener("ended", resetWolfHowlButton);
+  }
+  if (wolfHowlButton && wolfHowlButton !== button) resetWolfHowlButton();
+  wolfHowlAudio.pause();
+  wolfHowlAudio.currentTime = 0;
+  wolfHowlButton = button;
   button.disabled = true;
-  howl.onended = () => context.close();
-  howl.start(now);
-  undertone.start(now);
-  howl.stop(now + 2.8);
-  undertone.stop(now + 2.8);
-  setTimeout(() => { button.disabled = false; }, 3000);
-  context.resume().catch(() => notify("El navegador no permitió reproducir el aullido.", true));
+  button.textContent = "Reproduciendo aullido...";
+  wolfHowlAudio.play().catch(() => {
+    resetWolfHowlButton();
+    notify("No se pudo cargar el audio del aullido del lobo.", true);
+  });
 }
 
 document.addEventListener("click", (event) => {
@@ -491,7 +511,7 @@ function renderStudentLive() {
       <p class="student-live-score">Total: <strong>${data.total_points ?? 0} pts</strong> · Puesto ${data.rank ?? "—"} de ${data.participant_count}</p>`;
     return;
   }
-  panel.innerHTML = `${header}${renderWolfFinale(data.podium, liveFinishElapsed(data, live.fetchedAt), {
+  panel.innerHTML = `${header}${renderWolfFinale(data.leaderboard || data.podium, liveFinishElapsed(data, live.fetchedAt), {
     rank: data.rank,
     points: data.total_points,
   })}
