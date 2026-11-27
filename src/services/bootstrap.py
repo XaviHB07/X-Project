@@ -18,7 +18,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 
@@ -104,6 +104,9 @@ class AppContext:
     institution_service: InstitutionService
     quick_activity_service: QuickActivityService
     quick_activity_email_service: QuickActivityResultsEmailService
+    # Engine de SQLAlchemy: lo usa la instrumentación (`/admin/metrics`)
+    # para informar el estado del pool de conexiones.
+    engine: Any = None
 
 
 # Columnas agregadas a tablas que ya existían antes del Sprint 1. `create_all`
@@ -513,4 +516,5 @@ def build_app_context(config_path: Path = DEFAULT_CONFIG_PATH, create_tables: bo
         institution_service=InstitutionService(session_factory),
         quick_activity_service=QuickActivityService(session_factory),
         quick_activity_email_service=QuickActivityResultsEmailService(session_factory),
+        engine=session_factory.engine,
     )

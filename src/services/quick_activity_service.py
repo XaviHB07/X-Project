@@ -35,11 +35,14 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import threading
+import time
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, List, Optional, Sequence
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -73,6 +76,9 @@ MIN_QUESTION_SECONDS = 5
 MAX_QUESTION_SECONDS = 120
 MAX_POINTS = 1000
 LEADERBOARD_SIZE = 10
+# Caché del ranking en vivo (ver `QuickActivityService._leaderboard`).
+LEADERBOARD_CACHE_SIZE = 64
+LEADERBOARD_CACHE_TTL_S = 15.0
 # HU-Q4: bandas para resumir el nivel de comprensión del grupo según el
 # porcentaje promedio de aciertos. Es un criterio provisional del equipo
 # (alto ≥ 75 %, medio 50–74 %, bajo < 50 %), fácil de ajustar si el docente
@@ -129,6 +135,9 @@ class QuickActivityService:
     ):
         self._session_factory = session_factory
         self._clock = clock
+        # activity_id -> (huella, creado_en, ranking). Ver `_leaderboard`.
+        self._board_cache: "OrderedDict[int, tuple]" = OrderedDict()
+        self._board_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Docente: preparación y publicación (base de HU-Q1 / HU-Q2)
@@ -219,7 +228,18 @@ class QuickActivityService:
                 .options(selectinload(QuickActivityORM.questions))
                 .order_by(QuickActivityORM.created_at.desc(), QuickActivityORM.id.desc())
             ).scalars().all()
-            return [self._teacher_view(session, activity) for activity in activities]
+            # Un solo conteo agrupado en vez de un `count(*)` por actividad
+            # (consulta N+1 que crecía con cada actividad del curso).
+            counts = dict(session.execute(
+                select(QuickActivityResponseORM.activity_id, func.count(QuickActivityResponseORM.id))
+                .join(QuickActivityORM, QuickActivityORM.id == QuickActivityResponseORM.activity_id)
+                .where(QuickActivityORM.course_id == course_id)
+                .group_by(QuickActivityResponseORM.activity_id)
+            ).all()) if activities else {}
+            return [
+                self._teacher_view(session, activity, response_count=int(counts.get(activity.id, 0)))
+                for activity in activities
+            ]
 
     def get(self, course_id: int, activity_id: int) -> dict:
         with self._session_factory() as session:
@@ -750,19 +770,12 @@ class QuickActivityService:
             if question is not None:
                 mine = next((a for a in response.answers if a.question_id == question.id), None)
             reveal = phase in ("reveal", "finished")
-            # El ranking solo se calcula al cerrar cada pregunta: durante la
-            # pregunta basta el conteo, y así cada consulta (una por segundo
-            # por estudiante) es liviana.
-            if reveal:
-                board = self._leaderboard(session, activity)
-                participant_count = len(board)
-            else:
-                board = []
-                participant_count = int(session.execute(
-                    select(func.count(QuickActivityResponseORM.id)).where(
-                        QuickActivityResponseORM.activity_id == activity.id
-                    )
-                ).scalar_one())
+            # El ranking solo se necesita al cerrar cada pregunta: durante la
+            # pregunta basta el conteo, que sale de la misma huella con la que
+            # se valida la caché del ranking (una sola consulta agregada).
+            fingerprint = self._board_fingerprint(session, activity)
+            participant_count = fingerprint[1]
+            board = self._leaderboard(session, activity, fingerprint) if reveal else []
             my_row = next((row for row in board if row["student_id"] == response.student_id), None)
             return {
                 "activity_id": activity.id,
@@ -1198,27 +1211,125 @@ class QuickActivityService:
             raise NotEnrolledInCourseError("Primero únete al quiz con su código.")
         return activity, response
 
-    def _leaderboard(self, session: Session, activity: QuickActivityORM) -> List[dict]:
-        rows = session.execute(
-            select(QuickActivityResponseORM)
-            .where(QuickActivityResponseORM.activity_id == activity.id)
-            .options(
-                selectinload(QuickActivityResponseORM.answers),
-                selectinload(QuickActivityResponseORM.student),
+    @staticmethod
+    def _board_fingerprint(session: Session, activity: QuickActivityORM) -> tuple:
+        """Huella barata de los datos que determinan el ranking.
+
+        Las respuestas solo se insertan (nunca se editan ni se borran
+        durante el quiz), así que (participantes, respuestas, último id de
+        respuesta y de participante, cantidad de preguntas) cambia siempre
+        que el ranking pueda cambiar. Es una sola consulta agregada sobre
+        índices; reemplaza al `count(*)` que ya se hacía en cada consulta.
+        """
+        row = session.execute(
+            select(
+                func.count(func.distinct(QuickActivityResponseORM.id)),
+                func.count(QuickActivityAnswerORM.id),
+                func.coalesce(func.max(QuickActivityAnswerORM.id), 0),
+                func.coalesce(func.max(QuickActivityResponseORM.id), 0),
             )
-        ).scalars().all()
-        board = []
-        for row in rows:
-            board.append({
-                "student_id": row.student_id,
-                "student_name": row.student.display_name,
-                "student_code": row.student.external_ref,
-                "points": sum(answer.points or 0 for answer in row.answers),
-                "correct": sum(1 for answer in row.answers if answer.is_correct),
-                "incorrect": sum(1 for answer in row.answers if not answer.is_correct),
-                "unanswered": max(0, len(activity.questions) - len(row.answers)),
-                "time_ms": sum(answer.response_ms or 0 for answer in row.answers if answer.is_correct),
-            })
+            .select_from(QuickActivityResponseORM)
+            .outerjoin(
+                QuickActivityAnswerORM,
+                QuickActivityAnswerORM.response_id == QuickActivityResponseORM.id,
+            )
+            .where(QuickActivityResponseORM.activity_id == activity.id)
+        ).one()
+        return (activity.id, int(row[0]), int(row[1]), int(row[2]), int(row[3]),
+                len(activity.questions))
+
+    def _leaderboard(
+        self,
+        session: Session,
+        activity: QuickActivityORM,
+        fingerprint: Optional[tuple] = None,
+    ) -> List[dict]:
+        """Ranking de un quiz en vivo.
+
+        Plan de optimización, tareas 3.3–3.5. Antes se cargaban TODAS las
+        respuestas como objetos ORM (3 consultas: envíos, respuestas y
+        estudiantes) y se sumaba en Python, y eso se repetía en cada
+        consulta de cada estudiante durante `reveal`/`finished` y en cada
+        consulta del docente (una por segundo). Ahora:
+
+        * los totales se calculan en PostgreSQL con una agregación
+          (`GROUP BY` del envío), una sola consulta sin hidratar objetos;
+        * el resultado se guarda en una caché por actividad que se invalida
+          sola cuando cambia la huella de datos (`_board_fingerprint`): un
+          envío nuevo, una respuesta nueva o una pregunta más. Con 40
+          estudiantes mirando los resultados, el ranking se calcula una vez
+          y no 40. El TTL corto solo acota la frescura de datos que la
+          huella no ve (p. ej. un nombre editado a mitad del quiz).
+
+        El orden y los valores son exactamente los de antes: mismos campos,
+        mismo criterio de desempate (`_random_tie_key`).
+        """
+        if fingerprint is None:
+            fingerprint = self._board_fingerprint(session, activity)
+        now = time.monotonic()
+        with self._board_lock:
+            cached = self._board_cache.get(activity.id)
+            if (
+                cached is not None
+                and cached[0] == fingerprint
+                and now - cached[1] < LEADERBOARD_CACHE_TTL_S
+            ):
+                self._board_cache.move_to_end(activity.id)
+                return [dict(row) for row in cached[2]]
+
+        board = self._compute_leaderboard(session, activity)
+        with self._board_lock:
+            self._board_cache[activity.id] = (fingerprint, now, board)
+            self._board_cache.move_to_end(activity.id)
+            while len(self._board_cache) > LEADERBOARD_CACHE_SIZE:
+                self._board_cache.popitem(last=False)
+        return [dict(row) for row in board]
+
+    def _compute_leaderboard(self, session: Session, activity: QuickActivityORM) -> List[dict]:
+        answer = QuickActivityAnswerORM
+        rows = session.execute(
+            select(
+                QuickActivityResponseORM.student_id,
+                StudentORM.display_name,
+                StudentORM.external_ref,
+                func.coalesce(func.sum(func.coalesce(answer.points, 0)), 0),
+                func.count(case((answer.is_correct.is_(True), 1))),
+                # Igual que antes (`not answer.is_correct`): cuenta como
+                # incorrecta toda respuesta que no sea correcta.
+                func.count(case(
+                    (answer.id.is_not(None) & answer.is_correct.is_not(True), 1)
+                )),
+                func.count(answer.id),
+                func.coalesce(func.sum(case(
+                    (answer.is_correct.is_(True), func.coalesce(answer.response_ms, 0)),
+                    else_=0,
+                )), 0),
+            )
+            .select_from(QuickActivityResponseORM)
+            .join(StudentORM, StudentORM.id == QuickActivityResponseORM.student_id)
+            .outerjoin(answer, answer.response_id == QuickActivityResponseORM.id)
+            .where(QuickActivityResponseORM.activity_id == activity.id)
+            .group_by(
+                QuickActivityResponseORM.id,
+                QuickActivityResponseORM.student_id,
+                StudentORM.display_name,
+                StudentORM.external_ref,
+            )
+        ).all()
+        question_count = len(activity.questions)
+        board = [
+            {
+                "student_id": student_id,
+                "student_name": name,
+                "student_code": code,
+                "points": int(points),
+                "correct": int(correct),
+                "incorrect": int(incorrect),
+                "unanswered": max(0, question_count - int(answered)),
+                "time_ms": int(time_ms),
+            }
+            for student_id, name, code, points, correct, incorrect, answered, time_ms in rows
+        ]
         board.sort(key=lambda item: (
             -item["points"],
             item["time_ms"],
@@ -1234,25 +1345,31 @@ class QuickActivityService:
         phase = self._effective_phase(activity)
         question = self._current_question(activity) if phase in ("question", "reveal") else None
         board = self._leaderboard(session, activity)
-        answers = []
+        answered_count = 0
+        per_option: dict = {}
         if question is not None:
-            answers = session.execute(
-                select(QuickActivityAnswerORM)
+            # Antes se cargaban todas las respuestas de la pregunta como
+            # objetos; basta un conteo agrupado por alternativa.
+            counts = session.execute(
+                select(QuickActivityAnswerORM.selected_option, func.count(QuickActivityAnswerORM.id))
                 .join(QuickActivityResponseORM)
                 .where(
                     QuickActivityResponseORM.activity_id == activity.id,
                     QuickActivityAnswerORM.question_id == question.id,
                 )
-            ).scalars().all()
+                .group_by(QuickActivityAnswerORM.selected_option)
+            ).all()
+            per_option = {option: int(total) for option, total in counts}
+            answered_count = sum(per_option.values())
         reveal = phase in ("reveal", "finished")
         distribution = None
         if question is not None and reveal:
             distribution = [0] * len(question.options or [])
-            for answer in answers:
-                if answer.selected_option is not None and answer.selected_option < len(distribution):
-                    distribution[answer.selected_option] += 1
+            for option, total in per_option.items():
+                if option is not None and option < len(distribution):
+                    distribution[option] += total
         return {
-            "activity": self._teacher_view(session, activity),
+            "activity": self._teacher_view(session, activity, response_count=len(board)),
             "phase": phase,
             "finished_at": _utc(activity.closed_at) if phase == "finished" else None,
             "server_time": _utc(self._clock()),
@@ -1271,7 +1388,7 @@ class QuickActivityService:
                 "options": question.options,
                 "correct_option": question.correct_option if reveal else None,
             },
-            "answered_count": len(answers),
+            "answered_count": answered_count,
             "distribution": distribution,
             "leaderboard": (
                 board if phase == "finished"
@@ -1453,12 +1570,18 @@ class QuickActivityService:
             return "open" if expires and expires > self._clock() else "expired"
         return activity.status  # draft / closed
 
-    def _teacher_view(self, session: Session, activity: QuickActivityORM) -> dict:
-        response_count = int(session.execute(
-            select(func.count(QuickActivityResponseORM.id)).where(
-                QuickActivityResponseORM.activity_id == activity.id
-            )
-        ).scalar_one())
+    def _teacher_view(
+        self,
+        session: Session,
+        activity: QuickActivityORM,
+        response_count: Optional[int] = None,
+    ) -> dict:
+        if response_count is None:
+            response_count = int(session.execute(
+                select(func.count(QuickActivityResponseORM.id)).where(
+                    QuickActivityResponseORM.activity_id == activity.id
+                )
+            ).scalar_one())
         return {
             "id": activity.id,
             "course_id": activity.course_id,
