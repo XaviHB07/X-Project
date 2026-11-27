@@ -729,7 +729,7 @@ function openLiveRanking() {
   loadLiveRanking();
   if (state.liveRankingTimer) clearInterval(state.liveRankingTimer);
   state.liveRankingTimer = setInterval(() => {
-    if (state.appView === "ranking") loadLiveRanking();
+    if (state.appView === "ranking" && !document.hidden) loadLiveRanking();
   }, 10000);
 }
 
@@ -5423,5 +5423,6 @@ $("#today-label").textContent = new Intl.DateTimeFormat("es", { dateStyle: "long
 setAppView("daily");
 renderRecentCourses();
 checkApi();
-setInterval(checkApi, 30000);
+// Con la pestaña oculta no se consulta el estado de la API (menos tráfico).
+setInterval(() => { if (!document.hidden) checkApi(); }, 30000);
 initializeAuthentication();

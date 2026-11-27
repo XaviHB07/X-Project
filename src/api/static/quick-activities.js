@@ -420,7 +420,7 @@ function scheduleQuickTimers() {
   }, 1000);
   // Mientras haya una actividad abierta, se refrescan los envíos.
   quickState.pollTimer = setInterval(() => {
-    if (state.courseView !== "quick" || elements.workspace.hidden) return;
+    if (state.courseView !== "quick" || elements.workspace.hidden || document.hidden) return;
     loadQuickActivities({ quiet: true });
   }, 15000);
 }

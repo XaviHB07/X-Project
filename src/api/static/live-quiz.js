@@ -17,15 +17,115 @@ const LIVE_POLL_MS = 1000;
 // Los celulares consultan un poco menos seguido: con 40 estudiantes son unas
 // 27 consultas por segundo en vez de 40.
 const LIVE_STUDENT_POLL_MS = 1500;
+// Pestaña oculta (celular bloqueado, otra app): no hace falta el ritmo normal.
+const LIVE_HIDDEN_POLL_MS = 5000;
+// Ante errores el intervalo se duplica hasta este máximo (backoff).
+const LIVE_MAX_BACKOFF_MS = 15000;
+// Una consulta de estado que tarda más que esto se aborta y se reintenta.
+const LIVE_REQUEST_TIMEOUT_MS = 8000;
+const LIVE_ANSWER_TIMEOUT_MS = 10000;
 const LIVE_COLORS = ["live-red", "live-blue", "live-yellow", "live-green"];
 const LIVE_COLOR_NAMES = ["Rojo", "Azul", "Amarillo", "Verde"];
 const WOLF_HOWL_BUTTON_TEXT = "♪ Escuchar aullido";
 
 const liveState = {
-  teacher: null, // { courseId, activityId, data, fetchedAt, timer }
-  student: null, // { activityId, title, data, fetchedAt, timer, sending }
+  teacher: null, // { courseId, activityId, data, fetchedAt, poller, seq }
+  student: null, // { activityId, title, data, fetchedAt, poller, seq, sending }
   tick: null,
 };
+
+// Plan de optimización, tareas 2.2–2.4 y 2.8. Antes se usaba setInterval:
+// si el servidor tardaba más que el intervalo, las consultas se apilaban
+// (cada pantalla llegaba a tener varias en vuelo) y empeoraban justo la
+// lentitud que las causaba. Este programador:
+//   * mantiene UNA sola consulta en vuelo y agenda la siguiente con
+//     setTimeout recién cuando termina la anterior;
+//   * aborta con AbortController la consulta en curso al detenerse y la que
+//     supera LIVE_REQUEST_TIMEOUT_MS (nada queda "cargando" para siempre);
+//   * ante errores espera cada vez más (backoff exponencial con jitter, hasta
+//     LIVE_MAX_BACKOFF_MS) y vuelve al ritmo normal cuando se recupera;
+//   * con la pestaña oculta consulta cada LIVE_HIDDEN_POLL_MS y, al volver a
+//     verse, consulta de inmediato.
+function createLivePoller({ intervalMs, request, onData, onError, onRecover }) {
+  let timer = null;
+  let controller = null;
+  let failures = 0;
+  let stopped = true;
+  let inFlight = false;
+  let again = false;
+
+  const nextDelay = () => {
+    if (failures > 0) {
+      const backoff = Math.min(LIVE_MAX_BACKOFF_MS, intervalMs * 2 ** failures);
+      return Math.round(backoff * (0.8 + Math.random() * 0.4));
+    }
+    return document.hidden ? Math.max(intervalMs, LIVE_HIDDEN_POLL_MS) : intervalMs;
+  };
+  const schedule = (delay) => {
+    clearTimeout(timer);
+    timer = stopped ? null : setTimeout(run, delay);
+  };
+
+  async function run() {
+    timer = null;
+    if (stopped) return;
+    if (inFlight) { again = true; return; }
+    inFlight = true;
+    again = false;
+    controller = new AbortController();
+    const current = controller;
+    const timeout = setTimeout(() => current.abort(), LIVE_REQUEST_TIMEOUT_MS);
+    try {
+      const data = await request(current.signal);
+      if (stopped) return;
+      const recovered = failures > 0;
+      failures = 0;
+      if (recovered) onRecover?.();
+      onData(data);
+    } catch (error) {
+      if (stopped) return;
+      failures += 1;
+      const message = error?.name === "AbortError"
+        ? "el servidor tardó demasiado en responder"
+        : error?.message || "error de red";
+      onError?.(message, nextDelay());
+    } finally {
+      clearTimeout(timeout);
+      inFlight = false;
+      if (controller === current) controller = null;
+      if (!stopped) schedule(again ? 0 : nextDelay());
+    }
+  }
+
+  return {
+    start() {
+      if (!stopped) return;
+      stopped = false;
+      failures = 0;
+      schedule(0);
+    },
+    stop() {
+      stopped = true;
+      clearTimeout(timer);
+      timer = null;
+      controller?.abort();
+      controller = null;
+    },
+    // Consulta ya (p. ej. después de responder), sin duplicar una en vuelo.
+    refreshNow() {
+      if (stopped) return;
+      if (inFlight) again = true;
+      else schedule(0);
+    },
+    get running() { return !stopped; },
+  };
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  liveState.teacher?.poller?.refreshNow();
+  liveState.student?.poller?.refreshNow();
+});
 let wolfHowlAudio = null;
 let wolfHowlButton = null;
 
@@ -353,24 +453,49 @@ function renderLiveStage() {
   status.textContent = `${data.participant_count} participante${data.participant_count === 1 ? "" : "s"}. ${mailStatus[data.result_email_status] || 'Resultados disponibles en "Resultados".'}`;
 }
 
-async function fetchLiveTeacher() {
-  const live = liveState.teacher;
-  if (!live) return;
-  try {
-    const data = await api(`/courses/${live.courseId}/quick-activities/${live.activityId}/live`);
-    if (liveState.teacher !== live) return;
-    const changed = !live.data || live.data.phase !== data.phase || live.data.position !== data.position
-      || live.data.answered_count !== data.answered_count
-      || live.data.participant_count !== data.participant_count
-      || live.data.result_email_status !== data.result_email_status;
-    live.data = data;
-    live.fetchedAt = Date.now();
-    if (changed) renderLiveStage();
-  } catch (error) {
-    $("#live-stage-status").textContent = `Sin conexión con el servidor: ${error.message}`;
+// Tarea 2.6: durante la pregunta (y en la sala de espera) lo único que cambia
+// de una consulta a otra son los contadores; se actualizan en su lugar en vez
+// de reconstruir todo el panel (y la imagen del QR) cada segundo.
+function patchLiveStage(previous, data) {
+  if (!previous || previous.phase !== data.phase || previous.position !== data.position
+      || previous.result_email_status !== data.result_email_status) return false;
+  if (data.phase === "question") {
+    const answered = document.querySelector("#live-stage-body .live-answered");
+    if (!answered) return false;
+    answered.textContent = `${data.answered_count} / ${data.participant_count} respondieron`;
+    return true;
   }
+  if (data.phase === "lobby") {
+    const count = document.querySelector("#live-stage-body .live-count");
+    const list = document.querySelector("#live-stage-body .live-participants");
+    if (!count || !list) return false;
+    const plural = data.participant_count === 1 ? "" : "s";
+    count.innerHTML = `<strong>${data.participant_count}</strong> participante${plural} conectado${plural}`;
+    list.innerHTML = data.participants.map((item) => `<span>${escapeHtml(item.student_name)}</span>`).join("");
+    $("#live-advance").disabled = data.participant_count === 0;
+    $("#live-stage-status").textContent = data.participant_count === 0
+      ? "Esperando a que se una al menos un estudiante." : "";
+    return true;
+  }
+  return false;
 }
 
+function handleLiveTeacherData(live, data, seq) {
+  // Una consulta que salió antes de «avanzar» trae la fase vieja: se descarta.
+  if (liveState.teacher !== live || seq !== live.seq) return;
+  const previous = live.data;
+  const changed = !previous || previous.phase !== data.phase || previous.position !== data.position
+    || previous.answered_count !== data.answered_count
+    || previous.participant_count !== data.participant_count
+    || previous.result_email_status !== data.result_email_status;
+  live.data = data;
+  live.fetchedAt = Date.now();
+  if (changed && !patchLiveStage(previous, data)) renderLiveStage();
+  if (data.phase === "finished") live.poller?.stop();
+}
+
+// El cronómetro se dibuja localmente cada 250 ms a partir del último
+// `remaining_ms` del servidor: no requiere consultar al servidor (tarea 2.5).
 function tickLiveTimers() {
   const teacher = liveState.teacher;
   const timer = document.querySelector("#live-teacher-timer");
@@ -386,22 +511,54 @@ function ensureLiveTick() {
   if (!liveState.tick) liveState.tick = setInterval(tickLiveTimers, 250);
 }
 
+// Antes el intervalo de 250 ms quedaba corriendo para siempre tras el primer
+// quiz; ahora se detiene cuando no hay pantalla en vivo abierta.
+function stopLiveTickIfIdle() {
+  if (liveState.tick && !liveState.teacher && !liveState.student) {
+    clearInterval(liveState.tick);
+    liveState.tick = null;
+  }
+}
+
 async function openLiveStage(activityId) {
   if (!state.course) return;
   closeLiveStage();
-  liveState.teacher = { courseId: state.course.id, activityId, data: null, fetchedAt: 0 };
+  const live = { courseId: state.course.id, activityId, data: null, fetchedAt: 0, seq: 0 };
+  liveState.teacher = live;
   const dialog = $("#live-stage");
   $("#live-stage-body").innerHTML = '<p class="form-note">Cargando…</p>';
   if (!dialog.open) dialog.showModal();
-  await fetchLiveTeacher();
-  renderLiveStage();
-  liveState.teacher.timer = setInterval(fetchLiveTeacher, LIVE_POLL_MS);
+  live.poller = createLivePoller({
+    intervalMs: LIVE_POLL_MS,
+    request: async (signal) => {
+      const seq = live.seq;
+      const data = await api(`/courses/${live.courseId}/quick-activities/${live.activityId}/live`, { signal });
+      return { data, seq };
+    },
+    onData: ({ data, seq }) => handleLiveTeacherData(live, data, seq),
+    onError: (message, retryMs) => {
+      if (liveState.teacher !== live) return;
+      $("#live-stage-status").textContent =
+        `Sin conexión con el servidor (${message}). Reintentando en ${Math.ceil(retryMs / 1000)} s…`;
+    },
+    onRecover: () => {
+      if (liveState.teacher !== live) return;
+      $("#live-stage-status").textContent = "";
+      renderLiveStage();
+    },
+  });
+  live.poller.start();
   ensureLiveTick();
 }
 
-function closeLiveStage() {
-  if (liveState.teacher?.timer) clearInterval(liveState.teacher.timer);
+function stopLiveTeacher() {
+  liveState.teacher?.poller?.stop();
   liveState.teacher = null;
+  stopLiveTickIfIdle();
+}
+
+function closeLiveStage() {
+  stopLiveTeacher();
   const dialog = $("#live-stage");
   if (dialog?.open) dialog.close();
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -416,19 +573,29 @@ $("#live-advance")?.addEventListener("click", async () => {
     return;
   }
   const button = $("#live-advance");
+  if (button.disabled) return;
   setBusy(button, true, "Un momento...");
+  // Invalida las consultas de estado que ya estaban en vuelo (traerían la
+  // fase anterior y harían "parpadear" la pantalla).
+  live.seq += 1;
   try {
-    live.data = await api(
+    const data = await api(
       `/courses/${live.courseId}/quick-activities/${live.activityId}/live/advance`,
       { method: "POST" },
     );
+    if (liveState.teacher !== live) return;
+    live.data = data;
     live.fetchedAt = Date.now();
-    renderLiveStage();
+    if (data.phase === "finished") live.poller?.stop();
   } catch (error) {
     notify(error.message, true);
   } finally {
     setBusy(button, false);
-    renderLiveStage();
+    if (liveState.teacher === live) {
+      renderLiveStage();
+      // Si el docente terminó el quiz, la consulta trae el estado del correo.
+      live.poller?.refreshNow();
+    }
   }
 });
 
@@ -437,8 +604,7 @@ $("#live-stage-close")?.addEventListener("click", () => {
   if (typeof loadQuickActivities === "function") loadQuickActivities();
 });
 $("#live-stage")?.addEventListener("cancel", () => {
-  if (liveState.teacher?.timer) clearInterval(liveState.teacher.timer);
-  liveState.teacher = null;
+  stopLiveTeacher();
 });
 $("#live-fullscreen")?.addEventListener("click", () => {
   const dialog = $("#live-stage");
@@ -518,42 +684,54 @@ function renderStudentLive() {
   <button class="button button-add" type="button" data-live-exit>Unirme a otra actividad</button>`;
 }
 
-async function fetchLiveStudent() {
-  const live = liveState.student;
-  if (!live || live.sending) return;
-  try {
-    const data = await api(`/student/quick-activities/${live.activityId}/live`);
-    if (liveState.student !== live) return;
-    const changed = !live.data || live.data.phase !== data.phase || live.data.position !== data.position
-      || live.data.answered !== data.answered || live.data.participant_count !== data.participant_count;
-    const phaseChanged = !live.data || live.data.phase !== data.phase || live.data.position !== data.position;
-    live.data = data;
-    live.fetchedAt = Date.now();
-    if (changed) renderStudentLive();
-    // En el celular, cada pregunta nueva o resultado queda a la vista.
-    if (phaseChanged) $("#student-live")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    if (data.phase === "finished") {
-      clearInterval(live.timer);
-      if (typeof loadStudentSubmissions === "function") loadStudentSubmissions();
-    }
-  } catch (error) {
-    setJoinStatus(`Sin conexión con el quiz: ${error.message}`, true);
+function handleLiveStudentData(live, data, seq) {
+  // Mientras se envía una respuesta (o si la consulta salió antes de enviarla)
+  // el estado traería `answered: false` y volvería a mostrar los botones.
+  if (liveState.student !== live || live.sending || seq !== live.seq) return;
+  const changed = !live.data || live.data.phase !== data.phase || live.data.position !== data.position
+    || live.data.answered !== data.answered || live.data.participant_count !== data.participant_count;
+  const phaseChanged = !live.data || live.data.phase !== data.phase || live.data.position !== data.position;
+  live.data = data;
+  live.fetchedAt = Date.now();
+  if (changed) renderStudentLive();
+  // En el celular, cada pregunta nueva o resultado queda a la vista.
+  if (phaseChanged) $("#student-live")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (data.phase === "finished") {
+    live.poller?.stop();
+    if (typeof loadStudentSubmissions === "function") loadStudentSubmissions();
   }
 }
 
 function startStudentLive(activity) {
   stopStudentLive();
   setJoinStatus("");
-  liveState.student = { activityId: activity.id, title: activity.title, data: null, fetchedAt: 0 };
+  const live = { activityId: activity.id, title: activity.title, data: null, fetchedAt: 0, seq: 0, sending: false };
+  liveState.student = live;
   renderStudentLive();
-  fetchLiveStudent();
-  liveState.student.timer = setInterval(fetchLiveStudent, LIVE_STUDENT_POLL_MS);
+  live.poller = createLivePoller({
+    intervalMs: LIVE_STUDENT_POLL_MS,
+    request: async (signal) => {
+      const seq = live.seq;
+      const data = await api(`/student/quick-activities/${live.activityId}/live`, { signal });
+      return { data, seq };
+    },
+    onData: ({ data, seq }) => handleLiveStudentData(live, data, seq),
+    onError: (message, retryMs) => {
+      if (liveState.student !== live) return;
+      setJoinStatus(`Sin conexión con el quiz (${message}). Reintentando en ${Math.ceil(retryMs / 1000)} s…`, true);
+    },
+    onRecover: () => {
+      if (liveState.student === live) setJoinStatus("");
+    },
+  });
+  live.poller.start();
   ensureLiveTick();
 }
 
 function stopStudentLive() {
-  if (liveState.student?.timer) clearInterval(liveState.student.timer);
+  liveState.student?.poller?.stop();
   liveState.student = null;
+  stopLiveTickIfIdle();
   const panel = $("#student-live");
   if (panel) { panel.hidden = true; panel.innerHTML = ""; }
 }
@@ -567,21 +745,39 @@ $("#student-live")?.addEventListener("click", async (event) => {
     return;
   }
   const button = event.target.closest("[data-live-answer]");
-  if (!button || !live?.data?.question || live.sending) return;
+  if (!button || !live?.data?.question || live.sending || live.data.answered) return;
   const selected = Number(button.dataset.liveAnswer);
+  // Tarea 2.7: un solo POST por pregunta. `sending` bloquea el doble toque y
+  // deshabilita los botones; `seq` descarta consultas de estado anteriores.
   live.sending = true;
+  live.seq += 1;
   renderStudentLive();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), LIVE_ANSWER_TIMEOUT_MS);
   try {
     await api(`/student/quick-activities/${live.activityId}/live/answers`, {
       method: "POST",
       body: JSON.stringify({ question_id: live.data.question.id, selected_option: selected }),
+      signal: controller.signal,
     });
     live.data = { ...live.data, answered: true, selected_option: selected };
+    setJoinStatus("");
   } catch (error) {
-    setJoinStatus(error.message, true);
+    // Reintentar es seguro: el servidor guarda una sola respuesta por
+    // pregunta (restricción única). Si la primera sí llegó, el reintento
+    // responde "Ya respondiste" y la consulta siguiente lo sincroniza.
+    setJoinStatus(
+      error?.name === "AbortError"
+        ? "El servidor tardó en confirmar tu respuesta. Si no aparece como enviada, vuelve a tocar tu color."
+        : error.message,
+      true,
+    );
   } finally {
+    clearTimeout(timeout);
     live.sending = false;
-    renderStudentLive();
-    fetchLiveStudent();
+    if (liveState.student === live) {
+      renderStudentLive();
+      live.poller?.refreshNow();
+    }
   }
 });
