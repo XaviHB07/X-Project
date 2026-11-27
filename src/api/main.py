@@ -20,17 +20,30 @@ de dominio a una respuesta HTTP. La lógica de negocio real vive en
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
 from datetime import date, datetime, timezone
 import os
+import time
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
+from starlette.concurrency import run_in_threadpool
 from urllib.parse import quote
 
 from src.domain.entities import GroupExpositionMemberEntry, StudentGroup
+from src.api.observability import (
+    RouteStats,
+    current_request,
+    install_sql_timing,
+    new_request_metrics,
+    pool_status,
+    slow_request_threshold_ms,
+)
 from src.api.dependencies import (
     current_user,
     get_fairness_service,
@@ -215,6 +228,8 @@ async def lifespan(app: FastAPI):
     # `app.state` para que `dependencies.py` lo reparta por request sin
     # reconstruir nada. Ver src/services/bootstrap.py.
     app.state.app_context = build_app_context()
+    if app.state.app_context.engine is not None:
+        install_sql_timing(app.state.app_context.engine)
     yield
 
 
@@ -239,12 +254,28 @@ def frontend() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+request_log = logging.getLogger("xproject.requests")
+route_stats = RouteStats()
+app.state.route_stats = route_stats
+
+# Comprime HTML/JS/CSS/JSON de más de 1 KB. El frontend pesa ~600 KB sin
+# comprimir (app.js ~240 KB, styles.css ~130 KB) y cada celular lo bajaba
+# completo en cada carga; con gzip baja a una fracción.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
 @app.middleware("http")
 async def prevent_frontend_cache(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path == "/" or request.url.path.startswith("/assets/"):
+    if request.url.path == "/":
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
+    elif request.url.path.startswith("/assets/"):
+        # `no-cache` (y no `no-store`): el navegador guarda el archivo pero
+        # pregunta siempre si cambió. StaticFiles responde 304 sin cuerpo
+        # cuando el ETag coincide, así que un despliegue nuevo se ve al
+        # instante y las recargas no vuelven a descargar todo.
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
     return response
 
 
@@ -256,9 +287,25 @@ async def authenticate_requests(request: Request, call_next):
         and not request.url.path.startswith("/assets/")
         and hasattr(request.app.state, "app_context")
     ):
-        user = request.app.state.app_context.auth_service.user_for_token(
-            request.cookies.get("aula_session")
-        )
+        # `user_for_token` consulta PostgreSQL de forma síncrona. Llamarlo
+        # directo dentro de este middleware `async` bloqueaba el event loop
+        # durante la consulta: con 40 estudiantes consultando el quiz, todas
+        # las peticiones quedaban en fila detrás de cada autenticación. En el
+        # threadpool la consulta corre en paralelo con el resto.
+        metrics = current_request.get()
+        auth_started = time.perf_counter()
+        try:
+            user = await run_in_threadpool(
+                request.app.state.app_context.auth_service.user_for_token,
+                request.cookies.get("aula_session"),
+            )
+        except PoolTimeoutError:
+            # Los manejadores de excepciones de FastAPI no cubren errores
+            # lanzados dentro de un middleware: se resuelve aquí mismo.
+            request_log.error("pool_agotado ruta=%s (autenticación)", request.url.path)
+            return _database_busy_response()
+        if metrics is not None:
+            metrics.auth_ms = (time.perf_counter() - auth_started) * 1000
         if user is None:
             return JSONResponse(
                 {"detail": "Inicia sesión para continuar."},
@@ -293,6 +340,82 @@ async def authenticate_requests(request: Request, call_next):
     ):
         response.headers["Cache-Control"] = "no-store"
     return response
+
+
+def _route_template(request: Request) -> str:
+    """Plantilla de la ruta (`/courses/{course_id}/...`), no la URL concreta:
+    así las métricas no crecen sin límite con cada id distinto."""
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    if path:
+        return path
+    if request.url.path.startswith("/assets/"):
+        return "/assets/*"
+    return "sin-ruta"
+
+
+def _database_busy_response() -> JSONResponse:
+    return JSONResponse(
+        {"detail": "El servidor está ocupado. Reintentando en unos segundos…"},
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        headers={"Retry-After": "2"},
+    )
+
+
+@app.middleware("http")
+async def measure_requests(request: Request, call_next):
+    """Mide cada petición (Plan de optimización, tareas 1.4 y 4.4).
+
+    Se registra al final, así que es el middleware más externo: su tiempo
+    incluye autenticación, endpoint y serialización. Ver
+    `src/api/observability.py`.
+    """
+    metrics = new_request_metrics(request.headers.get("x-request-id"))
+    token = current_request.set(metrics)
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+    finally:
+        current_request.reset(token)
+        elapsed_ms = metrics.total_ms()
+        route_key = f"{request.method} {_route_template(request)}"
+        route_stats.record(route_key, status_code, elapsed_ms)
+        if elapsed_ms >= slow_request_threshold_ms() or status_code >= 500:
+            request_log.warning(
+                "peticion_lenta id=%s ruta=%s estado=%s total_ms=%.1f auth_ms=%.1f "
+                "sql=%s sql_ms=%.1f",
+                metrics.request_id, route_key, status_code, elapsed_ms,
+                metrics.auth_ms, metrics.db_queries, metrics.db_ms,
+            )
+    response.headers["X-Request-ID"] = metrics.request_id
+    response.headers["Server-Timing"] = (
+        f"total;dur={elapsed_ms:.1f}, auth;dur={metrics.auth_ms:.1f}, "
+        f'db;dur={metrics.db_ms:.1f};desc="{metrics.db_queries} consultas"'
+    )
+    return response
+
+
+@app.exception_handler(PoolTimeoutError)
+async def database_busy(request: Request, exc: PoolTimeoutError) -> JSONResponse:
+    """Pool de conexiones agotado: se responde rápido con 503 en vez de
+    dejar la petición colgada. El frontend lo muestra y reintenta."""
+    request_log.error("pool_agotado ruta=%s %s", request.method, _route_template(request))
+    return _database_busy_response()
+
+
+@app.get("/admin/metrics", tags=["infraestructura"])
+def admin_metrics(request: Request, _: object = Depends(require_admin), reset: bool = False) -> dict:
+    """Latencias p50/p95/p99 por ruta y estado del pool (solo administrador).
+
+    `?reset=true` reinicia los contadores: úsalo antes de cada corrida de
+    la prueba de carga para comparar versiones con la misma ventana."""
+    snapshot = route_stats.snapshot()
+    engine = getattr(request.app.state.app_context, "engine", None)
+    snapshot["db_pool"] = pool_status(engine) if engine is not None else None
+    if reset:
+        route_stats.reset()
+    return snapshot
 
 
 @app.get("/health", tags=["infraestructura"])

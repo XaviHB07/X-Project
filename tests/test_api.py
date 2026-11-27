@@ -89,7 +89,13 @@ class TestInfraestructura:
         assert 'id="expo-member-grades"' in page.text
         assert page.text.count('data-signal-light="') == 3
         assert script.status_code == 200
-        assert script.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
+        # Los assets se guardan pero se revalidan siempre (ETag -> 304), así
+        # un despliegue nuevo se ve al instante sin volver a bajar todo.
+        assert script.headers["cache-control"] == "no-cache, must-revalidate"
+        assert script.headers.get("content-encoding") == "gzip"
+        revalidated = client.get("/assets/app.js", headers={"If-None-Match": script.headers["etag"]})
+        assert revalidated.status_code == 304
+        assert revalidated.content == b""
         assert "/sessions/select" in script.text
         assert "/group-expositions" in script.text
         assert "weekly-group-grades/details" in script.text

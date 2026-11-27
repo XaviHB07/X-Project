@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, List, Optional
 
 from sqlalchemy import delete, func, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from src.repositories.sqlalchemy.models import (
     AcademicCycleORM,
@@ -517,9 +517,13 @@ class AuthService:
     def user_for_token(self, token: Optional[str]) -> Optional[AuthenticatedUser]:
         if not token:
             return None
+        # Se ejecuta en CADA petición autenticada. Antes eran 3 consultas
+        # (sesión, luego usuario y rol por carga perezosa); con `joinedload`
+        # es una sola, resuelta por la clave primaria `token_hash`.
         with self._session_factory() as session:
             record = session.execute(
                 select(AuthSessionORM)
+                .options(joinedload(AuthSessionORM.user).joinedload(UserORM.role))
                 .where(
                     AuthSessionORM.token_hash == self._hash_token(token),
                     AuthSessionORM.expires_at > datetime.now(timezone.utc),
