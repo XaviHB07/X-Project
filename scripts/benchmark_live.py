@@ -271,6 +271,16 @@ def count_answers(database_url, activity_id) -> int:
     return int(total)
 
 
+def process_cpu_seconds(pid: int) -> float:
+    """CPU (usuario + sistema) consumida por el proceso, desde /proc (Linux)."""
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        ticks = os.sysconf(os.sysconf_names["SC_CLK_TCK"])
+        return (int(fields[11]) + int(fields[12])) / ticks
+    except (OSError, IndexError, ValueError, KeyError):
+        return 0.0
+
+
 def queries_per_endpoint(app_dir: str, database_url: str, info: dict) -> dict:
     """Cuenta las consultas SQL de cada endpoint, en un subproceso que
     importa la API del checkout medido (así sirve para la versión base)."""
@@ -330,7 +340,19 @@ def main() -> None:
         else:
             raise SystemExit("La API no arrancó.")
         info = seed(args.database_url, args.students, args.questions, args.question_seconds)
+        cpu_before = process_cpu_seconds(server.pid)
         result = asyncio.run(run_load(f"http://127.0.0.1:{port}", info, args))
+        cpu_used = process_cpu_seconds(server.pid) - cpu_before
+        total_requests = sum(item["requests"] for item in result["endpoints"].values())
+        # CPU del proceso de la API (no incluye PostgreSQL ni el cliente de
+        # carga). Sirve para estimar capacidad en instancias con CPU
+        # fraccionaria: núcleos necesarios = cpu_seconds / duración.
+        result["api_cpu"] = {
+            "cpu_seconds": round(cpu_used, 2),
+            "cpu_ms_per_request": round(cpu_used * 1000 / max(1, total_requests), 2),
+            "cores_used_avg": round(cpu_used / max(0.001, result["duration_s"]), 3),
+            "requests_per_second": round(total_requests / max(0.001, result["duration_s"]), 1),
+        }
     finally:
         server.terminate()
         server.wait(timeout=20)

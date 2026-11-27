@@ -72,6 +72,38 @@ Limitaciones de la medición (no ocultarlas):
 
 ---
 
+## 1.1. Capacidad en el plan gratuito de Render (CPU)
+
+Medido con `scripts/benchmark_live.py` (campo `api_cpu`), 40 estudiantes,
+CPU del proceso de la API únicamente:
+
+| Versión | CPU por petición | Peticiones/s | Núcleos usados en promedio |
+|---|---|---|---|
+| base | 13.4 ms | 28.6 | 0.38 |
+| optimizada | 10.9 ms | 29.7 | **0.33** |
+
+El plan gratuito de Render ofrece **0.1 CPU**. Con 40 estudiantes
+consultando cada 1.5 s la API necesita ~0.33 núcleos: **unas 3 veces más
+de lo disponible**, incluso optimizada. Cuando la demanda supera la CPU las
+peticiones se encolan y la latencia crece sin límite: es el síntoma reportado
+en la marcha blanca. Además, esta medición se hizo en una CPU local que
+probablemente es más rápida que la de Render, así que en Render el consumo
+por petición será igual o mayor.
+
+Estimación con 0.1 CPU y ~11 ms por petición: ~9 peticiones/s al 100 % de
+uso, es decir **unos 8–10 estudiantes** con margen razonable al ritmo actual
+de consulta. Conclusión basada en datos (la decisión de infraestructura que
+el plan dejaba para después de medir): las optimizaciones eliminan los
+cuellos de botella del código (colas en el event loop, ranking recalculado),
+pero **40 estudiantes simultáneos no caben en 0.1 CPU**.
+
+Otros límites del plan gratuito que afectan a una clase:
+
+* El servicio se apaga tras 15 minutos sin tráfico y tarda alrededor de un
+  minuto en volver: hay que abrir la aplicación unos minutos antes de clase.
+* La base PostgreSQL gratuita **expira 30 días después de creada** (14 días
+  de gracia y luego se elimina): riesgo de pérdida de datos del curso.
+
 ## 2. Integrante 1 — Backend y autenticación
 
 | Hallazgo del plan | Verificación | Cambio |
