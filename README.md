@@ -728,6 +728,24 @@ timezone (Postgres devuelve datetimes con `tzinfo`, SQLite devuelve naive) y
 booleanos. **No lo ejecutes si no hay URL de Postgres: el script sale con
 código 2 y lo dice, en vez de dar un "OK" sin haber comprobado nada.**
 
+**Rendimiento y monitoreo.** Ver `docs/INFORME_OPTIMIZACION.md`. En resumen:
+
+* Cada respuesta trae `X-Request-ID` y `Server-Timing` (tiempo total, de
+  autenticación y de SQL); las peticiones más lentas que `SLOW_REQUEST_MS`
+  (1000 ms) quedan en el log.
+* `GET /admin/metrics` (Administrador) muestra p50/p95/p99 por ruta y el
+  estado del pool de conexiones.
+* El pool se ajusta con `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT`,
+  `DB_POOL_RECYCLE` y `DB_STATEMENT_TIMEOUT_MS` (ver `.env.example`). No los
+  subas sin medir: `(DB_POOL_SIZE + DB_MAX_OVERFLOW) × procesos` debe quedar
+  por debajo del límite de conexiones de PostgreSQL.
+* Prueba de carga reproducible (solo contra una base local o de pruebas,
+  nunca producción):
+
+```bash
+python scripts/benchmark_live.py --database-url postgresql+psycopg://usuario:clave@localhost/bench --students 40
+```
+
 ---
 
 ## 6\. Configuración del tiempo de exposición
